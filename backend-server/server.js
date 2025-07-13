@@ -290,8 +290,20 @@ app.get('/api/devices/:deviceId/:portNumber/consumption', async (req, res) => {
 // Get all current device/port statuses
 app.get('/api/devices/status', async (req, res) => {
     try {
-        // Fetch current status directly from current_device_status (now has device_id and port_id)
-        const result = await pool.query('SELECT device_id, port_id, status_message, charger_state, last_update FROM current_device_status');
+        // JOIN current_device_status with charging_port to get port_number_in_device
+        const result = await pool.query(`
+            SELECT 
+                cds.device_id, 
+                cds.port_id, 
+                cds.status_message, 
+                cds.charger_state, 
+                cds.last_update, 
+                cp.port_number_in_device 
+            FROM 
+                current_device_status cds
+            JOIN 
+                charging_port cp ON cds.port_id = cp.port_id
+        `);
         res.json(result.rows);
     } catch (error) {
         console.error('Error fetching device status:', error);
