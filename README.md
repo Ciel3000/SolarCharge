@@ -1,4 +1,5 @@
 <<<<<<< HEAD
+<<<<<<< HEAD
 # Solar Charge Project
 
 A comprehensive solar-powered electric vehicle charging system with real-time monitoring and control capabilities.
@@ -111,3 +112,6 @@ For support and questions:
 =======
 # SolarCharge
 >>>>>>> a213a5183519958f2e7e130d6add88d4b85e41cb
+=======
+
+>>>>>>> 2e6da4d358715fa685b9d8960fd07a141e0550d2
