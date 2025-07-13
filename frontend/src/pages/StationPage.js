@@ -1,42 +1,32 @@
 import React, { useState, useEffect, useCallback } from 'react';
 
-
 const BACKEND_URL = 'https://solar-charger-backend.onrender.com';
 
-
 const DEVICE_PORT_MAPPING = {
-    // Frontend Port 1 on the UI is managed by ESP32_CHARGER_STATION_001, which is its internal Port 1
     1: { stationDeviceId: 'ESP32_CHARGER_STATION_001', internalPortNumber: 1, label: 'Premium Port 1' },
-    // Frontend Port 2 on the UI is managed by ESP32_CHARGER_STATION_001, which is its internal Port 2
     2: { stationDeviceId: 'ESP32_CHARGER_STATION_001', internalPortNumber: 2, label: 'Premium Port 2' },
 };
 
 function StationPage({ session, station, navigateTo }) {
     const [loadingPort, setLoadingPort] = useState(null);
     const [feedback, setFeedback] = useState('');
-    // State to store the actual status of charger devices/ports fetched from backend
-    // It will be an object like: { 'ESP32_CHARGER_STATION_001_1': { status_message: 'online', charger_state: 'OFF', ... } }
-    const [chargerPortStatus, setChargerPortStatus] = useState({}); // <--- CHANGED State name
+    const [chargerPortStatus, setChargerPortStatus] = useState({});
 
-    // The premiumPorts array will now be generated from the mapping
-    const premiumPorts = Object.values(DEVICE_PORT_MAPPING); // <--- CHANGED
+    // The premiumPorts array will now be generated from the mapping's entries
+    // This provides both the key (e.g., 1 or 2) and the value object
+    const premiumPorts = Object.entries(DEVICE_PORT_MAPPING); // <--- CHANGED: Use Object.entries
 
     const fetchChargerDeviceStatus = useCallback(async () => {
         try {
-            const response = await fetch(`${BACKEND_URL}/api/devices/status`); // This API returns ALL current statuses
+            const response = await fetch(`${BACKEND_URL}/api/devices/status`);
             const data = await response.json();
             const statusMap = {};
-            data.forEach(deviceStatus => { // deviceStatus now has device_id and port_id
-                // Use a composite key for easy lookup: device_id_port_number_in_device
-                const mappedPort = Object.values(DEVICE_PORT_MAPPING).find(
-                    map => map.stationDeviceId === deviceStatus.device_id &&
-                           map.internalPortNumber === deviceStatus.port_number_in_device
-                );
-                if (mappedPort) {
-                    statusMap[`${mappedPort.stationDeviceId}_${mappedPort.internalPortNumber}`] = deviceStatus;
-                }
+            data.forEach(deviceStatus => {
+                // deviceStatus from backend contains device_id and port_number_in_device
+                const key = `${deviceStatus.device_id}_${deviceStatus.port_number_in_device}`;
+                statusMap[key] = deviceStatus;
             });
-            setChargerPortStatus(statusMap); // <--- CHANGED State name
+            setChargerPortStatus(statusMap);
         } catch (error) {
             console.error('Error fetching charger device statuses:', error);
             setFeedback('Error loading port statuses.');
@@ -49,21 +39,20 @@ function StationPage({ session, station, navigateTo }) {
         return () => clearInterval(intervalId);
     }, [fetchChargerDeviceStatus]);
 
-    const handleControlCommand = async (frontendPortNumber, action) => { // <--- CHANGED argument name
-        const mappedPort = DEVICE_PORT_MAPPING[frontendPortNumber]; // Get the mapping
-        if (!mappedPort) {
+    const handleControlCommand = async (frontendPortNumber, action) => {
+        const mappedPortDetails = DEVICE_PORT_MAPPING[frontendPortNumber]; // Get details from mapping
+        if (!mappedPortDetails) {
             setFeedback(`No mapping found for Frontend Port ${frontendPortNumber}.`);
             return;
         }
-        const { stationDeviceId, internalPortNumber } = mappedPort; // Extract IDs
+        const { stationDeviceId, internalPortNumber } = mappedPortDetails;
 
-        setLoadingPort(frontendPortNumber); // Use frontendPortNumber for loading state
+        setLoadingPort(frontendPortNumber);
         setFeedback('');
 
         const command = action === 'activate' ? 'ON' : 'OFF';
 
         try {
-            // <--- CHANGED: API call includes both stationDeviceId and internalPortNumber
             const res = await fetch(`${BACKEND_URL}/api/devices/${stationDeviceId}/${internalPortNumber}/control`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -72,9 +61,8 @@ function StationPage({ session, station, navigateTo }) {
             const result = await res.json();
             if (res.ok && result.status === 'Command sent') {
                 setFeedback(`Command "${command}" sent to Port ${internalPortNumber} (${stationDeviceId})!`);
-                // Optimistically update UI
                 const key = `${stationDeviceId}_${internalPortNumber}`;
-                setChargerPortStatus(prev => ({ // <--- CHANGED State name
+                setChargerPortStatus(prev => ({
                     ...prev,
                     [key]: { ...prev[key], charger_state: command, status_message: command === 'ON' ? 'online' : 'online' }
                 }));
@@ -105,14 +93,13 @@ function StationPage({ session, station, navigateTo }) {
         );
     }
 
-    // Determine the status for each port based on fetched chargerPortStatus
-    const getPortDisplayStatus = (frontendPortNumber) => { // <--- CHANGED argument name
-        const mappedPort = DEVICE_PORT_MAPPING[frontendPortNumber];
-        if (!mappedPort) {
+    const getPortDisplayStatus = (frontendPortNumber) => {
+        const mappedPortDetails = DEVICE_PORT_MAPPING[frontendPortNumber];
+        if (!mappedPortDetails) {
             return { display: 'N/A', class: 'text-gray-500' };
         }
-        const key = `${mappedPort.stationDeviceId}_${mappedPort.internalPortNumber}`;
-        const status = chargerPortStatus[key]; // <--- CHANGED State name lookup
+        const key = `${mappedPortDetails.stationDeviceId}_${mappedPortDetails.internalPortNumber}`;
+        const status = chargerPortStatus[key];
 
         if (!status) {
             return { display: 'Unknown', class: 'text-gray-500' };
@@ -161,19 +148,19 @@ function StationPage({ session, station, navigateTo }) {
                         <h2 className="text-xl font-bold text-gray-800 mb-4">Control Charger Ports</h2>
                         {feedback && <div className="mb-4 text-center text-green-700 font-semibold">{feedback}</div>}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            {premiumPorts.map((mappedPort) => { // Iterate over mapped ports directly
-                                const frontendPortNumber = mappedPort.port; // This is the 1, 2 from our map
-                                const currentStatus = getPortDisplayStatus(frontendPortNumber);
+                            {premiumPorts.map(([frontendPortNumber, mappedPortDetails]) => { // <--- CHANGED: Get both key and value
+                                const { stationDeviceId, internalPortNumber, label } = mappedPortDetails; // Destructure details
+                                const currentStatus = getPortDisplayStatus(frontendPortNumber); // Pass key to get status
 
-                                // Get actual status object for rendering
-                                const statusObject = chargerPortStatus[`${mappedPort.stationDeviceId}_${mappedPort.internalPortNumber}`];
+                                const key = `${stationDeviceId}_${internalPortNumber}`; // Key for chargerPortStatus lookup
+                                const statusObject = chargerPortStatus[key]; // Get actual status object
 
                                 const isPortAvailable = currentStatus.display === 'Available';
                                 const isPortOffline = currentStatus.display === 'Offline' || currentStatus.display === 'Unknown';
 
                                 return (
-                                    <div key={mappedPort.internalPortNumber} className="bg-gray-50 rounded-lg p-6 flex flex-col items-center shadow">
-                                        <div className="text-lg font-semibold mb-2">{mappedPort.label}</div>
+                                    <div key={frontendPortNumber} className="bg-gray-50 rounded-lg p-6 flex flex-col items-center shadow"> {/* Use frontendPortNumber as key */}
+                                        <div className="text-lg font-semibold mb-2">{label}</div> {/* Use label from mapping */}
                                         <div className={`mb-4 text-sm font-bold ${currentStatus.class}`}>
                                             {currentStatus.display}
                                         </div>
