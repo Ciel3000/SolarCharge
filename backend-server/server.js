@@ -48,6 +48,8 @@ const mqttOptions = {
     connectTimeout: 30000,
 };
 
+const mqttClient = mqtt.connect(`mqtts://${MQTT_BROKER_HOST}:${MQTT_PORT}`, mqttOptions);
+
 mqttClient.on('message', async (topic, message) => {
     console.log(`Received message on ${topic}: ${message.toString()}`);
     try {
