@@ -79,14 +79,14 @@ mqttClient.on('message', async (topic, message) => {
 
             // 1. Find the charging_port.id associated with this deviceId
             //    This assumes you have added 'device_mqtt_id' to your 'charging_port' table.
-            const portIdResult = await pool.query('SELECT id FROM charging_port WHERE device_mqtt_id = $1', [deviceId]);
-            const portId = portIdResult.rows[0]?.id; // Get the id of the charging_port
+            const portIdResult = await pool.query('SELECT port_id FROM charging_port WHERE device_mqtt_id = $1', [deviceId]);
+            const actualPortId = portIdResult.rows[0]?.port_id; // Get the id of the charging_port
 
-            if (!portId) {
-                console.warn(`No charging_port found for device_id: ${deviceId}. Cannot start/update session for consumption data.`);
+            if (!actualPortId) {
+                console.warn(`No charging_port found for device_id: ${deviceId}. Skipping consumption/session processing.`);
                 // Optionally, you might want to store this raw data in a separate "unlinked_consumption_data" table
                 // or just skip if it can't be linked to a port.
-                return; // Exit if no port is linked
+                return; // Essential: don't proceed if no port is linked
             }
 
             // 2. Manage the charging_session based on charger_state
@@ -118,10 +118,10 @@ mqttClient.on('message', async (topic, message) => {
 
                 // 3. Insert granular consumption data linked to the session
                 if (currentSessionId) { // Ensure we have a session ID
-                    await pool.query(
-                        'INSERT INTO consumption_data (session_id, device_id, consumption_watts, timestamp, charger_state) VALUES ($1, $2, $3, TO_TIMESTAMP($4 / 1000.0), $5)',
-                        [currentSessionId, deviceId, consumption, timestamp, charger_state] // <--- Pass session_id here
+                    INSERT INTO consumption_data (session_id, device_id, consumption_watts, timestamp, charger_state) VALUES ($1, $2, $3, TO_TIMESTAMP($4 / 1000.0), $5)',
+                        [currentSessionId, deviceId, consumption, timestamp, charger_state] // Pass currentSessionId here
                     );
+                  
                     console.log(`Stored consumption for ${deviceId} in session ${currentSessionId}: ${consumption}W`);
 
                     // 4. Optional: Accumulate energy_consumed_kwh in charging_session
