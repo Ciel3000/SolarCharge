@@ -19,7 +19,8 @@ app.use(express.json()); // Parses incoming JSON requests
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: {
-        rejectUnauthorized: false // 
+        rejectUnauthorized: false // <--- CHANGE THIS TO FALSE (for testing only)
+    }
 });
 
 // Test database connection
