@@ -51,8 +51,6 @@ const mqttOptions = {
 
 const mqttClient = mqtt.connect(`mqtts://${MQTT_BROKER_HOST}:${MQTT_PORT}`, mqttOptions);
 
-const activeChargerSessions = {}; // Maps `${device_id}_${port_number_in_device}` -> session_id (UUID)
-
 // --- MQTT Event Handlers ---
 mqttClient.on('connect', () => {
     console.log('Backend connected to EMQX Cloud MQTT broker');
