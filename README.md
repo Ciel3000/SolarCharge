@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Solar Charge Project
 
 A comprehensive solar-powered electric vehicle charging system with real-time monitoring and control capabilities.
@@ -107,3 +108,6 @@ For support and questions:
 - [ ] Payment gateway integration
 - [ ] IoT device management
 - [ ] Machine learning optimization 
+=======
+# SolarCharge
+>>>>>>> a213a5183519958f2e7e130d6add88d4b85e41cb
