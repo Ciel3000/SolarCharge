@@ -19,10 +19,7 @@ app.use(express.json()); // Parses incoming JSON requests
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: {
-        // Set to true in production with a proper CA, or false for development if connection fails
-        // Render environment variable NODE_ENV will be 'production' by default
-        rejectUnauthorized: process.env.NODE_ENV === 'production'
-    }
+        rejectUnauthorized: false // 
 });
 
 // Test database connection
