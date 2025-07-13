@@ -118,10 +118,10 @@ mqttClient.on('message', async (topic, message) => {
 
                 // 3. Insert granular consumption data linked to the session
                 if (currentSessionId) { // Ensure we have a session ID
-                    INSERT INTO consumption_data (session_id, device_id, consumption_watts, timestamp, charger_state) VALUES ($1, $2, $3, TO_TIMESTAMP($4 / 1000.0), $5)',
-                        [currentSessionId, deviceId, consumption, timestamp, charger_state] // Pass currentSessionId here
+                    await pool.query(
+                        'INSERT INTO consumption_data (session_id, device_id, consumption_watts, timestamp, charger_state) VALUES ($1, $2, $3, TO_TIMESTAMP($4 / 1000.0), $5)', // <--- Problematic query
+                        [currentSessionId, deviceId, consumption, timestamp, charger_state]
                     );
-                  
                     console.log(`Stored consumption for ${deviceId} in session ${currentSessionId}: ${consumption}W`);
 
                     // 4. Optional: Accumulate energy_consumed_kwh in charging_session
