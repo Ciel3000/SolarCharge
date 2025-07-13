@@ -1,83 +1,85 @@
-// src/pages/StationPage.js
 import React, { useState, useEffect, useCallback } from 'react';
 
-// Define your backend URL (make sure it's correct for your local setup or deployment)
-const BACKEND_URL = 'http://localhost:3001';
 
-// We need to map which ESP32 device ID corresponds to which UI port.
-// For simplicity, let's assume ESP32_Charger_001 is mapped to Premium Port 1.
-// If you have more ESP32s, you'd expand this mapping.
-const DEVICE_ID_MAPPING = {
-    1: 'ESP32_Charger_001', // Premium Port 1 controlled by ESP32_Charger_001
-    // 2: 'ESP32_Charger_002', // If you had another ESP32 for Premium Port 2
+const BACKEND_URL = 'https://solar-charger-backend.onrender.com';
+
+
+const DEVICE_PORT_MAPPING = {
+    // Frontend Port 1 on the UI is managed by ESP32_CHARGER_STATION_001, which is its internal Port 1
+    1: { stationDeviceId: 'ESP32_CHARGER_STATION_001', internalPortNumber: 1, label: 'Premium Port 1' },
+    // Frontend Port 2 on the UI is managed by ESP32_CHARGER_STATION_001, which is its internal Port 2
+    2: { stationDeviceId: 'ESP32_CHARGER_STATION_001', internalPortNumber: 2, label: 'Premium Port 2' },
 };
 
 function StationPage({ session, station, navigateTo }) {
     const [loadingPort, setLoadingPort] = useState(null);
     const [feedback, setFeedback] = useState('');
-    // State to store the actual status of charger devices fetched from backend
-    // It will be an object like: { 'ESP32_Charger_001': { status_message: 'online', charger_state: 'OFF', ... } }
-    const [chargerDeviceStatus, setChargerDeviceStatus] = useState({});
+    // State to store the actual status of charger devices/ports fetched from backend
+    // It will be an object like: { 'ESP32_CHARGER_STATION_001_1': { status_message: 'online', charger_state: 'OFF', ... } }
+    const [chargerPortStatus, setChargerPortStatus] = useState({}); // <--- CHANGED State name
 
-    // Example: Assume premium ports are 1 and 2
-    const premiumPorts = [
-        { port: 1, label: 'Premium Port 1' },
-        { port: 2, label: 'Premium Port 2' } // This port will not be controlled by ESP32_Charger_001
-    ];
+    // The premiumPorts array will now be generated from the mapping
+    const premiumPorts = Object.values(DEVICE_PORT_MAPPING); // <--- CHANGED
 
-    // Function to fetch the current status of all charger devices
     const fetchChargerDeviceStatus = useCallback(async () => {
         try {
-            const response = await fetch(`${BACKEND_URL}/api/devices/status`);
+            const response = await fetch(`${BACKEND_URL}/api/devices/status`); // This API returns ALL current statuses
             const data = await response.json();
             const statusMap = {};
-            data.forEach(device => {
-                statusMap[device.device_id] = device;
+            data.forEach(deviceStatus => { // deviceStatus now has device_id and port_id
+                // Use a composite key for easy lookup: device_id_port_number_in_device
+                const mappedPort = Object.values(DEVICE_PORT_MAPPING).find(
+                    map => map.stationDeviceId === deviceStatus.device_id &&
+                           map.internalPortNumber === deviceStatus.port_number_in_device
+                );
+                if (mappedPort) {
+                    statusMap[`${mappedPort.stationDeviceId}_${mappedPort.internalPortNumber}`] = deviceStatus;
+                }
             });
-            setChargerDeviceStatus(statusMap);
+            setChargerPortStatus(statusMap); // <--- CHANGED State name
         } catch (error) {
             console.error('Error fetching charger device statuses:', error);
             setFeedback('Error loading port statuses.');
         }
     }, []);
 
-    // Fetch status on component mount and periodically
     useEffect(() => {
-        fetchChargerDeviceStatus(); // Initial fetch
-        const intervalId = setInterval(fetchChargerDeviceStatus, 5000); // Refresh every 5 seconds
-        return () => clearInterval(intervalId); // Cleanup on unmount
+        fetchChargerDeviceStatus();
+        const intervalId = setInterval(fetchChargerDeviceStatus, 5000);
+        return () => clearInterval(intervalId);
     }, [fetchChargerDeviceStatus]);
 
-
-    const handleControlCommand = async (port, action) => {
-        const deviceId = DEVICE_ID_MAPPING[port];
-        if (!deviceId) {
-            setFeedback(`No ESP32 device mapped for Port ${port}.`);
+    const handleControlCommand = async (frontendPortNumber, action) => { // <--- CHANGED argument name
+        const mappedPort = DEVICE_PORT_MAPPING[frontendPortNumber]; // Get the mapping
+        if (!mappedPort) {
+            setFeedback(`No mapping found for Frontend Port ${frontendPortNumber}.`);
             return;
         }
+        const { stationDeviceId, internalPortNumber } = mappedPort; // Extract IDs
 
-        setLoadingPort(port);
+        setLoadingPort(frontendPortNumber); // Use frontendPortNumber for loading state
         setFeedback('');
 
-        const command = action === 'activate' ? 'ON' : 'OFF'; // Map 'activate'/'deactivate' to 'ON'/'OFF'
+        const command = action === 'activate' ? 'ON' : 'OFF';
 
         try {
-            const res = await fetch(`${BACKEND_URL}/api/devices/${deviceId}/control`, {
+            // <--- CHANGED: API call includes both stationDeviceId and internalPortNumber
+            const res = await fetch(`${BACKEND_URL}/api/devices/${stationDeviceId}/${internalPortNumber}/control`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ command: command })
             });
-            const data = await res.json();
-            if (res.ok && data.status === 'Command sent') {
-                setFeedback(`Command "${command}" sent to Port ${port} (${deviceId})!`);
-                // Optimistically update UI, then rely on periodic fetch for true state
-                // This will be overwritten by the fetchChargerDeviceStatus after 5s
-                setChargerDeviceStatus(prev => ({
+            const result = await res.json();
+            if (res.ok && result.status === 'Command sent') {
+                setFeedback(`Command "${command}" sent to Port ${internalPortNumber} (${stationDeviceId})!`);
+                // Optimistically update UI
+                const key = `${stationDeviceId}_${internalPortNumber}`;
+                setChargerPortStatus(prev => ({ // <--- CHANGED State name
                     ...prev,
-                    [deviceId]: { ...prev[deviceId], charger_state: command, status_message: command === 'ON' ? 'online' : 'online' } // Assuming 'online' always
+                    [key]: { ...prev[key], charger_state: command, status_message: command === 'ON' ? 'online' : 'online' }
                 }));
             } else {
-                setFeedback(data.error || `Failed to send command to Port ${port}.`);
+                setFeedback(result.error || `Failed to send command to Port ${internalPortNumber}.`);
             }
         } catch (err) {
             console.error('Network error sending command:', err);
@@ -87,7 +89,6 @@ function StationPage({ session, station, navigateTo }) {
         }
     };
 
-    // Placeholder for actual station data, if not provided
     if (!station) {
         return (
             <div className="min-h-screen flex items-center justify-center">
@@ -104,15 +105,17 @@ function StationPage({ session, station, navigateTo }) {
         );
     }
 
-    // Determine the status for each port based on fetched chargerDeviceStatus
-    const getPortDisplayStatus = (port) => {
-        const deviceId = DEVICE_ID_MAPPING[port];
-        if (!deviceId) {
-            return { display: 'N/A', class: 'text-gray-500' }; // No ESP32 mapped
+    // Determine the status for each port based on fetched chargerPortStatus
+    const getPortDisplayStatus = (frontendPortNumber) => { // <--- CHANGED argument name
+        const mappedPort = DEVICE_PORT_MAPPING[frontendPortNumber];
+        if (!mappedPort) {
+            return { display: 'N/A', class: 'text-gray-500' };
         }
-        const status = chargerDeviceStatus[deviceId];
+        const key = `${mappedPort.stationDeviceId}_${mappedPort.internalPortNumber}`;
+        const status = chargerPortStatus[key]; // <--- CHANGED State name lookup
+
         if (!status) {
-            return { display: 'Unknown', class: 'text-gray-500' }; // Data not loaded yet
+            return { display: 'Unknown', class: 'text-gray-500' };
         }
 
         if (status.status_message === 'offline') {
@@ -158,32 +161,19 @@ function StationPage({ session, station, navigateTo }) {
                         <h2 className="text-xl font-bold text-gray-800 mb-4">Control Charger Ports</h2>
                         {feedback && <div className="mb-4 text-center text-green-700 font-semibold">{feedback}</div>}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            {premiumPorts.map(({ port, label }) => {
-                                const deviceId = DEVICE_ID_MAPPING[port];
-                                const currentStatus = getPortDisplayStatus(port); // Get computed status
+                            {premiumPorts.map((mappedPort) => { // Iterate over mapped ports directly
+                                const frontendPortNumber = mappedPort.port; // This is the 1, 2 from our map
+                                const currentStatus = getPortDisplayStatus(frontendPortNumber);
 
-                                // Only render controls for ports that are actually mapped to an ESP32 device
-                                if (!deviceId) {
-                                    return (
-                                        <div key={port} className="bg-gray-50 rounded-lg p-6 flex flex-col items-center shadow">
-                                            <div className="text-lg font-semibold mb-2">{label}</div>
-                                            <div className={`mb-4 text-sm font-bold ${currentStatus.class}`}>
-                                                {currentStatus.display} (No ESP32 mapping)
-                                            </div>
-                                            {/* You might display a disabled button or nothing */}
-                                            <button className="bg-gray-300 text-gray-600 font-bold py-2 px-6 rounded-lg cursor-not-allowed" disabled>
-                                                N/A
-                                            </button>
-                                        </div>
-                                    );
-                                }
+                                // Get actual status object for rendering
+                                const statusObject = chargerPortStatus[`${mappedPort.stationDeviceId}_${mappedPort.internalPortNumber}`];
 
                                 const isPortAvailable = currentStatus.display === 'Available';
                                 const isPortOffline = currentStatus.display === 'Offline' || currentStatus.display === 'Unknown';
 
                                 return (
-                                    <div key={port} className="bg-gray-50 rounded-lg p-6 flex flex-col items-center shadow">
-                                        <div className="text-lg font-semibold mb-2">{label}</div>
+                                    <div key={mappedPort.internalPortNumber} className="bg-gray-50 rounded-lg p-6 flex flex-col items-center shadow">
+                                        <div className="text-lg font-semibold mb-2">{mappedPort.label}</div>
                                         <div className={`mb-4 text-sm font-bold ${currentStatus.class}`}>
                                             {currentStatus.display}
                                         </div>
@@ -197,18 +187,18 @@ function StationPage({ session, station, navigateTo }) {
                                         ) : isPortAvailable ? (
                                             <button
                                                 className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-6 rounded-lg disabled:opacity-50"
-                                                onClick={() => handleControlCommand(port, 'activate')}
-                                                disabled={loadingPort === port}
+                                                onClick={() => handleControlCommand(frontendPortNumber, 'activate')}
+                                                disabled={loadingPort === frontendPortNumber}
                                             >
-                                                {loadingPort === port ? 'Activating...' : 'Activate'}
+                                                {loadingPort === frontendPortNumber ? 'Activating...' : 'Activate'}
                                             </button>
                                         ) : (
                                             <button
                                                 className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-6 rounded-lg disabled:opacity-50"
-                                                onClick={() => handleControlCommand(port, 'deactivate')}
-                                                disabled={loadingPort === port}
+                                                onClick={() => handleControlCommand(frontendPortNumber, 'deactivate')}
+                                                disabled={loadingPort === frontendPortNumber}
                                             >
-                                                {loadingPort === port ? 'Deactivating...' : 'Deactivate'}
+                                                {loadingPort === frontendPortNumber ? 'Deactivating...' : 'Deactivate'}
                                             </button>
                                         )}
                                     </div>
