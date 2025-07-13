@@ -131,7 +131,7 @@ mqttClient.on('message', async (topic, message) => {
             const { consumption, timestamp, charger_state, port_number } = payload;
             const currentTimestamp = new Date(timestamp);
 
-            // --- Step 1: Look up actualPortId (unchanged, crucial for linking) ---
+            // --- Step 1: Look up actualPortId (CRITICAL to ensure port is linked) ---
             const portIdResult = await pool.query(
                 'SELECT port_id FROM charging_port WHERE device_mqtt_id = $1 AND port_number_in_device = $2',
                 [deviceId, port_number]
@@ -140,7 +140,7 @@ mqttClient.on('message', async (topic, message) => {
 
             if (!actualPortId) {
                 console.warn(`No charging_port found for device_id: ${deviceId} and port_number_in_device: ${port_number}. Skipping message processing.`);
-                return; // IMPORTANT: Exit if port mapping is missing
+                return; // Exit here if port not found - prevents further errors
             }
 
             // --- Step 2: Determine currentSessionId ---
@@ -163,7 +163,7 @@ mqttClient.on('message', async (topic, message) => {
                             'INSERT INTO charging_session (port_id, start_time, session_status) VALUES ($1, $2, $3) RETURNING session_id',
                             [actualPortId, currentTimestamp, 'active']
                         );
-                        currentSessionId = sessionResult.rows[0].session_id; // Capture new UUID
+                        currentSessionId = sessionResult.rows[0].session_id;
                         activeChargerSessions[sessionKey] = currentSessionId;
                         console.log(`Started new charging session ${currentSessionId} for port ${actualPortId} (Device: ${deviceId}, PortNum: ${port_number})`);
                     } else {
@@ -177,7 +177,7 @@ mqttClient.on('message', async (topic, message) => {
                 // --- Step 4: INSERT Consumption Data (ONLY if ON and a valid session is active) ---
                 // This 'if (currentSessionId)' guard is critical here!
                 if (currentSessionId) { // This condition MUST be true for the insert to proceed
-                    await pool.query( // This is the line at server.js:302:13
+                    await pool.query( // This is your server.js:302:13 line
                         'INSERT INTO consumption_data (session_id, device_id, consumption_watts, timestamp, charger_state) VALUES ($1, $2, $3, TO_TIMESTAMP($4 / 1000.0), $5)',
                         [currentSessionId, deviceId, consumption, timestamp, charger_state]
                     );
@@ -193,9 +193,11 @@ mqttClient.on('message', async (topic, message) => {
                 } else {
                     console.error(`ERROR: Charger ON for ${deviceId} Port ${port_number} but currentSessionId is null. Consumption insert skipped.`);
                 }
-
+        
             } else if (charger_state === 'OFF') {
-                // NO consumption_data INSERT occurs when charger_state is OFF
+                // --- Step 6: Handle OFF state (End Session) ---
+                // IMPORTANT: NO consumption_data INSERT occurs when charger_state is OFF.
+                // Consumption is only recorded during active (ON) sessions.
                 if (currentSessionId) { // Only end a session if one is actively tracked
                     await pool.query(
                         "UPDATE charging_session SET end_time = $1, session_status = 'completed', last_status_update = $2 WHERE session_id = $3 AND session_status = 'active'",
@@ -204,8 +206,7 @@ mqttClient.on('message', async (topic, message) => {
                     console.log(`Ended charging session ${currentSessionId} for port ${actualPortId} (Device: ${deviceId}, PortNum: ${port_number})`);
                     delete activeChargerSessions[sessionKey];
                 } else {
-                    console.log(`Ended charging session ${currentSessionId} for port ${actualPortId} (Device: ${deviceId}, PortNum: ${portNumberInDevice})`);
-                    delete activeChargerSessions[sessionKey];
+                    console.log(`Received OFF state for ${deviceId} Port ${port_number}, but no active session found to end.`);
                 }
             }
         }
