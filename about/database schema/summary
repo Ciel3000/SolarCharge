@@ -1,0 +1,99 @@
+Here's a summary of the tables and their relationships as defined in the "SolarCharge Database Schema Update (Relationships)" Canvas:
+
+Your database schema is designed to manage users, charging stations, their components, charging sessions, payments, subscriptions, and administrative functions for the SolarCharge project.
+
+Here's a breakdown of each table and its key relationships:
+
+subscription_plans:
+
+Purpose: Defines the different types of charging subscription plans (e.g., Basic Free, Premium Monthly, Pro Annual).
+
+Key Fields: plan_id (Primary Key), plan_name, price, daily_mwh_limit.
+
+Relationships: Referenced by user_subscription.
+
+charging_station:
+
+Purpose: Represents a physical charging station.
+
+Key Fields: station_id (Primary Key), station_name, location_description, latitude, longitude, solar_panel_wattage, battery_capacity_kwh, current_battery_level.
+
+Relationships: Referenced by charging_port, charging_session, and station_maintenance.
+
+users:
+
+Purpose: Stores profile information for users of the SolarCharge system. This table is linked directly to Supabase's internal authentication system.
+
+Key Fields: user_id (Primary Key, also a Foreign Key referencing auth.users.id), fname, lname, contact_number, is_admin.
+
+Relationships: References auth.users (Supabase's built-in authentication table). Referenced by admin_profiles, user_subscription, payment, daily_energy_usage, charging_session, and notification.
+
+admin_profiles:
+
+Purpose: Stores specific profile information and access levels for administrators.
+
+Key Fields: admin_id (Primary Key), user_id (Unique Foreign Key referencing public.users.user_id), full_name, access_level.
+
+Relationships: References public.users.
+
+user_subscription:
+
+Purpose: Tracks a user's active or past subscription to a subscription_plan.
+
+Key Fields: user_subscription_id (Primary Key), user_id (Foreign Key), plan_id (Foreign Key), start_date, end_date, is_active.
+
+Relationships: References public.users and public.subscription_plans. Referenced by payment and daily_energy_usage.
+
+payment:
+
+Purpose: Records payment transactions made by users, typically for subscriptions.
+
+Key Fields: payment_id (Primary Key), user_id (Foreign Key), user_subscription_id (Foreign Key, nullable), amount, payment_status.
+
+Relationships: References public.users and public.user_subscription.
+
+daily_energy_usage:
+
+Purpose: Logs the daily energy consumption for each user, used for quota tracking.
+
+Key Fields: daily_usage_id (Primary Key), user_id (Foreign Key), usage_date, total_energy_used_mwh.
+
+Relationships: References public.users and public.user_subscription.
+
+charging_port:
+
+Purpose: Represents individual charging ports within a charging_station.
+
+Key Fields: port_id (Primary Key), station_id (Foreign Key), port_number, port_type, current_status, is_occupied, esp32_device_id.
+
+Relationships: References public.charging_station. Referenced by charging_session.
+
+charging_session:
+
+Purpose: Logs details of each individual charging session.
+
+Key Fields: session_id (Primary Key), user_id (Foreign Key), port_id (Foreign Key), station_id (Foreign Key), start_time, end_time, energy_consumed_mwh, is_premium, session_status.
+
+Relationships: References public.users, public.charging_port, and public.charging_station.
+
+notification:
+
+Purpose: Stores notifications to be sent to users.
+
+Key Fields: notification_id (Primary Key), user_id (Foreign Key), notification_type, notification_content, is_read.
+
+Relationships: References public.users.
+
+station_maintenance:
+
+Purpose: Records maintenance activities performed on charging_stations.
+
+Key Fields: maintenance_id (Primary Key), station_id (Foreign Key), performed_by, maintenance_date, description.
+
+Relationships: References public.charging_station.
+
+Views:
+
+public_station_view: Provides a simplified, public-facing view of charging stations, including available free and premium ports, and last maintenance information.
+
+active_charging_sessions_view: Shows a combined view of currently active charging sessions, linking user, port, station, and subscription details.

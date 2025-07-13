@@ -1,0 +1,299 @@
+-- SQL Queries to Update Table Relationships in Supabase (PostgreSQL)
+-- Based on your latest ERD.
+
+-- !! IMPORTANT !!
+-- Running this script will DROP and RECREATE the specified tables.
+-- This means ALL EXISTING DATA in these tables will be LOST.
+-- ONLY RUN THIS IF YOU ARE STARTING FRESH OR HAVE BACKED UP YOUR DATA.
+
+-- 1. Drop existing tables in reverse order of dependency to avoid foreign key conflicts
+--    (Optional, but recommended for a clean update if schema changes significantly)
+DROP TABLE IF EXISTS public.daily_energy_usage CASCADE;
+DROP TABLE IF EXISTS public.notification CASCADE;
+DROP TABLE IF EXISTS public.payment CASCADE;
+DROP TABLE IF EXISTS public.user_subscription CASCADE;
+DROP TABLE IF EXISTS public.charging_session CASCADE;
+DROP TABLE IF EXISTS public.charging_port CASCADE;
+DROP TABLE IF EXISTS public.station_maintenance CASCADE;
+DROP TABLE IF EXISTS public.admin_profiles CASCADE; -- Drop admin_profiles before users if it references users
+DROP TABLE IF EXISTS public.users CASCADE;
+DROP TABLE IF EXISTS public.charging_station CASCADE;
+DROP TABLE IF EXISTS public.subscription_plans CASCADE;
+
+-- 2. Drop existing ENUM types before recreating them to avoid "type already exists" error
+DROP TYPE IF EXISTS PAYMENT_STATUS CASCADE;
+DROP TYPE IF EXISTS PORT_STATUS CASCADE;
+DROP TYPE IF EXISTS ACCESS_LEVEL CASCADE;
+DROP TYPE IF EXISTS NOTIFICATION_TYPE CASCADE;
+DROP TYPE IF EXISTS SESSION_STATUS CASCADE;
+
+-- 3. ENUM Types (re-create)
+CREATE TYPE PAYMENT_STATUS AS ENUM ('pending', 'completed', 'failed', 'refunded');
+CREATE TYPE PORT_STATUS AS ENUM ('available', 'charging_free', 'charging_premium', 'maintenance', 'offline');
+CREATE TYPE ACCESS_LEVEL AS ENUM ('super_admin', 'station_manager', 'viewer');
+CREATE TYPE NOTIFICATION_TYPE AS ENUM ('charging_complete', 'quota_warning', 'payment_due', 'maintenance_alert', 'general_info');
+CREATE TYPE SESSION_STATUS AS ENUM ('active', 'completed', 'cancelled', 'paused');
+
+-- 4. Table: subscription_plans (No changes to relationships, but included for completeness)
+CREATE TABLE public.subscription_plans (
+    plan_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    plan_name TEXT UNIQUE NOT NULL,
+    description TEXT,
+    price NUMERIC(10, 2) NOT NULL,
+    daily_mwh_limit NUMERIC(10, 3) NOT NULL,
+    max_session_duration_hours NUMERIC(5, 2),
+    fast_charging_access BOOLEAN DEFAULT FALSE,
+    priority_access BOOLEAN DEFAULT FALSE,
+    cooldown_percentage NUMERIC(5, 2),
+    cooldown_time_hour NUMERIC(5, 2),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 5. Table: charging_station (No changes to relationships, but included for completeness)
+CREATE TABLE public.charging_station (
+    station_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    station_name TEXT NOT NULL,
+    location_description TEXT NOT NULL,
+    latitude NUMERIC(9, 6),
+    longitude NUMERIC(9, 6),
+    solar_panel_wattage INT,
+    battery_capacity_kwh NUMERIC(10, 3),
+    num_free_ports INT DEFAULT 0,
+    num_premium_ports INT DEFAULT 0,
+    last_maintenance_id UUID, -- This will be linked by application logic or a trigger
+    is_active BOOLEAN DEFAULT TRUE,
+    current_battery_level NUMERIC(5, 2),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 6. Table: users
+--    Crucial update: user_id is PK and FK to auth.users.id
+--    Also includes fname and lname as per your ERD.
+CREATE TABLE public.users (
+    user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE, -- Links directly to Supabase Auth user ID
+    fname TEXT,
+    lname TEXT,
+    contact_number TEXT,
+    is_admin BOOLEAN DEFAULT FALSE, -- Flag for admin status (can be used for RLS)
+    last_login TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Trigger for updated_at on users table
+CREATE OR REPLACE FUNCTION update_updated_at_column_users()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_users_updated_at
+BEFORE UPDATE ON public.users
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at_column_users();
+
+
+-- 7. Table: admin_profiles
+--    Links to public.users.user_id (which in turn links to auth.users.id)
+--    Removes redundant email/password_hash, as per best practice with Supabase Auth.
+CREATE TABLE public.admin_profiles (
+    admin_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID UNIQUE REFERENCES public.users(user_id) ON DELETE CASCADE, -- Links to your public.users table
+    -- email TEXT UNIQUE NOT NULL, -- Removed: managed by auth.users
+    -- password_hash TEXT NOT NULL, -- Removed: managed by auth.users
+    full_name TEXT, -- Can be derived from public.users.fname/lname or stored separately
+    access_level ACCESS_LEVEL NOT NULL DEFAULT 'viewer',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Trigger for updated_at on admin_profiles table
+CREATE OR REPLACE FUNCTION update_updated_at_column_admin_profiles()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_admin_profiles_updated_at
+BEFORE UPDATE ON public.admin_profiles
+FOR EACH ROW
+EXECUTE FUNCTION update_updated_at_column_admin_profiles();
+
+
+-- 8. Table: user_subscription
+--    Relationship to users and subscription_plans
+CREATE TABLE public.user_subscription (
+    user_subscription_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.users(user_id) ON DELETE CASCADE, -- Foreign Key to public.users table
+    plan_id UUID NOT NULL REFERENCES public.subscription_plans(plan_id) ON DELETE RESTRICT,
+    start_date TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    end_date TIMESTAMP WITH TIME ZONE NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    current_daily_mwh_consumed NUMERIC(10, 3) DEFAULT 0.0,
+    last_quota_reset TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    payment_references TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE (user_id, plan_id, end_date)
+);
+
+-- 9. Table: payment
+--    Relationship to users and user_subscription
+CREATE TABLE public.payment (
+    payment_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.users(user_id) ON DELETE CASCADE,
+    user_subscription_id UUID REFERENCES public.user_subscription(user_subscription_id) ON DELETE SET NULL,
+    amount NUMERIC(10, 2) NOT NULL,
+    currency TEXT DEFAULT 'PHP' NOT NULL,
+    payment_date TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    payment_method TEXT,
+    transaction_id TEXT UNIQUE,
+    payment_status PAYMENT_STATUS NOT NULL,
+    transaction_reference TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 10. Table: daily_energy_usage
+--     Relationship to users and user_subscription
+CREATE TABLE public.daily_energy_usage (
+    daily_usage_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.users(user_id) ON DELETE CASCADE,
+    usage_date DATE NOT NULL,
+    total_energy_used_mwh NUMERIC(10, 3) DEFAULT 0.0,
+    subscription_reference UUID REFERENCES public.user_subscription(user_subscription_id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE (user_id, usage_date)
+);
+
+-- 11. Table: charging_port
+--     Relationship to charging_station
+CREATE TABLE public.charging_port (
+    port_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    station_id UUID NOT NULL REFERENCES public.charging_station(station_id) ON DELETE CASCADE,
+    port_number INT NOT NULL,
+    port_type TEXT NOT NULL,
+    is_occupied BOOLEAN DEFAULT FALSE,
+    current_status PORT_STATUS NOT NULL DEFAULT 'available',
+    voltage NUMERIC(5, 2),
+    amperage NUMERIC(5, 2),
+    last_status_update TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    is_publicly_visible BOOLEAN DEFAULT TRUE,
+    esp32_device_id TEXT UNIQUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE (station_id, port_number)
+);
+
+-- 12. Table: charging_session
+--     Relationship to users, charging_port, charging_station
+CREATE TABLE public.charging_session (
+    session_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.users(user_id) ON DELETE RESTRICT,
+    port_id UUID NOT NULL REFERENCES public.charging_port(port_id) ON DELETE RESTRICT,
+    station_id UUID NOT NULL REFERENCES public.charging_station(station_id) ON DELETE RESTRICT,
+    start_time TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    end_time TIMESTAMP WITH TIME ZONE,
+    energy_consumed_mwh NUMERIC(10, 3) DEFAULT 0.0,
+    is_premium BOOLEAN NOT NULL,
+    session_status SESSION_STATUS NOT NULL DEFAULT 'active',
+    initial_battery_level NUMERIC(5, 2),
+    final_battery_level NUMERIC(5, 2),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 13. Table: notification
+--     Relationship to users
+CREATE TABLE public.notification (
+    notification_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.users(user_id) ON DELETE CASCADE,
+    notification_type NOTIFICATION_TYPE NOT NULL,
+    notification_context TEXT,
+    notification_content TEXT NOT NULL,
+    is_read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 14. Table: station_maintenance
+--     Relationship to charging_station
+CREATE TABLE public.station_maintenance (
+    maintenance_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    station_id UUID NOT NULL REFERENCES public.charging_station(station_id) ON DELETE CASCADE,
+    performed_by TEXT,
+    maintenance_date TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    description TEXT,
+    cost NUMERIC(10, 2),
+    next_scheduled_date DATE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Optional: Recreate Views if they were dropped or need to reflect new schema
+-- View for public station information
+CREATE OR REPLACE VIEW public_station_view AS
+SELECT
+    cs.station_id,
+    cs.station_name,
+    cs.location_description,
+    cs.latitude,
+    cs.longitude,
+    cs.current_battery_level,
+    cs.is_active,
+    COUNT(CASE WHEN cp.port_type = 'Standard' AND cp.current_status = 'available' THEN 1 END) AS available_free_ports,
+    COUNT(CASE WHEN cp.port_type = 'Fast' AND cp.current_status = 'available' THEN 1 END) AS available_premium_ports,
+    (SELECT sm.description FROM public.station_maintenance sm WHERE sm.station_id = cs.station_id ORDER BY sm.maintenance_date DESC LIMIT 1) AS last_maintenance_message,
+    cs.num_free_ports, -- Total configured free ports
+    cs.num_premium_ports -- Total configured premium ports
+FROM
+    public.charging_station cs
+LEFT JOIN -- Use LEFT JOIN to include stations even if they have no ports yet
+    public.charging_port cp ON cs.station_id = cp.station_id
+WHERE
+    cs.is_active = TRUE -- Only show active stations
+GROUP BY
+    cs.station_id, cs.station_name, cs.location_description, cs.latitude, cs.longitude, cs.current_battery_level, cs.is_active, cs.num_free_ports, cs.num_premium_ports;
+
+
+-- View for active user charging sessions
+CREATE OR REPLACE VIEW active_charging_sessions_view AS
+SELECT
+    cs.session_id,
+    u.user_id,
+    u.fname || ' ' || u.lname AS user_full_name, -- Concatenate first and last name
+    cp.port_id,
+    cp.port_number,
+    cst.station_id,
+    cst.station_name,
+    cs.start_time,
+    cs.is_premium,
+    cs.energy_consumed_mwh,
+    cp.amperage AS current_charging_amperage,
+    cp.voltage AS current_charging_voltage,
+    cp.current_status AS port_current_status,
+    us.current_daily_mwh_consumed AS user_daily_consumed_mwh,
+    sp.daily_mwh_limit AS user_daily_quota_mwh,
+    (sp.daily_mwh_limit - us.current_daily_mwh_consumed) AS remaining_quota_mwh
+FROM
+    public.charging_session cs
+JOIN
+    public.users u ON cs.user_id = u.user_id
+JOIN
+    public.charging_port cp ON cs.port_id = cp.port_id
+JOIN
+    public.charging_station cst ON cs.station_id = cst.station_id
+LEFT JOIN
+    public.user_subscription us ON cs.user_id = us.user_id AND us.is_active = TRUE AND NOW() BETWEEN us.start_date AND us.end_date -- Link to current active subscription for quota
+LEFT JOIN
+    public.subscription_plans sp ON us.plan_id = sp.plan_id
+WHERE
+    cs.session_status = 'active';
+
