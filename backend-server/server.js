@@ -106,159 +106,99 @@ mqttClient.on('message', async (topic, message) => {
         if (topic === `charger/status/${ESP32_STATION_CLIENT_ID}` && messageString === 'offline') {
             payload = {
                 status: "offline",
-                charger_state: "UNKNOWN", // Default state when whole station goes offline
+                charger_state: "UNKNOWN",
                 timestamp: Date.now(),
-                port_number: -1 // Special indicator for station-level offline message (will be ignored by port-specific logic)
+                port_number: -1 // Special indicator for station-level offline message
             };
-            console.warn(`Converted plain "offline" LWT to JSON for ${topic}`);
+            console.warn(`MQTT: Converted plain "offline" LWT to JSON for ${topic}`);
         } else {
-            // Attempt to parse as JSON for all other messages
             payload = JSON.parse(messageString);
         }
 
-        // Extract the deviceId (which is the station's MQTT Client ID)
-        const deviceId = topic.split('/')[2]; // e.g., ESP32_CHARGER_STATION_001
-
-        // Extract port_number from payload (will be undefined for generic station-level status)
+        const deviceId = topic.split('/')[2];
         const portNumberInDevice = payload.port_number;
 
-        // --- Guard: Skip processing if port_number is invalid or missing for a usage/status message ---
-        // Unless it's the specific station-level 'online' or 'offline' status.
         if ((topic.startsWith('charger/usage/') || topic.startsWith('charger/status/')) && (portNumberInDevice === undefined || portNumberInDevice < 1)) {
             if (topic === `charger/status/${ESP32_STATION_CLIENT_ID}` && (payload.status === 'online' || payload.status === 'offline')) {
-                // This is the overall station status (e.g., station came online/offline).
-                // It doesn't map to a specific port_id in the DB for consumption/charger_state.
-                console.log(`Station ${deviceId} is ${payload.status}. No specific port_id for this message.`);
+                console.log(`MQTT: Station ${deviceId} is ${payload.status}. No specific port_id for this message.`);
                 // You could update a 'station_status' table here if you had one.
                 return;
             }
-            console.warn(`Received message on ${topic} from ${deviceId} without a valid port_number. Skipping.`);
-            return; // Exit here for invalid portNumber messages
+            console.warn(`MQTT: Received message on ${topic} from ${deviceId} without a valid port_number. Skipping.`);
+            return;
         }
 
-        // --- Find the actual port_id (UUID) from charging_port table ---
-        // This query links the ESP32's ID and its internal port number to a unique DB port_id.
         const portIdResult = await pool.query(
             'SELECT port_id FROM charging_port WHERE device_mqtt_id = $1 AND port_number_in_device = $2',
             [deviceId, portNumberInDevice]
         );
-        const actualPortId = portIdResult.rows[0]?.port_id; // Get the port_id UUID
+        const actualPortId = portIdResult.rows[0]?.port_id;
 
         if (!actualPortId) {
-            console.warn(`No charging_port found for device_id: ${deviceId} and port_number_in_device: ${portNumberInDevice}. Skipping message processing.`);
-            return; // Cannot process if a specific port mapping is not found in DB
+            console.warn(`MQTT: No charging_port found for device_id: ${deviceId} and port_number_in_device: ${portNumberInDevice}. Skipping message processing.`);
+            return;
         }
 
-        // Determine unique key for session tracking using deviceId and internal port number
         const sessionKey = `${deviceId}_${portNumberInDevice}`;
-        let currentSessionId = activeChargerSessions[sessionKey]; // Get session_id from in-memory map
+        const currentSessionId = activeChargerSessions[sessionKey]; // Get session_id from in-memory map
 
-        // --- Handle charger/usage topic (for consumption data and session management) ---
+        // --- Handle charger/usage topic (for consumption data) ---
         if (topic.startsWith('charger/usage/')) {
             const { consumption, timestamp, charger_state } = payload;
-            const currentTimestamp = new Date(timestamp); // Convert milliseconds to Date object
+            const currentTimestamp = new Date(timestamp);
 
-            // Logic to START or RESUME a charging session
-            // This entire 'if' block ONLY executes if charger_state is 'ON'
-            if (charger_state === 'ON') {
-                if (!currentSessionId) { // No active session tracked in memory
-                    // Check if there's already an active session in DB for this port (e.g., backend restarted)
-                    const existingActiveSession = await pool.query(
-                        "SELECT session_id FROM charging_session WHERE port_id = $1 AND session_status = 'active'",
-                        [actualPortId]
-                    );
-
-                    if (existingActiveSession.rows.length === 0) {
-                        // No active session found in DB, create a new one
-                        const sessionResult = await pool.query(
-                            'INSERT INTO charging_session (port_id, start_time, session_status) VALUES ($1, $2, $3) RETURNING session_id',
-                            [actualPortId, currentTimestamp, 'active']
-                        );
-                        currentSessionId = sessionResult.rows[0].session_id; // Capture the new UUID
-                        activeChargerSessions[sessionKey] = currentSessionId; // Store in memory map
-                        console.log(`Started new charging session ${currentSessionId} for port ${actualPortId} (Device: ${deviceId}, PortNum: ${portNumberInDevice})`);
-                    } else {
-                        // Backend restarted, but session was already active in DB
-                        currentSessionId = existingActiveSession.rows[0].session_id;
-                        activeChargerSessions[sessionKey] = currentSessionId;
-                        console.log(`Resumed existing active session ${currentSessionId} for port ${actualPortId} (Device: ${deviceId}, PortNum: ${portNumberInDevice})`);
-                    }
-                }
-
-                // --- INSERT Consumption Data (ONLY if charger_state is ON AND a valid session is active) ---
-                if (currentSessionId) { // This check is crucial to prevent null session_id inserts
+            if (charger_state === 'ON') { // Only insert consumption if charger is ON
+                if (currentSessionId) { // Only insert if an active session is tracked
                     await pool.query(
                         'INSERT INTO consumption_data (session_id, device_id, consumption_watts, timestamp, charger_state) VALUES ($1, $2, $3, TO_TIMESTAMP($4 / 1000.0), $5)',
                         [currentSessionId, deviceId, consumption, timestamp, charger_state]
                     );
-                    console.log(`Stored consumption for ${deviceId} Port ${portNumberInDevice} in session ${currentSessionId}: ${consumption}W`);
+                    console.log(`MQTT: Stored consumption for ${deviceId} Port ${portNumberInDevice} in session ${currentSessionId}: ${consumption}W`);
 
-                    // --- Update energy_consumed_kwh in charging_session ---
-                    const intervalSeconds = 10; // ESP32 publishes every 10 seconds
-                    const kwhIncrement = (consumption * intervalSeconds) / (1000 * 3600); // Watts * seconds / (1000W/kW * 3600s/hr)
+                    const intervalSeconds = 10;
+                    const kwhIncrement = (consumption * intervalSeconds) / (1000 * 3600);
 
                     await pool.query(
                         'UPDATE charging_session SET energy_consumed_kwh = COALESCE(energy_consumed_kwh, 0) + $1, last_status_update = $2 WHERE session_id = $3',
                         [kwhIncrement, currentTimestamp, currentSessionId]
                     );
                 } else {
-                    console.error(`ERROR: Charger ON for ${deviceId} Port ${portNumberInDevice} but currentSessionId is null. Consumption insert skipped.`);
+                    console.warn(`MQTT: Charger ON for ${deviceId} Port ${portNumberInDevice} but no active session found in memory. Consumption insert skipped.`);
+                    // This could happen if backend restarted or session wasn't initiated via API.
+                    // You might want more robust recovery here (e.g., query DB for active session).
                 }
-
             } else if (charger_state === 'OFF') {
-                // --- Logic to END a charging session ---
-                // IMPORTANT: NO consumption_data INSERT occurs when charger_state is OFF.
-                // Consumption is only recorded during active (ON) sessions.
-                if (currentSessionId) { // Only try to end a session if one is being tracked
-                    await pool.query(
-                        "UPDATE charging_session SET end_time = $1, session_status = 'completed', last_status_update = $2 WHERE session_id = $3 AND session_status = 'active'",
-                        [currentTimestamp, currentTimestamp, currentSessionId]
-                    );
-                    console.log(`Ended charging session ${currentSessionId} for port ${actualPortId} (Device: ${deviceId}, PortNum: ${portNumberInDevice})`);
-                    delete activeChargerSessions[sessionKey]; // Remove from tracking map
-                } else {
-                    console.log(`Received OFF state for ${deviceId} Port ${portNumberInDevice}, but no active session found to end.`);
-                }
+                // No session ending here. Session ending is handled by API POST /control.
+                console.log(`MQTT: Received OFF state for ${deviceId} Port ${portNumberInDevice}. Consumption not logged for OFF state.`);
             }
         }
 
-        // --- Handle charger/status topic (for overall device/port status updates) ---
+        // --- Handle charger/status topic (for device/port status updates) ---
         else if (topic.startsWith('charger/status/')) {
             const { status, charger_state, timestamp } = payload;
             const currentTimestamp = new Date(timestamp);
 
-            // Insert into device_status_logs (historical log of status changes)
             await pool.query(
                 'INSERT INTO device_status_logs (device_id, port_id, status_message, charger_state, timestamp) VALUES ($1, $2, $3, TO_TIMESTAMP($4 / 1000.0), $5)',
                 [deviceId, actualPortId, status, charger_state, timestamp]
             );
 
-            // Upsert into current_device_status (latest status for quick retrieval)
-            // ON CONFLICT uses (device_id, port_id) as its unique constraint
             await pool.query(
-                'INSERT INTO current_device_status (device_id, port_id, status_message, charger_state, last_update) VALUES ($1, $2, $3, TO_TIMESTAMP($4 / 1000.0)) ON CONFLICT (device_id, port_id) DO UPDATE SET status_message = $3, charger_state = $4, last_update = TO_TIMESTAMP($5 / 1000.0)',
+                'INSERT INTO current_device_status (device_id, port_id, status_message, charger_state, last_update) VALUES ($1, $2, $3, $4, TO_TIMESTAMP($5 / 1000.0)) ON CONFLICT (device_id, port_id) DO UPDATE SET status_message = $3, charger_state = $4, last_update = TO_TIMESTAMP($5 / 1000.0)',
                 [deviceId, actualPortId, status, charger_state, timestamp]
             );
-            console.log(`Updated status for ${deviceId} Port ${portNumberInDevice}: ${status}, Charger: ${charger_state}`);
+            console.log(`MQTT: Updated status for ${deviceId} Port ${portNumberInDevice}: ${status}, Charger: ${charger_state}`);
 
-            // Update charging_port table for real-time status display in the main schema
             await pool.query(
-                'UPDATE charging_port SET current_status = $1, is_active = $2, last_status_update = $3 WHERE port_id = $4',
+                'UPDATE charging_port SET current_status = $1, is_occupied = $2, last_status_update = $3 WHERE port_id = $4',
                 [status, (charger_state === 'ON'), currentTimestamp, actualPortId]
             );
         }
 
-        // --- Handle other existing station topics (if any) ---
-        else if (topic.startsWith('station/')) {
-            console.log(`Processing station data: ${JSON.stringify(payload)}`);
-            // Add your specific logic for station-level data here if needed
-        }
-
     } catch (error) {
-        console.error('Error processing MQTT message:', error);
+        console.error('MQTT: Error processing MQTT message:', error);
     }
 });
-
 
 mqttClient.on('error', (err) => {
     console.error('MQTT error:', err);
@@ -333,26 +273,91 @@ app.get('/api/devices/status', async (req, res) => {
 });
 
 // Send control command to a specific device (station) AND internal port number
-app.post('/api/devices/:deviceId/:portNumber/control', (req, res) => {
+app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => { // Added 'async'
     const { deviceId, portNumber } = req.params;
-    const { command } = req.body; // Expects { "command": "ON" | "OFF", "port_number": 1 | 2 }
+    const { command, user_id, station_id } = req.body; // <--- IMPORTANT: Now expecting user_id and station_id
 
     if (!command || (command !== 'ON' && command !== 'OFF')) {
         return res.status(400).json({ error: 'Invalid command. Must be "ON" or "OFF".' });
     }
 
-    // Publish to the station's control topic, but payload specifies the port to control
     const controlTopic = `charger/control/${deviceId}`;
-    const payload = JSON.stringify({ command: command, port_number: parseInt(portNumber) }); // Payload includes port_number
+    const internalPortNumber = parseInt(portNumber); // Ensure it's an integer
 
-    mqttClient.publish(controlTopic, payload, { qos: 1 }, (err) => {
-        if (err) {
-            console.error(`Failed to publish control command to ${controlTopic}:`, err);
-            return res.status(500).json({ error: 'Failed to send control command' });
+    try {
+        // Find the actual port_id (UUID) from charging_port table
+        const portIdResult = await pool.query(
+            'SELECT port_id FROM charging_port WHERE device_mqtt_id = $1 AND port_number_in_device = $2',
+            [deviceId, internalPortNumber]
+        );
+        const actualPortId = portIdResult.rows[0]?.port_id;
+
+        if (!actualPortId) {
+            console.warn(`API: Port not found for deviceId ${deviceId} and portNumber ${internalPortNumber}.`);
+            return res.status(404).json({ error: `Port ${internalPortNumber} not found for device ${deviceId}.` });
         }
-        console.log(`Sent command '${command}' to ${deviceId} Port ${portNumber}.`);
-        res.json({ status: 'Command sent', deviceId, portNumber, command }); // Return portNumber in response
-    });
+
+        // Session Management Logic (Moved from MQTT handler to API handler)
+        const sessionKey = `${deviceId}_${internalPortNumber}`;
+        let currentSessionId = activeChargerSessions[sessionKey];
+
+        if (command === 'ON') {
+            if (!user_id || !station_id) {
+                return res.status(400).json({ error: 'user_id and station_id are required to start a session.' });
+            }
+
+            // Check if there's already an active session in DB for this port
+            const existingActiveSession = await pool.query(
+                "SELECT session_id FROM charging_session WHERE port_id = $1 AND session_status = 'active'",
+                [actualPortId]
+            );
+
+            if (existingActiveSession.rows.length === 0) {
+                // No active session found in DB, create a new one
+                const sessionResult = await pool.query(
+                    'INSERT INTO charging_session (user_id, port_id, station_id, start_time, session_status, is_premium) VALUES ($1, $2, $3, NOW(), $4, $5) RETURNING session_id',
+                    [user_id, actualPortId, station_id, 'active', true] // Assuming premium for now, adjust as needed
+                );
+                currentSessionId = sessionResult.rows[0].session_id;
+                activeChargerSessions[sessionKey] = currentSessionId;
+                console.log(`API: Started new charging session ${currentSessionId} for port ${actualPortId} (User: ${user_id})`);
+            } else {
+                // Session already active (e.g., backend restarted, or multiple ON commands)
+                currentSessionId = existingActiveSession.rows[0].session_id;
+                activeChargerSessions[sessionKey] = currentSessionId; // Ensure in-memory map is updated
+                console.log(`API: Resuming existing active session ${currentSessionId} for port ${actualPortId} (User: ${user_id})`);
+            }
+        } else if (command === 'OFF') {
+            if (currentSessionId) {
+                // End the active session in DB
+                await pool.query(
+                    "UPDATE charging_session SET end_time = NOW(), session_status = 'completed', last_status_update = NOW() WHERE session_id = $1 AND session_status = 'active'",
+                    [currentSessionId]
+                );
+                console.log(`API: Ended charging session ${currentSessionId} for port ${actualPortId}`);
+                delete activeChargerSessions[sessionKey]; // Remove from tracking map
+            } else {
+                console.log(`API: Received OFF command for ${deviceId} Port ${internalPortNumber}, but no active session found to end in memory.`);
+                // Optionally, check DB for active session if in-memory map is not definitive
+            }
+        }
+
+        // Publish MQTT command (payload remains the same for ESP32)
+        const mqttPayload = JSON.stringify({ command: command, port_number: internalPortNumber });
+
+        mqttClient.publish(controlTopic, mqttPayload, { qos: 1 }, (err) => {
+            if (err) {
+                console.error(`Failed to publish control command to ${controlTopic}:`, err);
+                return res.status(500).json({ error: 'Failed to send control command via MQTT' });
+            }
+            console.log(`API: Sent MQTT command '${command}' to ${deviceId} Port ${internalPortNumber}.`);
+            res.json({ status: 'Command sent', deviceId, portNumber: internalPortNumber, command, sessionId: currentSessionId });
+        });
+
+    } catch (error) {
+        console.error('Error processing control command:', error);
+        res.status(500).json({ error: `Failed to process control command: ${error.message}` });
+    }
 });
 
 
