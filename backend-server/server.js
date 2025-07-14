@@ -9,9 +9,9 @@ const PORT = process.env.PORT || 3001;
 
 const allowedOrigins = [
     'http://localhost:3000', // Your local frontend development server
-    // Add your deployed frontend URL here when it's ready, e.g.:
-    // 'https://your-frontend-app.onrender.com',
-    // 'https://your-custom-domain.com'
+    // !!! IMPORTANT: Add your deployed frontend URL here when it's ready !!!
+    // e.g., 'https://your-frontend-app.onrender.com',
+    // e.g., 'https://your-custom-domain.com'
   ];
 
 // --- Global state for active sessions (maps `${deviceId}_${portNumberInDevice}` -> session_id) ---
@@ -22,13 +22,16 @@ const activeChargerSessions = {};
 // Enables Cross-Origin Resource Sharing
 app.use(cors({
     origin: function (origin, callback) {
-      if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      // Allow requests with no origin (like mobile apps or curl requests)
+      // OR if the origin is in our allowed list
+      if (!origin || allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
-        callback(new Error('Not allowed by CORS'));
+        console.warn(`CORS: Blocking request from origin: ${origin}`);
+        callback(new Error('Not allowed by CORS'), false);
       }
     },
-    credentials: true
+    credentials: true // Important if you're sending cookies or authorization headers
   }));
 app.use(express.json()); // Parses incoming JSON requests
 
@@ -281,7 +284,7 @@ app.get('/', (req, res) => {
 app.get('/api/devices/:deviceId/:portNumber/consumption', async (req, res) => {
     const { deviceId, portNumber } = req.params;
     try {
-        // First, find the actual port_id (UUID) from charging_port table
+        // Find the actual port_id (UUID) from charging_port table
         const portIdResult = await pool.query(
             'SELECT port_id FROM charging_port WHERE device_mqtt_id = $1 AND port_number_in_device = $2',
             [deviceId, parseInt(portNumber)] // Ensure portNumber is integer
@@ -289,6 +292,7 @@ app.get('/api/devices/:deviceId/:portNumber/consumption', async (req, res) => {
         const actualPortId = portIdResult.rows[0]?.port_id;
 
         if (!actualPortId) {
+            console.warn(`API: Port not found for deviceId ${deviceId} and portNumber ${portNumber}.`);
             return res.status(404).json({ error: 'Port not found for this device.' });
         }
 
@@ -331,7 +335,7 @@ app.get('/api/devices/status', async (req, res) => {
 // Send control command to a specific device (station) AND internal port number
 app.post('/api/devices/:deviceId/:portNumber/control', (req, res) => {
     const { deviceId, portNumber } = req.params;
-    const { command } = req.body;
+    const { command } = req.body; // Expects { "command": "ON" | "OFF", "port_number": 1 | 2 }
 
     if (!command || (command !== 'ON' && command !== 'OFF')) {
         return res.status(400).json({ error: 'Invalid command. Must be "ON" or "OFF".' });
