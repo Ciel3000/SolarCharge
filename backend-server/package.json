@@ -16,7 +16,6 @@
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.2",
     "mqtt": "^4.3.7",
-    "node-fetch": "^3.3.2",
     "pg": "^8.11.3"
   },
   "devDependencies": {
