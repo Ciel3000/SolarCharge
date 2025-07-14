@@ -1519,242 +1519,6 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
-// Error handling middleware (catches unhandled errors in async routes)
-app.use((err, req, res, next) => {
-    console.error(err.stack);
-    logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.BACKEND, `Unhandled API error: ${err.message}`, req.user?.user_id);
-    res.status(500).json({ error: 'Something went wrong!' });
-});
-
-// 404 handler for unmatched routes
-app.use('*', (req, res) => {
-    res.status(404).json({ error: 'Route not found' });
-});
-
-// Start server
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-    logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Server started on port ${PORT}`);
-});
-
-// Graceful shutdown handlers
-process.on('SIGINT', () => { // Handles Ctrl+C
-    console.log('Shutting down server (SIGINT)...');
-    logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, 'Server shutting down (SIGINT)').finally(() => {
-        mqttClient.end(() => { // Close MQTT client first
-            console.log('MQTT client disconnected.');
-            pool.end(() => { // Then close database pool
-                console.log('Database pool closed.');
-                // Clear all active timers on shutdown
-                for (const key in activePortTimers) {
-                    clearTimeout(activePortTimers[key].timerId);
-                }
-                process.exit(0);
-            });
-        });
-    });
-});
-
-process.on('SIGTERM', () => { // Handles termination signals from Render
-    console.log('Shutting down server (SIGTERM)...');
-    logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, 'Server shutting down (SIGTERM)').finally(() => {
-        mqttClient.end(() => { // Close MQTT client first
-            console.log('MQTT client disconnected.');
-            pool.end(() => { // Then close database pool
-                console.log('Database pool closed.');
-                // Clear all active timers on shutdown
-                for (const key in activePortTimers) {
-                    clearTimeout(activePortTimers[key].timerId);
-                }
-                process.exit(0);
-            });
-        });
-    });
-});
-
-// --- Supabase JWT Authentication Middleware ---
-// Helper to get JWKS and verify JWT
-const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
-let cachedJwks = null;
-let cachedJwksAt = 0;
-async function getSupabaseJwks() {
-    if (cachedJwks && Date.now() - cachedJwksAt < 60 * 60 * 1000) return cachedJwks;
-    try {
-        const res = await fetch(SUPABASE_JWKS_URL);
-        if (!res.ok) throw new Error(`Failed to fetch JWKS: ${res.statusText}`);
-        const { keys } = await res.json();
-        cachedJwks = keys;
-        cachedJwksAt = Date.now();
-        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.AUTH, 'Successfully fetched Supabase JWKS');
-        return keys;
-    } catch (err) {
-        console.error('Failed to fetch JWKS:', err.message);
-        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.AUTH, `Failed to fetch Supabase JWKS: ${err.message}`);
-        throw err;
-    }
-}
-function getKeyFromJwks(kid, jwks) {
-    return jwks.find(k => k.kid === kid);
-}
-function certToPEM(cert) {
-    // Convert x5c to PEM format
-    let pem = cert.match(/.{1,64}/g).join('\n');
-    pem = `-----BEGIN CERTIFICATE-----\n${pem}\n-----END CERTIFICATE-----\n`;
-    return pem;
-}
-async function verifySupabaseJWT(token) {
-     if (!SUPABASE_JWT_SECRET) {
-        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.AUTH, 'SUPABASE_JWT_SECRET environment variable is not set!');
-        throw new Error('Server misconfiguration: JWT secret is missing for HS256 verification.');
-    }
-
-    try {
-        // For HS256, you directly use the shared secret for verification
-        // The `kid` is not used in symmetric (HS256) verification against a JWKS.
-        return jwt.verify(token, SUPABASE_JWT_SECRET, { algorithms: ['HS256'] });
-    } catch (error) {
-        // Re-throw the error after logging for consistency
-        console.error('JWT verification error with HS256:', error.message);
-        throw error;
-    }
-}
-
-// Express middleware
-async function supabaseAuthMiddleware(req, res, next) {
-    try {
-        const auth = req.headers['authorization'];
-        if (!auth || !auth.startsWith('Bearer ')) {
-            logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.AUTH, 'Missing or invalid Authorization header');
-            return res.status(401).json({ error: 'Missing or invalid Authorization header' });
-        }
-        const token = auth.replace('Bearer ', '');
-        const payload = await verifySupabaseJWT(token);
-        req.user = {
-            user_id: payload.sub,
-            email: payload.email,
-            role: payload.role,
-            // Add more claims if needed
-        };
-        next();
-    } catch (err) {
-        console.error('Auth error:', err.message);
-        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.AUTH, `Authentication failed: ${err.message}`);
-        return res.status(401).json({ error: 'Invalid or expired token' });
-    }
-}
-
-// --- Role-based admin middleware ---
-async function requireAdmin(req, res, next) {
-    try {
-        // req.user.user_id is set by auth middleware
-        const { user_id } = req.user;
-        const result = await pool.query('SELECT is_admin FROM users WHERE user_id = $1', [user_id]);
-        if (result.rows.length === 0 || !result.rows[0].is_admin) {
-            logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.AUTH, `Unauthorized admin access attempt by user ${user_id}`);
-            return res.status(403).json({ error: 'Admin access required' });
-        }
-        next();
-    } catch (err) {
-        console.error('Admin check error:', err.message);
-        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.AUTH, `Admin check error for user ${req.user?.user_id}: ${err.message}`);
-        return res.status(500).json({ error: 'Server error' });
-    }
-}
-
-// --- /api/me endpoint ---
-app.get('/api/me', supabaseAuthMiddleware, async (req, res) => {
-    try {
-        const { user_id } = req.user;
-        // Get user profile
-        const userResult = await pool.query('SELECT user_id, fname, lname, is_admin FROM users WHERE user_id = $1', [user_id]);
-        if (userResult.rows.length === 0) {
-            logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `User profile request for non-existent user ${user_id}`);
-            return res.status(404).json({ error: 'User not found' });
-        }
-        const user = userResult.rows[0];
-        let admin_access_level = null;
-        if (user.is_admin) {
-            // Get admin profile
-            const adminResult = await pool.query('SELECT access_level FROM admin_profiles WHERE user_id = $1', [user_id]);
-            if (adminResult.rows.length > 0) {
-                admin_access_level = adminResult.rows[0].access_level;
-            }
-        }
-        res.json({
-            user_id: user.user_id,
-            fname: user.fname,
-            lname: user.lname,
-            is_admin: user.is_admin,
-            admin_access_level
-        });
-        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User profile fetched for ${user_id}`);
-    } catch (err) {
-        console.error('/api/me error:', err.message);
-        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `/api/me error for user ${req.user?.user_id}: ${err.message}`);
-        res.status(500).json({ error: 'Server error' });
-    }
-});
-
-// --- Example admin-only endpoint ---
-app.get('/api/admin/users', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
-    try {
-        const result = await pool.query(`
-            SELECT 
-                user_id, 
-                fname, 
-                lname, 
-                email, 
-                contact_number,
-                is_admin, 
-                created_at, 
-                last_login
-            FROM users
-            ORDER BY created_at DESC
-        `);
-        
-        res.json(result.rows);
-        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, 'Admin users list fetched successfully', req.user.user_id);
-    } catch (err) { // <--- This catch block is triggered
-        console.error('Admin users error:', err.message); // <--- THIS IS THE KEY!
-        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Admin users error: ${err.message}`, req.user.user_id);
-        res.status(500).json({ error: 'Server error' }); // Sends the generic error to frontend
-    }
-});
-
-// --- Example user-only endpoint (profile) ---
-app.get('/api/user/profile', supabaseAuthMiddleware, async (req, res) => {
-    try {
-        const { user_id } = req.user;
-        const result = await pool.query('SELECT user_id, fname, lname, is_admin FROM users WHERE user_id = $1', [user_id]);
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-        res.json(result.rows[0]);
-        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User profile fetched for ${user_id}`);
-    } catch (err) {
-        console.error('User profile error:', err.message);
-        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `User profile error for ${req.user?.user_id}: ${err.message}`);
-        res.status(500).json({ error: 'Server error' });
-    }
-});
-
-// Helper function to validate consumption readings
-function validateConsumption(consumption) {
-    // If consumption is null, undefined, NaN, or negative, return 0
-    if (consumption === null || consumption === undefined || isNaN(consumption) || consumption < 0) {
-        return 0;
-    }
-    
-    // If consumption is unreasonably high (e.g., > 10kW), cap it
-    // Adjust this threshold based on your actual charging hardware capabilities
-    if (consumption > MAX_REASONABLE_CONSUMPTION) {
-        return MAX_REASONABLE_CONSUMPTION;
-    }
-    
-    // Return the validated consumption
-    return consumption;
-}
-
 // Get consumption data for a specific session
 app.get('/api/sessions/:sessionId/consumption', async (req, res) => {
     const { sessionId } = req.params;
@@ -2029,6 +1793,246 @@ app.get('/api/user/usage', supabaseAuthMiddleware, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch usage data.' });
     }
 });
+
+// --- /api/me endpoint ---
+app.get('/api/me', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        // Get user profile
+        const userResult = await pool.query('SELECT user_id, fname, lname, is_admin FROM users WHERE user_id = $1', [user_id]);
+        if (userResult.rows.length === 0) {
+            logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `User profile request for non-existent user ${user_id}`);
+            return res.status(404).json({ error: 'User not found' });
+        }
+        const user = userResult.rows[0];
+        let admin_access_level = null;
+        if (user.is_admin) {
+            // Get admin profile
+            const adminResult = await pool.query('SELECT access_level FROM admin_profiles WHERE user_id = $1', [user_id]);
+            if (adminResult.rows.length > 0) {
+                admin_access_level = adminResult.rows[0].access_level;
+            }
+        }
+        res.json({
+            user_id: user.user_id,
+            fname: user.fname,
+            lname: user.lname,
+            is_admin: user.is_admin,
+            admin_access_level
+        });
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User profile fetched for ${user_id}`);
+    } catch (err) {
+        console.error('/api/me error:', err.message);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `/api/me error for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// --- Example admin-only endpoint ---
+app.get('/api/admin/users', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                user_id, 
+                fname, 
+                lname, 
+                email, 
+                contact_number,
+                is_admin, 
+                created_at, 
+                last_login
+            FROM users
+            ORDER BY created_at DESC
+        `);
+        
+        res.json(result.rows);
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, 'Admin users list fetched successfully', req.user.user_id);
+    } catch (err) { // <--- This catch block is triggered
+        console.error('Admin users error:', err.message); // <--- THIS IS THE KEY!
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Admin users error: ${err.message}`, req.user.user_id);
+        res.status(500).json({ error: 'Server error' }); // Sends the generic error to frontend
+    }
+});
+
+// --- Example user-only endpoint (profile) ---
+app.get('/api/user/profile', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        const result = await pool.query('SELECT user_id, fname, lname, is_admin FROM users WHERE user_id = $1', [user_id]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+        res.json(result.rows[0]);
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User profile fetched for ${user_id}`);
+    } catch (err) {
+        console.error('User profile error:', err.message);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `User profile error for ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+
+// Error handling middleware (catches unhandled errors in async routes)
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.BACKEND, `Unhandled API error: ${err.message}`, req.user?.user_id);
+    res.status(500).json({ error: 'Something went wrong!' });
+});
+
+// 404 handler for unmatched routes
+app.use('*', (req, res) => {
+    res.status(404).json({ error: 'Route not found' });
+});
+
+// Start server
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Server started on port ${PORT}`);
+});
+
+// Graceful shutdown handlers
+process.on('SIGINT', () => { // Handles Ctrl+C
+    console.log('Shutting down server (SIGINT)...');
+    logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, 'Server shutting down (SIGINT)').finally(() => {
+        mqttClient.end(() => { // Close MQTT client first
+            console.log('MQTT client disconnected.');
+            pool.end(() => { // Then close database pool
+                console.log('Database pool closed.');
+                // Clear all active timers on shutdown
+                for (const key in activePortTimers) {
+                    clearTimeout(activePortTimers[key].timerId);
+                }
+                process.exit(0);
+            });
+        });
+    });
+});
+
+process.on('SIGTERM', () => { // Handles termination signals from Render
+    console.log('Shutting down server (SIGTERM)...');
+    logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, 'Server shutting down (SIGTERM)').finally(() => {
+        mqttClient.end(() => { // Close MQTT client first
+            console.log('MQTT client disconnected.');
+            pool.end(() => { // Then close database pool
+                console.log('Database pool closed.');
+                // Clear all active timers on shutdown
+                for (const key in activePortTimers) {
+                    clearTimeout(activePortTimers[key].timerId);
+                }
+                process.exit(0);
+            });
+        });
+    });
+});
+
+// --- Supabase JWT Authentication Middleware ---
+// Helper to get JWKS and verify JWT
+const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
+let cachedJwks = null;
+let cachedJwksAt = 0;
+async function getSupabaseJwks() {
+    if (cachedJwks && Date.now() - cachedJwksAt < 60 * 60 * 1000) return cachedJwks;
+    try {
+        const res = await fetch(SUPABASE_JWKS_URL);
+        if (!res.ok) throw new Error(`Failed to fetch JWKS: ${res.statusText}`);
+        const { keys } = await res.json();
+        cachedJwks = keys;
+        cachedJwksAt = Date.now();
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.AUTH, 'Successfully fetched Supabase JWKS');
+        return keys;
+    } catch (err) {
+        console.error('Failed to fetch JWKS:', err.message);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.AUTH, `Failed to fetch Supabase JWKS: ${err.message}`);
+        throw err;
+    }
+}
+function getKeyFromJwks(kid, jwks) {
+    return jwks.find(k => k.kid === kid);
+}
+function certToPEM(cert) {
+    // Convert x5c to PEM format
+    let pem = cert.match(/.{1,64}/g).join('\n');
+    pem = `-----BEGIN CERTIFICATE-----\n${pem}\n-----END CERTIFICATE-----\n`;
+    return pem;
+}
+async function verifySupabaseJWT(token) {
+     if (!SUPABASE_JWT_SECRET) {
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.AUTH, 'SUPABASE_JWT_SECRET environment variable is not set!');
+        throw new Error('Server misconfiguration: JWT secret is missing for HS256 verification.');
+    }
+
+    try {
+        // For HS256, you directly use the shared secret for verification
+        // The `kid` is not used in symmetric (HS256) verification against a JWKS.
+        return jwt.verify(token, SUPABASE_JWT_SECRET, { algorithms: ['HS256'] });
+    } catch (error) {
+        // Re-throw the error after logging for consistency
+        console.error('JWT verification error with HS256:', error.message);
+        throw error;
+    }
+}
+
+// Express middleware
+async function supabaseAuthMiddleware(req, res, next) {
+    try {
+        const auth = req.headers['authorization'];
+        if (!auth || !auth.startsWith('Bearer ')) {
+            logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.AUTH, 'Missing or invalid Authorization header');
+            return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+        }
+        const token = auth.replace('Bearer ', '');
+        const payload = await verifySupabaseJWT(token);
+        req.user = {
+            user_id: payload.sub,
+            email: payload.email,
+            role: payload.role,
+            // Add more claims if needed
+        };
+        next();
+    } catch (err) {
+        console.error('Auth error:', err.message);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.AUTH, `Authentication failed: ${err.message}`);
+        return res.status(401).json({ error: 'Invalid or expired token' });
+    }
+}
+
+// --- Role-based admin middleware ---
+async function requireAdmin(req, res, next) {
+    try {
+        // req.user.user_id is set by auth middleware
+        const { user_id } = req.user;
+        const result = await pool.query('SELECT is_admin FROM users WHERE user_id = $1', [user_id]);
+        if (result.rows.length === 0 || !result.rows[0].is_admin) {
+            logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.AUTH, `Unauthorized admin access attempt by user ${user_id}`);
+            return res.status(403).json({ error: 'Admin access required' });
+        }
+        next();
+    } catch (err) {
+        console.error('Admin check error:', err.message);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.AUTH, `Admin check error for user ${req.user?.user_id}: ${err.message}`);
+        return res.status(500).json({ error: 'Server error' });
+    }
+}
+
+
+
+// Helper function to validate consumption readings
+function validateConsumption(consumption) {
+    // If consumption is null, undefined, NaN, or negative, return 0
+    if (consumption === null || consumption === undefined || isNaN(consumption) || consumption < 0) {
+        return 0;
+    }
+    
+    // If consumption is unreasonably high (e.g., > 10kW), cap it
+    // Adjust this threshold based on your actual charging hardware capabilities
+    if (consumption > MAX_REASONABLE_CONSUMPTION) {
+        return MAX_REASONABLE_CONSUMPTION;
+    }
+    
+    // Return the validated consumption
+    return consumption;
+}
+
 
 
 // --- Periodic check for stale sessions ---
