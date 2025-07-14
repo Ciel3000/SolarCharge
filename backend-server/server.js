@@ -1603,16 +1603,15 @@ function certToPEM(cert) {
     return pem;
 }
 async function verifySupabaseJWT(token) {
-    const decoded = jwt.decode(token, { complete: true });
-    if (!decoded) throw new Error('Invalid JWT: Not decodable');
-    const kid = decoded.header.kid;
-    const jwks = await getSupabaseJwks();
-    const key = getKeyFromJwks(kid, jwks);
-    if (!key) throw new Error('No matching JWKS key found for kid: ' + kid);
-    if (!key.x5c || key.x5c.length === 0) throw new Error('JWKS key has no x5c certificate chain.');
+     if (!SUPABASE_JWT_SECRET) {
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.AUTH, 'SUPABASE_JWT_SECRET environment variable is not set!');
+        throw new Error('Server misconfiguration: JWT secret is missing.');
+    }
 
-    const pem = certToPEM(key.x5c[0]);
-    return jwt.verify(token, pem, { algorithms: ['RS256'] });
+    // For HS256, you directly use the secret for verification
+    // The kid (Key ID) is typically not used with symmetric signing like HS256
+    // You won't be looking for keys in a JWKS.
+    return jwt.verify(token, SUPABASE_JWT_SECRET, { algorithms: ['HS256'] });
 }
 
 // Express middleware
