@@ -14,7 +14,7 @@ const PORT = process.env.PORT || 3001;
 const activeChargerSessions = {};
 // activePortTimers: Maps `${deviceId}_${portNumberInDevice}` -> { timerId: setTimeout_ID, lastConsumptionTime: Date.now() }
 const activePortTimers = {};
-const INACTIVITY_TIMEOUT_SECONDS = 100; // 100 seconds for inactivity timeout
+const INACTIVITY_TIMEOUT_SECONDS = 60; // 60 seconds for inactivity timeout (changed from 100)
 
 // Middleware
 const allowedOrigins = [
@@ -92,32 +92,55 @@ async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortI
     try {
         // Check if the session is still active in the DB (important if backend restarted)
         const sessionCheck = await pool.query(
-            "SELECT session_status FROM charging_session WHERE session_id = $1",
+            "SELECT session_id, session_status, last_status_update FROM charging_session WHERE session_id = $1",
             [sessionId]
         );
 
         if (sessionCheck.rows.length > 0 && sessionCheck.rows[0].session_status === 'active') {
-            // Send OFF command to ESP32
-            const controlTopic = `charger/control/${deviceId}`;
-            const mqttPayload = JSON.stringify({ command: 'OFF', port_number: internalPortNumber });
-            mqttClient.publish(controlTopic, mqttPayload, { qos: 1 }, (err) => {
-                if (err) {
-                    console.error(`Failed to publish automatic OFF command to ${controlTopic}:`, err);
-                } else {
-                    console.log(`Automatically sent OFF command to ${deviceId} Port ${internalPortNumber} due to inactivity.`);
-                }
-            });
+            const lastUpdate = sessionCheck.rows[0].last_status_update;
+            const now = new Date();
+            
+            // Calculate seconds since last activity
+            const secondsSinceLastActivity = lastUpdate ? 
+                Math.floor((now - new Date(lastUpdate)) / 1000) : 
+                INACTIVITY_TIMEOUT_SECONDS + 1; // If no last_status_update, assume it's inactive
+            
+            console.log(`${sessionKey}: ${secondsSinceLastActivity} seconds since last activity.`);
+            
+            // Only deactivate if truly inactive for the timeout period
+            if (secondsSinceLastActivity >= INACTIVITY_TIMEOUT_SECONDS) {
+                // Send OFF command to ESP32
+                const controlTopic = `charger/control/${deviceId}`;
+                const mqttPayload = JSON.stringify({ command: 'OFF', port_number: internalPortNumber });
+                mqttClient.publish(controlTopic, mqttPayload, { qos: 1 }, (err) => {
+                    if (err) {
+                        console.error(`Failed to publish automatic OFF command to ${controlTopic}:`, err);
+                    } else {
+                        console.log(`Automatically sent OFF command to ${deviceId} Port ${internalPortNumber} due to inactivity (${secondsSinceLastActivity}s).`);
+                    }
+                });
 
-            // Mark session as auto_completed in DB
-            await pool.query(
-                "UPDATE charging_session SET end_time = NOW(), session_status = 'auto_completed', last_status_update = NOW() WHERE session_id = $1",
-                [sessionId]
-            );
-            console.log(`Marked session ${sessionId} as 'auto_completed' due to inactivity.`);
+                // Mark session as auto_completed in DB
+                await pool.query(
+                    "UPDATE charging_session SET end_time = NOW(), session_status = 'auto_completed', last_status_update = NOW() WHERE session_id = $1",
+                    [sessionId]
+                );
+                console.log(`Marked session ${sessionId} as 'auto_completed' due to inactivity.`);
 
-            // Clear from in-memory tracking
-            delete activeChargerSessions[sessionKey];
-            delete activePortTimers[sessionKey];
+                // Clear from in-memory tracking
+                delete activeChargerSessions[sessionKey];
+                delete activePortTimers[sessionKey];
+            } else {
+                // If still active but timer expired, reset the timer
+                console.log(`Session ${sessionId} for ${sessionKey} is still active. Resetting inactivity timer.`);
+                activePortTimers[sessionKey] = {
+                    timerId: setTimeout(
+                        () => handleInactivityTurnOff(deviceId, internalPortNumber, actualPortId, sessionId),
+                        INACTIVITY_TIMEOUT_SECONDS * 1000
+                    ),
+                    lastConsumptionTime: Date.now()
+                };
+            }
         } else {
             console.log(`Session ${sessionId} for ${sessionKey} was already inactive or not found. No auto turn-off needed.`);
             delete activeChargerSessions[sessionKey]; // Clean up if session was manually ended but timer persisted
@@ -209,36 +232,42 @@ mqttClient.on('message', async (topic, message) => {
 
             if (charger_state === 'ON') { // Only insert consumption if charger is ON
                 if (currentSessionId) { // Only insert if an active session is tracked (created by API)
-                    await pool.query(
-                        'INSERT INTO consumption_data (session_id, device_id, consumption_watts, timestamp, charger_state) VALUES ($1, $2, $3, TO_TIMESTAMP($4 / 1000.0), $5)',
-                        [currentSessionId, deviceId, consumption, timestamp, charger_state]
-                    );
-                    console.log(`MQTT: Stored consumption for ${deviceId} Port ${portNumberInDevice} in session ${currentSessionId}: ${consumption}W`);
-
-                    const intervalSeconds = 10; // ESP32 publishes every 10 seconds
-                    const kwhIncrement = (consumption * intervalSeconds) / (1000 * 3600); // Watts * seconds / (1000W/kW * 3600s/hr)
-
-                    // --- Calculate mAh Increment (assuming a nominal charging voltage, e.g., 12V for the battery) ---
-                    const NOMINAL_CHARGING_VOLTAGE_DC = 12; // Volts DC. Adjust this based on your battery system.
-                    const currentAmps = consumption / NOMINAL_CHARGING_VOLTAGE_DC; // Amps = Watts / Volts
-                    const mAhIncrement = (currentAmps * 1000) * (intervalSeconds / 3600); // mAh = Amps * 1000 * (seconds / 3600)
-
-                    await pool.query(
-                        'UPDATE charging_session SET energy_consumed_kwh = COALESCE(energy_consumed_kwh, 0) + $1, total_mah_consumed = COALESCE(total_mah_consumed, 0) + $2, last_status_update = $3 WHERE session_id = $4',
-                        [kwhIncrement, mAhIncrement, currentTimestamp, currentSessionId]
-                    );
-
-                    // --- Reset inactivity timer on new consumption data ---
-                    if (activePortTimers[sessionKey]) {
-                        clearTimeout(activePortTimers[sessionKey].timerId);
-                        activePortTimers[sessionKey].lastConsumptionTime = Date.now();
-                        activePortTimers[sessionKey].timerId = setTimeout(
-                            () => handleInactivityTurnOff(deviceId, portNumberInDevice, actualPortId, currentSessionId),
-                            INACTIVITY_TIMEOUT_SECONDS * 1000
+                    // Validate consumption value to prevent negative or unreasonable readings
+                    const validatedConsumption = validateConsumption(consumption);
+                    
+                    if (validatedConsumption > 0) { // Only record if consumption is positive
+                        await pool.query(
+                            'INSERT INTO consumption_data (session_id, device_id, consumption_watts, timestamp, charger_state) VALUES ($1, $2, $3, TO_TIMESTAMP($4 / 1000.0), $5)',
+                            [currentSessionId, deviceId, validatedConsumption, timestamp, charger_state]
                         );
-                        console.log(`MQTT: Timer reset for ${sessionKey} due to new consumption.`);
-                    }
+                        console.log(`MQTT: Stored consumption for ${deviceId} Port ${portNumberInDevice} in session ${currentSessionId}: ${validatedConsumption}W`);
 
+                        const intervalSeconds = 10; // ESP32 publishes every 10 seconds
+                        const kwhIncrement = (validatedConsumption * intervalSeconds) / (1000 * 3600); // Watts * seconds / (1000W/kW * 3600s/hr)
+
+                        // --- Calculate mAh Increment (assuming a nominal charging voltage, e.g., 12V for the battery) ---
+                        const NOMINAL_CHARGING_VOLTAGE_DC = 12; // Volts DC. Adjust this based on your battery system.
+                        const currentAmps = validatedConsumption / NOMINAL_CHARGING_VOLTAGE_DC; // Amps = Watts / Volts
+                        const mAhIncrement = (currentAmps * 1000) * (intervalSeconds / 3600); // mAh = Amps * 1000 * (seconds / 3600)
+
+                        await pool.query(
+                            'UPDATE charging_session SET energy_consumed_kwh = COALESCE(energy_consumed_kwh, 0) + $1, total_mah_consumed = COALESCE(total_mah_consumed, 0) + $2, last_status_update = $3 WHERE session_id = $4',
+                            [kwhIncrement, mAhIncrement, currentTimestamp, currentSessionId]
+                        );
+
+                        // --- Reset inactivity timer on new consumption data ---
+                        if (activePortTimers[sessionKey]) {
+                            clearTimeout(activePortTimers[sessionKey].timerId);
+                            activePortTimers[sessionKey].lastConsumptionTime = Date.now();
+                            activePortTimers[sessionKey].timerId = setTimeout(
+                                () => handleInactivityTurnOff(deviceId, portNumberInDevice, actualPortId, currentSessionId),
+                                INACTIVITY_TIMEOUT_SECONDS * 1000
+                            );
+                            console.log(`MQTT: Timer reset for ${sessionKey} due to new consumption.`);
+                        }
+                    } else {
+                        console.warn(`MQTT: Ignoring invalid consumption value (${consumption}W) for ${deviceId} Port ${portNumberInDevice}`);
+                    }
                 } else {
                     console.warn(`MQTT: Charger ON for ${deviceId} Port ${portNumberInDevice} but no active session found in memory. Consumption insert skipped.`);
                 }
@@ -371,7 +400,7 @@ app.get('/api/devices/status', async (req, res) => {
 });
 
 // Send control command to a specific device (station) AND internal port number
-app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => { // Added 'async'
+app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
     const { deviceId, portNumber } = req.params;
     const { command, user_id, station_id } = req.body; // <--- IMPORTANT: Now expecting user_id and station_id
 
@@ -413,8 +442,8 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => { // 
             if (existingActiveSession.rows.length === 0) {
                 // No active session found in DB, create a new one
                 const sessionResult = await pool.query(
-                    'INSERT INTO charging_session (user_id, port_id, station_id, start_time, session_status, is_premium) VALUES ($1, $2, $3, NOW(), $4, $5) RETURNING session_id',
-                    [user_id, actualPortId, station_id, 'active', true] // Assuming premium for now, adjust as needed
+                    'INSERT INTO charging_session (user_id, port_id, station_id, start_time, session_status, is_premium, energy_consumed_kwh, total_mah_consumed, last_status_update) VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7, NOW()) RETURNING session_id',
+                    [user_id, actualPortId, station_id, 'active', true, 0, 0] // Initialize energy and mAh consumed to 0
                 );
                 currentSessionId = sessionResult.rows[0].session_id;
                 activeChargerSessions[sessionKey] = currentSessionId;
@@ -423,6 +452,13 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => { // 
                 // Session already active (e.g., backend restarted, or multiple ON commands)
                 currentSessionId = existingActiveSession.rows[0].session_id;
                 activeChargerSessions[sessionKey] = currentSessionId; // Ensure in-memory map is updated
+                
+                // Update the last_status_update to reset inactivity timer
+                await pool.query(
+                    "UPDATE charging_session SET last_status_update = NOW() WHERE session_id = $1",
+                    [currentSessionId]
+                );
+                
                 console.log(`API: Resuming existing active session ${currentSessionId} for port ${actualPortId} (User: ${user_id})`);
             }
 
@@ -441,12 +477,21 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => { // 
 
         } else if (command === 'OFF') {
             if (currentSessionId) {
+                // Get current consumption values before ending session
+                const sessionData = await pool.query(
+                    "SELECT energy_consumed_kwh, total_mah_consumed FROM charging_session WHERE session_id = $1",
+                    [currentSessionId]
+                );
+                
+                const energyConsumed = sessionData.rows[0]?.energy_consumed_kwh || 0;
+                const mAhConsumed = sessionData.rows[0]?.total_mah_consumed || 0;
+                
                 // End the active session in DB
                 await pool.query(
                     "UPDATE charging_session SET end_time = NOW(), session_status = 'completed', last_status_update = NOW() WHERE session_id = $1 AND session_status = 'active'",
                     [currentSessionId]
                 );
-                console.log(`API: Ended charging session ${currentSessionId} for port ${actualPortId}`);
+                console.log(`API: Ended charging session ${currentSessionId} for port ${actualPortId}. Energy consumed: ${energyConsumed.toFixed(3)} kWh, ${mAhConsumed.toFixed(0)} mAh`);
                 delete activeChargerSessions[sessionKey]; // Remove from tracking map
 
                 // --- Clear inactivity timer when charger is turned OFF via API ---
@@ -458,7 +503,21 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => { // 
 
             } else {
                 console.log(`API: Received OFF command for ${deviceId} Port ${internalPortNumber}, but no active session found to end in memory.`);
-                // Optionally, check DB for active session if in-memory map is not definitive
+                // Check DB for active session if in-memory map is not definitive
+                const activeSessionCheck = await pool.query(
+                    "SELECT session_id FROM charging_session WHERE port_id = $1 AND session_status = 'active'",
+                    [actualPortId]
+                );
+                
+                if (activeSessionCheck.rows.length > 0) {
+                    const dbSessionId = activeSessionCheck.rows[0].session_id;
+                    // End the session found in DB
+                    await pool.query(
+                        "UPDATE charging_session SET end_time = NOW(), session_status = 'completed', last_status_update = NOW() WHERE session_id = $1",
+                        [dbSessionId]
+                    );
+                    console.log(`API: Ended charging session ${dbSessionId} found in DB for port ${actualPortId}.`);
+                }
             }
         }
 
@@ -471,7 +530,25 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => { // 
                 return res.status(500).json({ error: 'Failed to send control command via MQTT' });
             }
             console.log(`API: Sent MQTT command '${command}' to ${deviceId} Port ${internalPortNumber}.`);
-            res.json({ status: 'Command sent', deviceId, portNumber: internalPortNumber, command, sessionId: currentSessionId });
+            
+            // Return session details including consumption data if available
+            if (command === 'ON') {
+                res.json({ 
+                    status: 'Command sent', 
+                    deviceId, 
+                    portNumber: internalPortNumber, 
+                    command, 
+                    sessionId: currentSessionId 
+                });
+            } else {
+                // For OFF command, try to include the consumption data
+                res.json({ 
+                    status: 'Command sent', 
+                    deviceId, 
+                    portNumber: internalPortNumber, 
+                    command
+                });
+            }
         });
 
     } catch (error) {
@@ -509,6 +586,680 @@ app.post('/api/users', async (req, res) => { /* ... */ /* });
 app.put('/api/users/:id', async (req, res) => { /* ... */ /* });
 app.delete('/api/users/:id', async (req, res) => { /* ... */ /* });
 */
+
+// --- Admin API Routes ---
+
+// Admin Dashboard Stats
+app.get('/api/admin/dashboard/stats', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+  try {
+    // Get user stats
+    const userStats = await pool.query(`
+      SELECT 
+        COUNT(*) as total,
+        COUNT(CASE WHEN last_login > NOW() - INTERVAL '30 days' THEN 1 END) as active
+      FROM users
+    `);
+    
+    // Get station stats
+    const stationStats = await pool.query(`
+      SELECT 
+        COUNT(*) as total,
+        COUNT(CASE WHEN is_active = true THEN 1 END) as active
+      FROM charging_station
+    `);
+    
+    // Get port stats
+    const portStats = await pool.query(`
+      SELECT 
+        COUNT(*) as total,
+        COUNT(CASE WHEN is_occupied = false THEN 1 END) as available,
+        COUNT(CASE WHEN is_occupied = true THEN 1 END) as occupied
+      FROM charging_port
+    `);
+    
+    // Get session stats
+    const sessionStats = await pool.query(`
+      SELECT 
+        COUNT(CASE WHEN start_time > CURRENT_DATE THEN 1 END) as today,
+        COUNT(CASE WHEN start_time > CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as week,
+        COUNT(CASE WHEN start_time > CURRENT_DATE - INTERVAL '30 days' THEN 1 END) as month
+      FROM charging_session
+    `);
+    
+    // Get revenue stats
+    const revenueStats = await pool.query(`
+      SELECT 
+        COALESCE(SUM(CASE WHEN start_time > CURRENT_DATE THEN cost ELSE 0 END), 0) as today,
+        COALESCE(SUM(CASE WHEN start_time > CURRENT_DATE - INTERVAL '7 days' THEN cost ELSE 0 END), 0) as week,
+        COALESCE(SUM(CASE WHEN start_time > CURRENT_DATE - INTERVAL '30 days' THEN cost ELSE 0 END), 0) as month
+      FROM charging_session
+    `);
+    
+    res.json({
+      users: userStats.rows[0],
+      stations: stationStats.rows[0],
+      ports: portStats.rows[0],
+      sessions: sessionStats.rows[0],
+      revenue: revenueStats.rows[0]
+    });
+  } catch (err) {
+    console.error('Dashboard stats error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Recent Sessions for Dashboard
+app.get('/api/admin/sessions/recent', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        cs.session_id as id,
+        CONCAT(u.fname, ' ', u.lname) as user_name,
+        s.station_name,
+        cp.port_number_in_device as port,
+        cs.start_time,
+        cs.end_time,
+        EXTRACT(EPOCH FROM (COALESCE(cs.end_time, NOW()) - cs.start_time))/60 as duration,
+        cs.energy_consumed_kwh as energy,
+        cs.cost,
+        cs.session_status as status
+      FROM 
+        charging_session cs
+      JOIN 
+        users u ON cs.user_id = u.user_id
+      JOIN 
+        charging_station s ON cs.station_id = s.station_id
+      JOIN 
+        charging_port cp ON cs.port_id = cp.port_id
+      ORDER BY 
+        cs.start_time DESC
+      LIMIT 5
+    `);
+    
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Recent sessions error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// System Status
+app.get('/api/admin/system/status', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+  try {
+    // Check if any critical errors in last 24 hours
+    const errors = await pool.query(`
+      SELECT COUNT(*) as error_count
+      FROM system_logs
+      WHERE log_type = 'error' AND timestamp > NOW() - INTERVAL '24 hours'
+    `);
+    
+    // Get latest system status log
+    const statusLog = await pool.query(`
+      SELECT timestamp as last_update
+      FROM system_logs
+      ORDER BY timestamp DESC
+      LIMIT 1
+    `);
+    
+    const status = errors.rows[0].error_count > 0 ? 'Warning' : 'Operational';
+    const lastUpdate = statusLog.rows.length > 0 ? statusLog.rows[0].last_update : new Date();
+    
+    res.json({
+      status,
+      lastUpdate
+    });
+  } catch (err) {
+    console.error('System status error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Station Battery Levels
+app.get('/api/admin/stations/battery', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        station_name,
+        current_battery_level as level,
+        CASE 
+          WHEN current_battery_level > 70 THEN 'Good'
+          WHEN current_battery_level > 40 THEN 'Warning'
+          ELSE 'Critical'
+        END as status
+      FROM 
+        charging_station
+      ORDER BY 
+        station_name
+    `);
+    
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Battery levels error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Admin Users Management
+app.get('/api/admin/users', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        user_id, 
+        fname, 
+        lname, 
+        email, 
+        contact_number,
+        is_admin, 
+        created_at, 
+        last_login
+      FROM users
+      ORDER BY created_at DESC
+    `);
+    
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Admin users error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/admin/users', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const { fname, lname, email, contact_number, is_admin } = req.body;
+    
+    // In a real implementation, you'd also create the Supabase auth user
+    // For now, we'll just create the user in the database
+    const result = await pool.query(
+      `INSERT INTO users (fname, lname, email, contact_number, is_admin, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       RETURNING user_id, fname, lname, email, contact_number, is_admin, created_at`,
+      [fname, lname, email, contact_number, is_admin]
+    );
+    
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error('Create user error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.put('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { fname, lname, contact_number, is_admin } = req.body;
+    
+    const result = await pool.query(
+      `UPDATE users
+       SET fname = $1, lname = $2, contact_number = $3, is_admin = $4
+       WHERE user_id = $5
+       RETURNING user_id, fname, lname, email, contact_number, is_admin, created_at`,
+      [fname, lname, contact_number, is_admin, userId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Update user error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.delete('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    
+    // Check if user exists
+    const userCheck = await pool.query('SELECT user_id FROM users WHERE user_id = $1', [userId]);
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Delete user
+    await pool.query('DELETE FROM users WHERE user_id = $1', [userId]);
+    
+    res.json({ message: 'User deleted successfully' });
+  } catch (err) {
+    console.error('Delete user error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Admin Stations Management
+app.get('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT 
+        station_id, 
+        station_name, 
+        location_description, 
+        latitude, 
+        longitude,
+        solar_panel_wattage,
+        battery_capacity_kwh,
+        current_battery_level,
+        is_active,
+        created_at,
+        last_maintenance_date,
+        (SELECT COUNT(*) FROM charging_port WHERE station_id = s.station_id AND is_premium = false) as num_free_ports,
+        (SELECT COUNT(*) FROM charging_port WHERE station_id = s.station_id AND is_premium = true) as num_premium_ports
+      FROM 
+        charging_station s
+      ORDER BY 
+        created_at DESC
+    `);
+    
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Admin stations error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const { 
+      station_name, 
+      location_description, 
+      latitude, 
+      longitude,
+      solar_panel_wattage,
+      battery_capacity_kwh,
+      num_free_ports,
+      num_premium_ports,
+      is_active,
+      current_battery_level
+    } = req.body;
+    
+    const client = await pool.connect();
+    
+    try {
+      await client.query('BEGIN');
+      
+      // Insert station
+      const stationResult = await client.query(
+        `INSERT INTO charging_station 
+         (station_name, location_description, latitude, longitude, solar_panel_wattage, 
+          battery_capacity_kwh, is_active, current_battery_level, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+         RETURNING station_id`,
+        [station_name, location_description, latitude, longitude, solar_panel_wattage, 
+         battery_capacity_kwh, is_active, current_battery_level]
+      );
+      
+      const stationId = stationResult.rows[0].station_id;
+      
+      // Create free ports
+      for (let i = 0; i < num_free_ports; i++) {
+        await client.query(
+          `INSERT INTO charging_port 
+           (station_id, port_number_in_device, is_premium, is_occupied, current_status, device_mqtt_id)
+           VALUES ($1, $2, false, false, 'available', $3)`,
+          [stationId, i + 1, `ESP32_CHARGER_STATION_${stationId.substring(0, 3)}`]
+        );
+      }
+      
+      // Create premium ports
+      for (let i = 0; i < num_premium_ports; i++) {
+        await client.query(
+          `INSERT INTO charging_port 
+           (station_id, port_number_in_device, is_premium, is_occupied, current_status, device_mqtt_id)
+           VALUES ($1, $2, true, false, 'available', $3)`,
+          [stationId, num_free_ports + i + 1, `ESP32_CHARGER_STATION_${stationId.substring(0, 3)}`]
+        );
+      }
+      
+      await client.query('COMMIT');
+      
+      res.status(201).json({ station_id: stationId, message: 'Station created successfully' });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error('Create station error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.put('/api/admin/stations/:stationId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const { stationId } = req.params;
+    const { 
+      station_name, 
+      location_description, 
+      latitude, 
+      longitude,
+      solar_panel_wattage,
+      battery_capacity_kwh,
+      is_active,
+      current_battery_level
+    } = req.body;
+    
+    const result = await pool.query(
+      `UPDATE charging_station
+       SET station_name = $1, location_description = $2, latitude = $3, longitude = $4,
+           solar_panel_wattage = $5, battery_capacity_kwh = $6, is_active = $7, 
+           current_battery_level = $8
+       WHERE station_id = $9
+       RETURNING station_id`,
+      [station_name, location_description, latitude, longitude, solar_panel_wattage,
+       battery_capacity_kwh, is_active, current_battery_level, stationId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Station not found' });
+    }
+    
+    res.json({ message: 'Station updated successfully' });
+  } catch (err) {
+    console.error('Update station error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.delete('/api/admin/stations/:stationId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const { stationId } = req.params;
+    
+    // Check if station exists
+    const stationCheck = await pool.query('SELECT station_id FROM charging_station WHERE station_id = $1', [stationId]);
+    if (stationCheck.rows.length === 0) {
+      return res.status(404).json({ error: 'Station not found' });
+    }
+    
+    const client = await pool.connect();
+    
+    try {
+      await client.query('BEGIN');
+      
+      // Delete related charging sessions
+      await client.query(`
+        DELETE FROM charging_session
+        WHERE station_id = $1
+      `, [stationId]);
+      
+      // Delete related charging ports
+      await client.query(`
+        DELETE FROM charging_port
+        WHERE station_id = $1
+      `, [stationId]);
+      
+      // Delete station
+      await client.query(`
+        DELETE FROM charging_station
+        WHERE station_id = $1
+      `, [stationId]);
+      
+      await client.query('COMMIT');
+      
+      res.json({ message: 'Station deleted successfully' });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error('Delete station error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Admin Sessions & Reports
+app.get('/api/admin/sessions', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const { range = 'week', station = 'all', status = 'all' } = req.query;
+    
+    let timeFilter;
+    switch (range) {
+      case 'day':
+        timeFilter = "start_time > CURRENT_DATE";
+        break;
+      case 'week':
+        timeFilter = "start_time > CURRENT_DATE - INTERVAL '7 days'";
+        break;
+      case 'month':
+        timeFilter = "start_time > CURRENT_DATE - INTERVAL '30 days'";
+        break;
+      case 'year':
+        timeFilter = "start_time > CURRENT_DATE - INTERVAL '365 days'";
+        break;
+      default:
+        timeFilter = "start_time > CURRENT_DATE - INTERVAL '7 days'";
+    }
+    
+    let stationFilter = station !== 'all' ? `AND cs.station_id = '${station}'` : '';
+    let statusFilter = status !== 'all' ? `AND cs.session_status = '${status}'` : '';
+    
+    const query = `
+      SELECT 
+        cs.session_id as id,
+        CONCAT(u.fname, ' ', u.lname) as user_name,
+        s.station_name,
+        cp.port_number_in_device as port,
+        cs.start_time,
+        cs.end_time,
+        EXTRACT(EPOCH FROM (COALESCE(cs.end_time, NOW()) - cs.start_time))/60 as duration,
+        cs.energy_consumed_kwh as energy,
+        cs.cost,
+        cs.session_status as status
+      FROM 
+        charging_session cs
+      JOIN 
+        users u ON cs.user_id = u.user_id
+      JOIN 
+        charging_station s ON cs.station_id = s.station_id
+      JOIN 
+        charging_port cp ON cs.port_id = cp.port_id
+      WHERE 
+        ${timeFilter} ${stationFilter} ${statusFilter}
+      ORDER BY 
+        cs.start_time DESC
+    `;
+    
+    const result = await pool.query(query);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Sessions error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.get('/api/admin/revenue', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const { range = 'week' } = req.query;
+    
+    // Get daily revenue for the last 7 days
+    const dailyQuery = `
+      SELECT 
+        DATE(start_time) as date,
+        SUM(cost) as amount,
+        COUNT(*) as sessions
+      FROM 
+        charging_session
+      WHERE 
+        start_time > CURRENT_DATE - INTERVAL '7 days'
+      GROUP BY 
+        DATE(start_time)
+      ORDER BY 
+        date
+    `;
+    
+    // Get weekly revenue for the last 4 weeks
+    const weeklyQuery = `
+      SELECT 
+        DATE_TRUNC('week', start_time) as date,
+        SUM(cost) as amount,
+        COUNT(*) as sessions
+      FROM 
+        charging_session
+      WHERE 
+        start_time > CURRENT_DATE - INTERVAL '28 days'
+      GROUP BY 
+        DATE_TRUNC('week', start_time)
+      ORDER BY 
+        date
+    `;
+    
+    // Get monthly revenue for the last 6 months
+    const monthlyQuery = `
+      SELECT 
+        DATE_TRUNC('month', start_time) as date,
+        SUM(cost) as amount,
+        COUNT(*) as sessions
+      FROM 
+        charging_session
+      WHERE 
+        start_time > CURRENT_DATE - INTERVAL '6 months'
+      GROUP BY 
+        DATE_TRUNC('month', start_time)
+      ORDER BY 
+        date
+    `;
+    
+    // Get total revenue
+    const totalQuery = `
+      SELECT SUM(cost) as total
+      FROM charging_session
+    `;
+    
+    const dailyResult = await pool.query(dailyQuery);
+    const weeklyResult = await pool.query(weeklyQuery);
+    const monthlyResult = await pool.query(monthlyQuery);
+    const totalResult = await pool.query(totalQuery);
+    
+    res.json({
+      daily: dailyResult.rows,
+      weekly: weeklyResult.rows,
+      monthly: monthlyResult.rows,
+      total: totalResult.rows[0].total || 0
+    });
+  } catch (err) {
+    console.error('Revenue error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.get('/api/admin/usage', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const { range = 'week' } = req.query;
+    
+    // Get usage by station
+    const byStationQuery = `
+      SELECT 
+        s.station_name,
+        COUNT(cs.session_id) as sessions,
+        SUM(cs.energy_consumed_kwh) as energy,
+        SUM(EXTRACT(EPOCH FROM (COALESCE(cs.end_time, NOW()) - cs.start_time))/60) as duration
+      FROM 
+        charging_session cs
+      JOIN 
+        charging_station s ON cs.station_id = s.station_id
+      WHERE 
+        cs.start_time > CURRENT_DATE - INTERVAL '30 days'
+      GROUP BY 
+        s.station_name
+      ORDER BY 
+        sessions DESC
+    `;
+    
+    // Get usage by hour of day
+    const byHourQuery = `
+      SELECT 
+        EXTRACT(HOUR FROM start_time) as hour,
+        COUNT(*) as sessions
+      FROM 
+        charging_session
+      WHERE 
+        start_time > CURRENT_DATE - INTERVAL '30 days'
+      GROUP BY 
+        EXTRACT(HOUR FROM start_time)
+      ORDER BY 
+        hour
+    `;
+    
+    // Get usage by day of week
+    const byDayQuery = `
+      SELECT 
+        TO_CHAR(start_time, 'Day') as day,
+        COUNT(*) as sessions
+      FROM 
+        charging_session
+      WHERE 
+        start_time > CURRENT_DATE - INTERVAL '30 days'
+      GROUP BY 
+        TO_CHAR(start_time, 'Day'), EXTRACT(DOW FROM start_time)
+      ORDER BY 
+        EXTRACT(DOW FROM start_time)
+    `;
+    
+    const byStationResult = await pool.query(byStationQuery);
+    const byHourResult = await pool.query(byHourQuery);
+    const byDayResult = await pool.query(byDayQuery);
+    
+    res.json({
+      byStation: byStationResult.rows,
+      byHour: byHourResult.rows,
+      byDay: byDayResult.rows
+    });
+  } catch (err) {
+    console.error('Usage error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Admin Logs
+app.get('/api/admin/logs', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const { range = '24h' } = req.query;
+    
+    let timeFilter;
+    switch (range) {
+      case '1h':
+        timeFilter = "timestamp > NOW() - INTERVAL '1 hour'";
+        break;
+      case '24h':
+        timeFilter = "timestamp > NOW() - INTERVAL '24 hours'";
+        break;
+      case '7d':
+        timeFilter = "timestamp > NOW() - INTERVAL '7 days'";
+        break;
+      case '30d':
+        timeFilter = "timestamp > NOW() - INTERVAL '30 days'";
+        break;
+      default:
+        timeFilter = "timestamp > NOW() - INTERVAL '24 hours'";
+    }
+    
+    const query = `
+      SELECT 
+        log_id,
+        timestamp,
+        log_type,
+        source,
+        message,
+        user_id,
+        (SELECT email FROM users WHERE user_id = system_logs.user_id) as user_email
+      FROM 
+        system_logs
+      WHERE 
+        ${timeFilter}
+      ORDER BY 
+        timestamp DESC
+    `;
+    
+    const result = await pool.query(query);
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Logs error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
 
 // Existing endpoint for ESP32 commands (kept for backward compatibility, adjust if needed)
 // This endpoint might be redundant if /api/devices/:deviceId/:portNumber/control is used.
@@ -719,3 +1470,253 @@ app.get('/api/user/profile', supabaseAuthMiddleware, async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+
+// Helper function to validate consumption readings
+function validateConsumption(consumption) {
+    // If consumption is null, undefined, NaN, or negative, return 0
+    if (consumption === null || consumption === undefined || isNaN(consumption) || consumption < 0) {
+        return 0;
+    }
+    
+    // If consumption is unreasonably high (e.g., > 10kW), cap it
+    // Adjust this threshold based on your actual charging hardware capabilities
+    const MAX_REASONABLE_CONSUMPTION = 10000; // 10kW in watts
+    if (consumption > MAX_REASONABLE_CONSUMPTION) {
+        return MAX_REASONABLE_CONSUMPTION;
+    }
+    
+    // Return the validated consumption
+    return consumption;
+}
+
+// Get consumption data for a specific session
+app.get('/api/sessions/:sessionId/consumption', async (req, res) => {
+    const { sessionId } = req.params;
+    try {
+        // Get session details including consumption data
+        const sessionResult = await pool.query(
+            `SELECT 
+                cs.session_id, 
+                cs.energy_consumed_kwh, 
+                cs.total_mah_consumed,
+                cs.start_time,
+                cs.end_time,
+                cs.session_status,
+                cs.last_status_update,
+                u.fname || ' ' || u.lname AS user_name,
+                cp.port_number_in_device,
+                cst.station_name
+            FROM 
+                charging_session cs
+            JOIN 
+                users u ON cs.user_id = u.user_id
+            JOIN 
+                charging_port cp ON cs.port_id = cp.port_id
+            JOIN 
+                charging_station cst ON cs.station_id = cst.station_id
+            WHERE 
+                cs.session_id = $1`,
+            [sessionId]
+        );
+
+        if (sessionResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Session not found' });
+        }
+
+        // Get consumption data points
+        const consumptionResult = await pool.query(
+            `SELECT 
+                consumption_watts, 
+                timestamp, 
+                charger_state
+            FROM 
+                consumption_data
+            WHERE 
+                session_id = $1
+            ORDER BY 
+                timestamp ASC`,
+            [sessionId]
+        );
+
+        // Format the response
+        const session = sessionResult.rows[0];
+        const consumptionData = consumptionResult.rows;
+        
+        // Calculate duration in minutes
+        const startTime = new Date(session.start_time);
+        const endTime = session.end_time ? new Date(session.end_time) : new Date();
+        const durationMinutes = Math.round((endTime - startTime) / (1000 * 60));
+        
+        // Calculate average power in watts
+        const avgPower = consumptionData.length > 0 ? 
+            consumptionData.reduce((sum, point) => sum + point.consumption_watts, 0) / consumptionData.length : 0;
+        
+        res.json({
+            session_id: session.session_id,
+            user_name: session.user_name,
+            station_name: session.station_name,
+            port_number: session.port_number_in_device,
+            start_time: session.start_time,
+            end_time: session.end_time,
+            status: session.session_status,
+            duration_minutes: durationMinutes,
+            energy_consumed_kwh: parseFloat(session.energy_consumed_kwh || 0).toFixed(3),
+            total_mah_consumed: Math.round(session.total_mah_consumed || 0),
+            avg_power_watts: Math.round(avgPower),
+            last_update: session.last_status_update,
+            consumption_points: consumptionData.map(point => ({
+                timestamp: point.timestamp,
+                watts: point.consumption_watts,
+                state: point.charger_state
+            }))
+        });
+    } catch (error) {
+        console.error('Error fetching session consumption data:', error);
+        res.status(500).json({ error: 'Failed to fetch session consumption data' });
+    }
+});
+
+// Get all active charging sessions
+app.get('/api/sessions/active', async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT 
+                cs.session_id, 
+                cs.user_id,
+                u.fname || ' ' || u.lname AS user_name,
+                cs.port_id,
+                cp.port_number_in_device,
+                cs.station_id,
+                cst.station_name,
+                cs.start_time,
+                cs.energy_consumed_kwh,
+                cs.total_mah_consumed,
+                cs.is_premium,
+                cs.last_status_update,
+                EXTRACT(EPOCH FROM (NOW() - cs.start_time))/60 AS duration_minutes
+            FROM 
+                charging_session cs
+            JOIN 
+                users u ON cs.user_id = u.user_id
+            JOIN 
+                charging_port cp ON cs.port_id = cp.port_id
+            JOIN 
+                charging_station cst ON cs.station_id = cst.station_id
+            WHERE 
+                cs.session_status = 'active'
+            ORDER BY 
+                cs.start_time DESC`
+        );
+        
+        // Format the response
+        const activeSessions = result.rows.map(session => ({
+            session_id: session.session_id,
+            user_id: session.user_id,
+            user_name: session.user_name,
+            port_id: session.port_id,
+            port_number: session.port_number_in_device,
+            station_id: session.station_id,
+            station_name: session.station_name,
+            start_time: session.start_time,
+            duration_minutes: Math.round(session.duration_minutes),
+            energy_consumed_kwh: parseFloat(session.energy_consumed_kwh || 0).toFixed(3),
+            total_mah_consumed: Math.round(session.total_mah_consumed || 0),
+            is_premium: session.is_premium,
+            last_update: session.last_status_update
+        }));
+        
+        res.json(activeSessions);
+    } catch (error) {
+        console.error('Error fetching active sessions:', error);
+        res.status(500).json({ error: 'Failed to fetch active sessions' });
+    }
+});
+
+// --- Periodic check for stale sessions ---
+// This function will run every 5 minutes to check for any active sessions
+// that haven't been updated in more than the inactivity timeout period
+function setupStaleSessionChecker() {
+    const CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+    
+    async function checkStaleActiveSessions() {
+        try {
+            console.log('Checking for stale active sessions...');
+            
+            // Find active sessions that haven't been updated in more than the inactivity timeout
+            const staleSessions = await pool.query(
+                `SELECT 
+                    cs.session_id, 
+                    cs.port_id,
+                    cp.device_mqtt_id,
+                    cp.port_number_in_device,
+                    cs.last_status_update,
+                    EXTRACT(EPOCH FROM (NOW() - cs.last_status_update)) AS seconds_since_update
+                FROM 
+                    charging_session cs
+                JOIN 
+                    charging_port cp ON cs.port_id = cp.port_id
+                WHERE 
+                    cs.session_status = 'active'
+                    AND cs.last_status_update < NOW() - INTERVAL '${INACTIVITY_TIMEOUT_SECONDS * 2} seconds'`,
+            );
+            
+            if (staleSessions.rows.length > 0) {
+                console.log(`Found ${staleSessions.rows.length} stale active sessions.`);
+                
+                // Process each stale session
+                for (const session of staleSessions.rows) {
+                    console.log(`Cleaning up stale session ${session.session_id} (${Math.round(session.seconds_since_update)}s since last update)`);
+                    
+                    // Send OFF command to the device
+                    if (session.device_mqtt_id && session.port_number_in_device) {
+                        const controlTopic = `charger/control/${session.device_mqtt_id}`;
+                        const mqttPayload = JSON.stringify({ 
+                            command: 'OFF', 
+                            port_number: session.port_number_in_device 
+                        });
+                        
+                        mqttClient.publish(controlTopic, mqttPayload, { qos: 1 }, (err) => {
+                            if (err) {
+                                console.error(`Failed to publish cleanup OFF command for stale session ${session.session_id}:`, err);
+                            } else {
+                                console.log(`Sent cleanup OFF command for stale session ${session.session_id}`);
+                            }
+                        });
+                    }
+                    
+                    // Mark the session as auto-completed in the database
+                    await pool.query(
+                        "UPDATE charging_session SET end_time = NOW(), session_status = 'auto_completed', last_status_update = NOW() WHERE session_id = $1",
+                        [session.session_id]
+                    );
+                    
+                    // Clean up any in-memory tracking
+                    if (session.device_mqtt_id && session.port_number_in_device) {
+                        const sessionKey = `${session.device_mqtt_id}_${session.port_number_in_device}`;
+                        delete activeChargerSessions[sessionKey];
+                        
+                        if (activePortTimers[sessionKey]) {
+                            clearTimeout(activePortTimers[sessionKey].timerId);
+                            delete activePortTimers[sessionKey];
+                        }
+                    }
+                }
+            } else {
+                console.log('No stale active sessions found.');
+            }
+        } catch (error) {
+            console.error('Error checking for stale sessions:', error);
+        }
+    }
+    
+    // Run the check immediately on startup
+    checkStaleActiveSessions();
+    
+    // Then set up the interval
+    setInterval(checkStaleActiveSessions, CHECK_INTERVAL_MS);
+    
+    console.log(`Stale session checker set up to run every ${CHECK_INTERVAL_MS / 1000 / 60} minutes.`);
+}
+
+// Call this function after the database connection is established
+setupStaleSessionChecker();
