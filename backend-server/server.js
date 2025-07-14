@@ -273,6 +273,11 @@ mqttClient.on('message', async (topic, message) => {
     let payload;
     const messageString = message.toString();
 
+    // --- FOR DEBUGGING ---
+    console.log(`DEBUG: Raw MQTT Message String for parsing: '${messageString}'`);
+    console.log(`DEBUG: Message length: ${messageString.length}`);
+    // --- END DEBUGGING ---
+    
     try {
         // Handle specific plain string LWT from ESP32, converting it to JSON structure
         if (topic === `${MQTT_TOPICS.STATUS}${ESP32_STATION_CLIENT_ID}` && messageString === 'offline') {
