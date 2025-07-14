@@ -3,6 +3,8 @@ const cors = require('cors');
 const { Pool } = require('pg');
 const mqtt = require('mqtt');
 require('dotenv').config(); // Load environment variables from .env file
+const fetch = require('node-fetch'); // For JWKS
+const jwt = require('jsonwebtoken'); // For JWT decode/verify
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -587,4 +589,133 @@ process.on('SIGTERM', () => { // Handles termination signals from Render
             process.exit(0);
         });
     });
+});
+
+// --- Supabase JWT Authentication Middleware ---
+// Helper to get JWKS and verify JWT
+const SUPABASE_JWKS_URL = process.env.SUPABASE_JWKS_URL || 'https://bhiitpltxlcgefugftre.supabase.co/auth/v1/keys'; // Change to your project
+let cachedJwks = null;
+let cachedJwksAt = 0;
+async function getSupabaseJwks() {
+  if (cachedJwks && Date.now() - cachedJwksAt < 60 * 60 * 1000) return cachedJwks;
+  const res = await fetch(SUPABASE_JWKS_URL);
+  if (!res.ok) throw new Error('Failed to fetch JWKS');
+  const { keys } = await res.json();
+  cachedJwks = keys;
+  cachedJwksAt = Date.now();
+  return keys;
+}
+function getKeyFromJwks(kid, jwks) {
+  return jwks.find(k => k.kid === kid);
+}
+function certToPEM(cert) {
+  // Convert x5c to PEM format
+  let pem = cert.match(/.{1,64}/g).join('\n');
+  pem = `-----BEGIN CERTIFICATE-----\n${pem}\n-----END CERTIFICATE-----\n`;
+  return pem;
+}
+async function verifySupabaseJWT(token) {
+  const decoded = jwt.decode(token, { complete: true });
+  if (!decoded) throw new Error('Invalid JWT');
+  const kid = decoded.header.kid;
+  const jwks = await getSupabaseJwks();
+  const key = getKeyFromJwks(kid, jwks);
+  if (!key) throw new Error('No matching JWKS key');
+  const pem = certToPEM(key.x5c[0]);
+  return jwt.verify(token, pem, { algorithms: ['RS256'] });
+}
+
+// Express middleware
+async function supabaseAuthMiddleware(req, res, next) {
+  try {
+    const auth = req.headers['authorization'];
+    if (!auth || !auth.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'Missing or invalid Authorization header' });
+    }
+    const token = auth.replace('Bearer ', '');
+    const payload = await verifySupabaseJWT(token);
+    req.user = {
+      user_id: payload.sub,
+      email: payload.email,
+      role: payload.role,
+      // Add more claims if needed
+    };
+    next();
+  } catch (err) {
+    console.error('Auth error:', err.message);
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+}
+
+// --- Role-based admin middleware ---
+async function requireAdmin(req, res, next) {
+  try {
+    // req.user.user_id is set by auth middleware
+    const { user_id } = req.user;
+    const result = await pool.query('SELECT is_admin FROM users WHERE user_id = $1', [user_id]);
+    if (result.rows.length === 0 || !result.rows[0].is_admin) {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    next();
+  } catch (err) {
+    console.error('Admin check error:', err.message);
+    return res.status(500).json({ error: 'Server error' });
+  }
+}
+
+// --- /api/me endpoint ---
+app.get('/api/me', supabaseAuthMiddleware, async (req, res) => {
+  try {
+    const { user_id } = req.user;
+    // Get user profile
+    const userResult = await pool.query('SELECT user_id, fname, lname, is_admin FROM users WHERE user_id = $1', [user_id]);
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const user = userResult.rows[0];
+    let admin_access_level = null;
+    if (user.is_admin) {
+      // Get admin profile
+      const adminResult = await pool.query('SELECT access_level FROM admin_profiles WHERE user_id = $1', [user_id]);
+      if (adminResult.rows.length > 0) {
+        admin_access_level = adminResult.rows[0].access_level;
+      }
+    }
+    res.json({
+      user_id: user.user_id,
+      fname: user.fname,
+      lname: user.lname,
+      is_admin: user.is_admin,
+      admin_access_level
+    });
+  } catch (err) {
+    console.error('/api/me error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// --- Example admin-only endpoint ---
+app.get('/api/admin/users', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT user_id, fname, lname, is_admin FROM users ORDER BY created_at DESC');
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Admin users error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// --- Example user-only endpoint (profile) ---
+app.get('/api/user/profile', supabaseAuthMiddleware, async (req, res) => {
+  try {
+    const { user_id } = req.user;
+    const result = await pool.query('SELECT user_id, fname, lname, is_admin FROM users WHERE user_id = $1', [user_id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('User profile error:', err.message);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
