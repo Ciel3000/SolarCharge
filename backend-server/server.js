@@ -1574,7 +1574,7 @@ process.on('SIGTERM', () => { // Handles termination signals from Render
 
 // --- Supabase JWT Authentication Middleware ---
 // Helper to get JWKS and verify JWT
-const SUPABASE_JWKS_URL = process.env.SUPABASE_JWKS_URL || 'https://bhiitpltxlcgefugftre.supabase.co/auth/v1/.well-known/jwks.json';  // Change to your project
+const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
 let cachedJwks = null;
 let cachedJwksAt = 0;
 async function getSupabaseJwks() {
