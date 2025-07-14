@@ -251,15 +251,25 @@ mqttClient.on('message', async (topic, message) => {
             const { status, charger_state, timestamp } = payload;
             const currentTimestamp = new Date(timestamp);
 
-            // Insert into device_status_logs (historical log of status changes)
+            // --- DEBUGGING: Log payload for status messages ---
+            console.log(`MQTT Status Payload Debug: deviceId=${deviceId}, portNumberInDevice=${portNumberInDevice}, status=${status}, charger_state=${charger_state}, timestamp=${timestamp}`);
+            // --- END DEBUGGING ---
+
+            // Corrected INSERT for device_status_logs
             await pool.query(
-                'INSERT INTO device_status_logs (device_id, port_id, status_message, charger_state, timestamp) VALUES ($1, $2, $3, TO_TIMESTAMP($4 / 1000.0), $5)',
+                `INSERT INTO device_status_logs (device_id, port_id, status_message, charger_state, timestamp)
+                 VALUES ($1, $2, $3, $4, TO_TIMESTAMP($5 / 1000.0))`, // Corrected parameter order for TO_TIMESTAMP
                 [deviceId, actualPortId, status, charger_state, timestamp]
             );
 
-            // Upsert into current_device_status (latest status for quick retrieval)
+            // Corrected UPSERT for current_device_status
             await pool.query(
-                'INSERT INTO current_device_status (device_id, port_id, status_message, charger_state, last_update) VALUES ($1, $2, $3, $4, TO_TIMESTAMP($5 / 1000.0)) ON CONFLICT (device_id, port_id) DO UPDATE SET status_message = $3, charger_state = $4, last_update = TO_TIMESTAMP($5 / 1000.0)',
+                `INSERT INTO current_device_status (device_id, port_id, status_message, charger_state, last_update)
+                 VALUES ($1, $2, $3, $4, TO_TIMESTAMP($5 / 1000.0))
+                 ON CONFLICT (device_id, port_id) DO UPDATE SET
+                    status_message = $3,
+                    charger_state = $4,
+                    last_update = TO_TIMESTAMP($5 / 1000.0)`, // Corrected parameter order for TO_TIMESTAMP
                 [deviceId, actualPortId, status, charger_state, timestamp]
             );
             console.log(`MQTT: Updated status for ${deviceId} Port ${portNumberInDevice}: ${status}, Charger: ${charger_state}`);
@@ -517,7 +527,7 @@ app.post('/api/esp32/command', async (req, res) => {
     else if (action === 'deactivate' && portId === 2) message = 'relay2_off';
     else return res.status(400).json({ error: 'Invalid action or portId' });
 
-    mqttClient.publish(topic, message, (err) => {
+    mqttClient.publish(topic, message, { qos: 1 }, (err) => {
         if (err) {
             console.error('MQTT publish error:', err);
             return res.status(500).json({ error: 'Failed to publish MQTT message' });
