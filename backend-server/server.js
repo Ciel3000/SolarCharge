@@ -7,12 +7,29 @@ require('dotenv').config(); // Load environment variables from .env file
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+const allowedOrigins = [
+    'http://localhost:3000', // Your local frontend development server
+    // Add your deployed frontend URL here when it's ready, e.g.:
+    // 'https://your-frontend-app.onrender.com',
+    // 'https://your-custom-domain.com'
+  ];
+
 // --- Global state for active sessions (maps `${deviceId}_${portNumberInDevice}` -> session_id) ---
 // This must be declared once globally, outside any function.
 const activeChargerSessions = {};
 
 // Middleware
-app.use(cors()); // Enables Cross-Origin Resource Sharing
+// Enables Cross-Origin Resource Sharing
+app.use(cors({
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
+    credentials: true
+  }));
 app.use(express.json()); // Parses incoming JSON requests
 
 // --- Supabase PostgreSQL connection Pool ---
