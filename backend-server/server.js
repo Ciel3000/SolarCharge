@@ -1905,6 +1905,132 @@ app.get('/api/sessions/active', async (req, res) => {
     }
 });
 
+// Get current user's subscription details and recent billing history
+app.get('/api/user/subscription', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user; // Get user_id from the authenticated request
+
+        // Fetch current active subscription for the user
+        const subscriptionResult = await pool.query(`
+            SELECT
+                us.user_subscription_id,
+                us.start_date,
+                us.end_date,
+                us.is_active as status, -- Rename to status for frontend clarity
+                us.current_daily_mwh_consumed,
+                sp.plan_id,
+                sp.plan_name,
+                sp.description,
+                sp.price,
+                sp.daily_mwh_limit,
+                sp.max_session_duration_hours,
+                sp.fast_charging_access,
+                sp.priority_access,
+                sp.cooldown_percentage,
+                sp.cooldown_time_hour
+            FROM
+                user_subscription us
+            JOIN
+                subscription_plans sp ON us.plan_id = sp.plan_id
+            WHERE
+                us.user_id = $1
+                AND us.is_active = TRUE
+            ORDER BY us.start_date DESC
+            LIMIT 1;
+        `, [user_id]);
+
+        const subscription = subscriptionResult.rows.length > 0 ? subscriptionResult.rows[0] : null;
+
+        // Fetch recent billing history for the user
+        const billingHistoryResult = await pool.query(`
+            SELECT
+                payment_id,
+                amount,
+                currency,
+                payment_date as date, -- Rename to 'date' for frontend clarity
+                payment_status as status, -- Rename to 'status'
+                transaction_id
+            FROM
+                payment
+            WHERE
+                user_id = $1
+            ORDER BY payment_date DESC
+            LIMIT 5; -- Fetch last 5 payments
+        `, [user_id]);
+
+        const billingHistory = billingHistoryResult.rows;
+
+        // Process subscription features for frontend display (e.g., create a list of strings)
+        if (subscription) {
+            const features = [];
+            if (subscription.daily_mwh_limit) features.push(`${subscription.daily_mwh_limit} MWh daily limit`);
+            if (subscription.max_session_duration_hours) features.push(`${subscription.max_session_duration_hours} hour max session`);
+            if (subscription.fast_charging_access) features.push('Fast Charging Access');
+            if (subscription.priority_access) features.push('Priority Access');
+            if (subscription.cooldown_percentage && subscription.cooldown_time_hour) {
+                features.push(`${subscription.cooldown_percentage}% cooldown in ${subscription.cooldown_time_hour}h`);
+            }
+            subscription.features = features;
+
+            // Add a simulated 'next_billing_date' if not directly in DB
+            // Assuming monthly billing from start_date
+            const startDate = new Date(subscription.start_date);
+            subscription.next_billing_date = new Date(startDate.setMonth(startDate.getMonth() + 1));
+        }
+
+
+        res.json({ subscription, billing_history: billingHistory });
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User ${user_id} fetched subscription data.`);
+    } catch (err) {
+        console.error('API Error fetching user subscription data:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching subscription for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to fetch subscription data.' });
+    }
+});
+
+// Get current user's monthly usage statistics
+app.get('/api/user/usage', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user; // Get user_id from the authenticated request
+
+        // Calculate start and end of current month
+        const now = new Date();
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+
+        // Fetch aggregated usage data for the current month from charging_session
+        const usageResult = await pool.query(`
+            SELECT
+                COUNT(session_id) as total_sessions,
+                COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(end_time, NOW()) - start_time))/60), 0) as total_duration_minutes,
+                COALESCE(SUM(energy_consumed_kwh), 0) as total_energy_kwh,
+                COALESCE(SUM(cost), 0) as total_cost
+            FROM
+                charging_session
+            WHERE
+                user_id = $1
+                AND start_time >= $2
+                AND start_time <= $3
+                AND session_status IN ('completed', 'auto_completed', 'active'); -- Include active sessions for current month
+        `, [user_id, startOfMonth, endOfMonth]);
+
+        const usageData = usageResult.rows[0];
+
+        res.json({
+            totalSessions: parseInt(usageData.total_sessions || 0),
+            totalDuration: parseFloat(usageData.total_duration_minutes || 0).toFixed(0), // Round to nearest minute
+            totalEnergyKWH: parseFloat(usageData.total_energy_kwh || 0).toFixed(2), // 2 decimal places
+            totalCost: parseFloat(usageData.total_cost || 0).toFixed(2) // 2 decimal places
+        });
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User ${user_id} fetched usage data.`);
+    } catch (err) {
+        console.error('API Error fetching user usage data:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching usage for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to fetch usage data.' });
+    }
+});
+
+
 // --- Periodic check for stale sessions ---
 // This function will run every 5 minutes to check for any active sessions
 // that haven't been updated in more than the inactivity timeout period
