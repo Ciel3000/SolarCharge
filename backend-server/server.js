@@ -185,7 +185,7 @@ async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortI
 
         if (sessionCheck.rows.length > 0 && sessionCheck.rows[0].session_status === SESSION_STATUS.ACTIVE) {
             const lastUpdate = sessionCheck.rows[0].last_status_update;
-            const energyConsumed = sessionCheck.rows[0].energy_consumed_kwh || 0;
+            const energyConsumed = parseFloat(sessionCheck.rows[0].energy_consumed_kwh) || 0;
             const now = new Date();
             
             // Calculate seconds since last activity
@@ -604,8 +604,10 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                     [currentSessionId]
                 );
                 
-                const energyConsumed = sessionData.rows[0]?.energy_consumed_kwh || 0;
-                const mAhConsumed = sessionData.rows[0]?.total_mah_consumed || 0;
+                // --- REVISED LINES HERE ---
+                const energyConsumed = parseFloat(sessionData.rows[0]?.energy_consumed_kwh) || 0;
+                const mAhConsumed = parseFloat(sessionData.rows[0]?.total_mah_consumed) || 0;
+                // --- END REVISED LINES ---
                 
                 // Calculate final cost
                 const sessionCost = await calculateSessionCost(currentSessionId, energyConsumed);
@@ -638,7 +640,9 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                 
                 if (activeSessionCheck.rows.length > 0) {
                     const dbSessionId = activeSessionCheck.rows[0].session_id;
-                    const energyConsumed = activeSessionCheck.rows[0].energy_consumed_kwh || 0;
+                    // --- REVISED LINE HERE ---
+                    const energyConsumed = parseFloat(activeSessionCheck.rows[0].energy_consumed_kwh) || 0;
+                    // --- END REVISED LINE ---
                     const sessionCost = await calculateSessionCost(dbSessionId, energyConsumed);
 
                     // End the session found in DB
