@@ -1698,13 +1698,26 @@ app.get('/api/me', supabaseAuthMiddleware, async (req, res) => {
 // --- Example admin-only endpoint ---
 app.get('/api/admin/users', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     try {
-        const result = await pool.query('SELECT user_id, fname, lname, is_admin FROM users ORDER BY created_at DESC');
+        const result = await pool.query(`
+            SELECT 
+                user_id, 
+                fname, 
+                lname, 
+                email, 
+                contact_number,
+                is_admin, 
+                created_at, 
+                last_login
+            FROM users
+            ORDER BY created_at DESC
+        `);
+        
         res.json(result.rows);
-        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, 'Admin users list fetched', req.user.user_id);
-    } catch (err) {
-        console.error('Admin users error:', err.message);
-        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Admin users list error: ${err.message}`, req.user.user_id);
-        res.status(500).json({ error: 'Server error' });
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, 'Admin users list fetched successfully', req.user.user_id);
+    } catch (err) { // <--- This catch block is triggered
+        console.error('Admin users error:', err.message); // <--- THIS IS THE KEY!
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Admin users error: ${err.message}`, req.user.user_id);
+        res.status(500).json({ error: 'Server error' }); // Sends the generic error to frontend
     }
 });
 
