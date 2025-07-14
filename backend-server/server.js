@@ -1775,8 +1775,15 @@ app.get('/api/user/usage', supabaseAuthMiddleware, async (req, res) => {
                 user_id = $1
                 AND start_time >= $2
                 AND start_time <= $3
-                AND session_status IN ('$4', '$5'); -- Include active sessions for current month
-        `, [user_id, startOfMonth, endOfMonth]);
+                -- REVISED LINE HERE: Use ANY() with an array parameter and explicit casting
+                AND session_status = ANY($4::session_status[]);
+        `, [
+            user_id,
+            startOfMonth,
+            endOfMonth,
+            // Pass the valid enum values as an array for the $4 parameter
+            [SESSION_STATUS.COMPLETED, SESSION_STATUS.ACTIVE]
+        ])
 
         const usageData = usageResult.rows[0];
 
