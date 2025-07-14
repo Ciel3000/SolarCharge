@@ -1605,13 +1605,18 @@ function certToPEM(cert) {
 async function verifySupabaseJWT(token) {
      if (!SUPABASE_JWT_SECRET) {
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.AUTH, 'SUPABASE_JWT_SECRET environment variable is not set!');
-        throw new Error('Server misconfiguration: JWT secret is missing.');
+        throw new Error('Server misconfiguration: JWT secret is missing for HS256 verification.');
     }
 
-    // For HS256, you directly use the secret for verification
-    // The kid (Key ID) is typically not used with symmetric signing like HS256
-    // You won't be looking for keys in a JWKS.
-    return jwt.verify(token, SUPABASE_JWT_SECRET, { algorithms: ['HS256'] });
+    try {
+        // For HS256, you directly use the shared secret for verification
+        // The `kid` is not used in symmetric (HS256) verification against a JWKS.
+        return jwt.verify(token, SUPABASE_JWT_SECRET, { algorithms: ['HS256'] });
+    } catch (error) {
+        // Re-throw the error after logging for consistency
+        console.error('JWT verification error with HS256:', error.message);
+        throw error;
+    }
 }
 
 // Express middleware
