@@ -3,7 +3,6 @@ const cors = require('cors');
 const { Pool } = require('pg');
 const mqtt = require('mqtt');
 require('dotenv').config(); // Load environment variables from .env file
-const fetch = require('node-fetch'); // For JWKS
 const jwt = require('jsonwebtoken'); // For JWT decode/verify
 
 const app = express();
