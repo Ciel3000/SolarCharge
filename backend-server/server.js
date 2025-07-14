@@ -34,7 +34,7 @@ const MQTT_TOPICS = {
 const SESSION_STATUS = {
     ACTIVE: 'active',
     COMPLETED: 'completed',
-    AUTO_COMPLETED: 'auto_completed'
+    // AUTO_COMPLETED: 'auto_completed'
 };
 
 const CHARGER_STATES = {
@@ -215,9 +215,9 @@ async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortI
                 // Mark session as auto_completed in DB
                 await pool.query(
                     "UPDATE charging_session SET end_time = NOW(), session_status = $1, last_status_update = NOW(), cost = $2 WHERE session_id = $3",
-                    [SESSION_STATUS.AUTO_COMPLETED, sessionCost, sessionId]
-                );
-                console.log(`Marked session ${sessionId} as '${SESSION_STATUS.AUTO_COMPLETED}' due to inactivity. Final Cost: $${sessionCost.toFixed(2)}`);
+                    [SESSION_STATUS.COMPLETED, sessionCost, sessionId] // <-- Use SESSION_STATUS.COMPLETED
+                )
+                console.log(`Marked session ${sessionId} as '${SESSION_STATUS.COMPLETED}' due to inactivity. Final Cost: $${sessionCost.toFixed(2)}`);
                 logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Session ${sessionId} auto-completed due to inactivity. Cost: $${sessionCost.toFixed(2)}`);
 
                 // Clear from in-memory tracking
@@ -1775,7 +1775,7 @@ app.get('/api/user/usage', supabaseAuthMiddleware, async (req, res) => {
                 user_id = $1
                 AND start_time >= $2
                 AND start_time <= $3
-                AND session_status IN ('completed', 'auto_completed', 'active'); -- Include active sessions for current month
+                AND session_status IN ('$4', '$5'); -- Include active sessions for current month
         `, [user_id, startOfMonth, endOfMonth]);
 
         const usageData = usageResult.rows[0];
@@ -2098,7 +2098,7 @@ function setupStaleSessionChecker() {
                     // Mark the session as auto-completed in the database
                     await pool.query(
                         "UPDATE charging_session SET end_time = NOW(), session_status = $1, last_status_update = NOW(), cost = $2 WHERE session_id = $3",
-                        [SESSION_STATUS.AUTO_COMPLETED, sessionCost, session.session_id]
+                        [SESSION_STATUS.COMPLETED, sessionCost, sessionId]
                     );
                     logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Session ${session.session_id} marked auto-completed by stale checker. Cost: $${sessionCost.toFixed(2)}`);
                     
