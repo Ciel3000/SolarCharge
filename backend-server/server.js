@@ -2021,8 +2021,45 @@ async function requireAdmin(req, res, next) {
     }
 }
 
+async function handleMqttStatusMessage(payload, deviceId, actualPortId) {
+    const { status, charger_state, timestamp } = payload;
+    const currentTimestamp = new Date(timestamp);
 
+    let mapped_current_status;
+    if (charger_state === CHARGER_STATES.ON) {
+        mapped_current_status = PORT_STATUS.OCCUPIED;
+    } else if (charger_state === CHARGER_STATES.OFF) {
+        mapped_current_status = PORT_STATUS.AVAILABLE;
+    } else {
+        mapped_current_status = PORT_STATUS.AVAILABLE;
+    }
 
+    // Insert into device_status_logs
+    await pool.query(
+        `INSERT INTO device_status_logs (device_id, port_id, status_message, charger_state, timestamp)
+         VALUES ($1, $2, $3, $4, TO_TIMESTAMP($5 / 1000.0))`,
+        [deviceId, actualPortId, status, charger_state, timestamp]
+    );
+
+    // UPSERT into current_device_status
+    await pool.query(
+        `INSERT INTO current_device_status (device_id, port_id, status_message, charger_state, last_update)
+         VALUES ($1, $2, $3, $4, TO_TIMESTAMP($5 / 1000.0))
+         ON CONFLICT (device_id, port_id) DO UPDATE SET
+            status_message = $3,
+            charger_state = $4,
+            last_update = TO_TIMESTAMP($5 / 1000.0)`,
+        [deviceId, actualPortId, status, charger_state, timestamp]
+    );
+
+    // This is the line that needs correcting:
+    await pool.query(
+        'UPDATE charging_port SET current_status = $1, is_occupied = $2, last_status_update = $3 WHERE port_id = $4',
+        [mapped_current_status, (charger_state === CHARGER_STATES.ON), currentTimestamp, actualPortId] // <-- CHANGE `status` to `mapped_current_status` here
+    );
+    console.log(`MQTT: Updated status for ${deviceId} Port ${payload.port_number}: ${mapped_current_status}, Charger: ${charger_state}`);
+    logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.MQTT, `Status update for ${deviceId} Port ${payload.port_number}: ${mapped_current_status}, Charger: ${charger_state}`);
+}
 // Helper function to validate consumption readings
 function validateConsumption(consumption) {
     // If consumption is null, undefined, NaN, or negative, return 0
