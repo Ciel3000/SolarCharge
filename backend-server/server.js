@@ -1857,6 +1857,29 @@ app.get('/api/user/profile', supabaseAuthMiddleware, async (req, res) => {
     }
 });
 
+// GET /api/subscription/plans
+// Fetches all available subscription plans. Should be protected by admin middleware.
+app.get('/api/subscription/plans', async (req, res) => {
+    try {
+      // Assuming you have middleware that verifies the JWT and attaches user info to req
+      // You might want to add an admin check here if not already done by middleware
+  
+      const { data, error } = await supabase
+        .from('subscription_plans') // The name of your table for subscription plans
+        .select('*')
+        .order('price', { ascending: true });
+  
+      if (error) {
+        throw error;
+      }
+  
+      res.status(200).json(data);
+  
+    } catch (error) {
+      console.error('Error fetching subscription plans:', error.message);
+      res.status(500).json({ error: 'Internal Server Error: Could not fetch plans.' });
+    }
+  });
 
 // Error handling middleware (catches unhandled errors in async routes)
 app.use((err, req, res, next) => {
