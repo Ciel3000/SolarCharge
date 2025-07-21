@@ -434,16 +434,18 @@ app.get('/', (req, res) => {
 // NEW: GET all subscription plans
 app.get('/api/subscription/plans', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     try {
-        const { data, error } = await pool.query(
+        // Use standard pg pool.query which returns a result object
+        const result = await pool.query(
             `SELECT * FROM subscription_plans ORDER BY price ASC`
         );
-        if (error) throw error;
-        res.status(200).json(data.rows);
+        // The data is in result.rows
+        res.status(200).json(result.rows);
     } catch (error) {
         console.error('Error fetching subscription plans:', error.message);
         res.status(500).json({ error: 'Internal Server Error: Could not fetch plans.' });
     }
 });
+
 
 
 // Get consumption data for a specific device (station) AND internal port number
