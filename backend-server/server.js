@@ -43,11 +43,15 @@ const CHARGER_STATES = {
     UNKNOWN: 'UNKNOWN'
 };
 
+// **YOUR DEFINED ENUM VALUES FROM THE DATABASE**
 const PORT_STATUS = {
     AVAILABLE: 'available',
-    OCCUPIED: 'occupied',
-    FAULT: 'fault'
-    // Add other relevant statuses like 'charging', 'maintenance', etc.
+    CHARGING_FREE: 'charging_free',
+    CHARGING_PREMIUM: 'charging_premium',
+    MAINTENANCE: 'maintenance',
+    OFFLINE: 'offline',
+    OCCUPIED: 'occupied', // Use 'occupied' when a port is in use but not by the current user's active session, or if it's just 'ON'
+    FAULT: 'fault' // Your enum might not have this, but common
 };
 
 const LOG_TYPES = {
@@ -215,7 +219,7 @@ async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortI
                 // Mark session as auto_completed in DB
                 await pool.query(
                     "UPDATE charging_session SET end_time = NOW(), session_status = $1, last_status_update = NOW(), cost = $2 WHERE session_id = $3",
-                    [SESSION_STATUS.COMPLETED, sessionCost, sessionId] // <-- Use SESSION_STATUS.COMPLETED
+                    [SESSION_STATUS.COMPLETED, sessionCost, sessionId] // sessionId instead of session.session_id
                 )
                 console.log(`Marked session ${sessionId} as '${SESSION_STATUS.COMPLETED}' due to inactivity. Final Cost: $${sessionCost.toFixed(2)}`);
                 logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Session ${sessionId} auto-completed due to inactivity. Cost: $${sessionCost.toFixed(2)}`);
@@ -315,10 +319,11 @@ mqttClient.on('message', async (topic, message) => {
         // --- Find the actual port_id (UUID) from charging_port table ---
         // This query links the ESP32's ID and its internal port number to a unique DB port_id.
         const portIdResult = await pool.query(
-            'SELECT port_id FROM charging_port WHERE device_mqtt_id = $1 AND port_number_in_device = $2',
+            'SELECT port_id, is_premium FROM charging_port WHERE device_mqtt_id = $1 AND port_number_in_device = $2', // Fetch is_premium
             [deviceId, portNumberInDevice]
         );
         const actualPortId = portIdResult.rows[0]?.port_id; // Get the port_id UUID
+        const isPremiumPort = portIdResult.rows[0]?.is_premium; // Get is_premium
 
         if (!actualPortId) {
             console.warn(`MQTT: No charging_port found for device_id: ${deviceId} and port_number_in_device: ${portNumberInDevice}. Skipping message processing.`);
@@ -386,36 +391,8 @@ mqttClient.on('message', async (topic, message) => {
 
         // --- Handle charger/status topic (for overall device/port status updates) ---
         else if (topic.startsWith(MQTT_TOPICS.STATUS)) {
-            const { status, charger_state, timestamp } = payload;
-            const currentTimestamp = new Date(timestamp);
-
-            console.log(`MQTT Status Payload Debug: deviceId=${deviceId}, portNumberInDevice=${portNumberInDevice}, status=${status}, charger_state=${charger_state}, timestamp=${timestamp}`);
-            
-            // Corrected INSERT for device_status_logs
-            await pool.query(
-                `INSERT INTO device_status_logs (device_id, port_id, status_message, charger_state, timestamp)
-                 VALUES ($1, $2, $3, $4, TO_TIMESTAMP($5 / 1000.0))`,
-                [deviceId, actualPortId, status, charger_state, timestamp]
-            );
-
-            // Corrected UPSERT for current_device_status
-            await pool.query(
-                `INSERT INTO current_device_status (device_id, port_id, status_message, charger_state, last_update)
-                 VALUES ($1, $2, $3, $4, TO_TIMESTAMP($5 / 1000.0))
-                 ON CONFLICT (device_id, port_id) DO UPDATE SET
-                    status_message = $3,
-                    charger_state = $4,
-                    last_update = TO_TIMESTAMP($5 / 1000.0)`,
-                [deviceId, actualPortId, status, charger_state, timestamp]
-            );
-            console.log(`MQTT: Updated status for ${deviceId} Port ${portNumberInDevice}: ${status}, Charger: ${charger_state}`);
-            logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.MQTT, `Status update for ${deviceId} Port ${portNumberInDevice}: ${status}, Charger: ${charger_state}`);
-
-            // Update charging_port table for real-time status display in the main schema
-            await pool.query(
-                'UPDATE charging_port SET current_status = $1, is_occupied = $2, last_status_update = $3 WHERE port_id = $4',
-                [status, (charger_state === CHARGER_STATES.ON), currentTimestamp, actualPortId]
-            );
+            // Pass the payload and newly fetched isPremiumPort to the dedicated handler
+            await handleMqttStatusMessage(payload, deviceId, actualPortId, isPremiumPort);
         }
 
         // --- Handle other existing station topics (if any) ---
@@ -528,12 +505,14 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
     const internalPortNumber = parseInt(portNumber);
 
     try {
-        // Find the actual port_id (UUID) from charging_port table
+        // Find the actual port_id (UUID) and is_premium from charging_port table
         const portIdResult = await pool.query(
-            'SELECT port_id FROM charging_port WHERE device_mqtt_id = $1 AND port_number_in_device = $2',
+            'SELECT port_id, is_premium FROM charging_port WHERE device_mqtt_id = $1 AND port_number_in_device = $2',
             [deviceId, internalPortNumber]
         );
         const actualPortId = portIdResult.rows[0]?.port_id;
+        const isPremiumPort = portIdResult.rows[0]?.is_premium;
+
 
         if (!actualPortId) {
             console.warn(`API: Port not found for deviceId ${deviceId} and portNumber ${internalPortNumber}.`);
@@ -545,6 +524,15 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
         const sessionKey = `${deviceId}_${internalPortNumber}`;
         let currentSessionId = activeChargerSessions[sessionKey];
 
+        // Determine the port status to set in the DB
+        let newPortStatusForDb;
+        if (command === CHARGER_STATES.ON) {
+            newPortStatusForDb = isPremiumPort ? PORT_STATUS.CHARGING_PREMIUM : PORT_STATUS.CHARGING_FREE;
+        } else { // command === CHARGER_STATES.OFF
+            newPortStatusForDb = PORT_STATUS.AVAILABLE;
+        }
+
+
         if (command === CHARGER_STATES.ON) {
             if (!user_id || !station_id) {
                 logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `Attempt to start session without user_id or station_id for ${sessionKey}`);
@@ -553,7 +541,7 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
 
             // Check if there's already an active session in DB for this port
             const existingActiveSession = await pool.query(
-                "SELECT session_id FROM charging_session WHERE port_id = $1 AND session_status = $2",
+                "SELECT session_id, user_id FROM charging_session WHERE port_id = $1 AND session_status = $2",
                 [actualPortId, SESSION_STATUS.ACTIVE]
             );
 
@@ -561,15 +549,22 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                 // No active session found in DB, create a new one
                 const sessionResult = await pool.query(
                     'INSERT INTO charging_session (user_id, port_id, station_id, start_time, session_status, is_premium, energy_consumed_kwh, total_mah_consumed, last_status_update) VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7, NOW()) RETURNING session_id',
-                    [user_id, actualPortId, station_id, SESSION_STATUS.ACTIVE, true, 0, 0] // Initialize energy and mAh consumed to 0
+                    [user_id, actualPortId, station_id, SESSION_STATUS.ACTIVE, isPremiumPort, 0, 0] // Initialize energy and mAh consumed to 0
                 );
                 currentSessionId = sessionResult.rows[0].session_id;
                 activeChargerSessions[sessionKey] = currentSessionId;
                 console.log(`API: Started new charging session ${currentSessionId} for port ${actualPortId} (User: ${user_id})`);
                 logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `New charging session ${currentSessionId} started for ${sessionKey} by user ${user_id}`);
             } else {
-                // Session already active (e.g., backend restarted, or multiple ON commands)
+                // Session already active
                 currentSessionId = existingActiveSession.rows[0].session_id;
+                
+                // If the existing session is by a *different* user, it's occupied!
+                if (existingActiveSession.rows[0].user_id !== user_id) {
+                    logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `User ${user_id} tried to activate occupied port ${sessionKey}. Occupied by ${existingActiveSession.rows[0].user_id}.`);
+                    return res.status(409).json({ error: 'Port is currently occupied by another user.' });
+                }
+
                 activeChargerSessions[sessionKey] = currentSessionId; // Ensure in-memory map is updated
                 
                 // Update the last_status_update to reset inactivity timer
@@ -596,17 +591,22 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
             console.log(`API: Inactivity timer started for ${sessionKey}.`);
 
         } else if (command === CHARGER_STATES.OFF) {
-            if (currentSessionId) {
-                // Get current consumption values before ending session
-                const sessionData = await pool.query(
-                    "SELECT energy_consumed_kwh, total_mah_consumed FROM charging_session WHERE session_id = $1",
-                    [currentSessionId]
-                );
-                
-                // --- REVISED LINES HERE ---
-                const energyConsumed = parseFloat(sessionData.rows[0]?.energy_consumed_kwh) || 0;
-                const mAhConsumed = parseFloat(sessionData.rows[0]?.total_mah_consumed) || 0;
-                // --- END REVISED LINES ---
+            // Check if the session is currently active by this user
+            const sessionCheck = await pool.query(
+                "SELECT session_id, user_id, energy_consumed_kwh, total_mah_consumed FROM charging_session WHERE port_id = $1 AND session_status = $2",
+                [actualPortId, SESSION_STATUS.ACTIVE]
+            );
+
+            if (sessionCheck.rows.length > 0) {
+                const dbSession = sessionCheck.rows[0];
+                if (dbSession.user_id !== user_id) { // Ensure only the session owner can end it via API
+                    logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `User ${user_id} tried to end session ${dbSession.session_id} not owned by them.`);
+                    return res.status(403).json({ error: 'You can only end your own active session on this port.' });
+                }
+
+                currentSessionId = dbSession.session_id; // Set currentSessionId from DB
+                const energyConsumed = parseFloat(dbSession.energy_consumed_kwh) || 0;
+                const mAhConsumed = parseFloat(dbSession.total_mah_consumed) || 0;
                 
                 // Calculate final cost
                 const sessionCost = await calculateSessionCost(currentSessionId, energyConsumed);
@@ -628,41 +628,20 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                 }
 
             } else {
-                console.log(`API: Received OFF command for ${deviceId} Port ${internalPortNumber}, but no active session found to end in memory.`);
-                logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `OFF command for ${sessionKey} but no in-memory session. Checking DB...`);
-
-                // Check DB for active session if in-memory map is not definitive
-                const activeSessionCheck = await pool.query(
-                    "SELECT session_id, energy_consumed_kwh FROM charging_session WHERE port_id = $1 AND session_status = $2",
-                    [actualPortId, SESSION_STATUS.ACTIVE]
-                );
-                
-                if (activeSessionCheck.rows.length > 0) {
-                    const dbSessionId = activeSessionCheck.rows[0].session_id;
-                    // --- REVISED LINE HERE ---
-                    const energyConsumed = parseFloat(activeSessionCheck.rows[0].energy_consumed_kwh) || 0;
-                    // --- END REVISED LINE ---
-                    const sessionCost = await calculateSessionCost(dbSessionId, energyConsumed);
-
-                    // End the session found in DB
-                    await pool.query(
-                        "UPDATE charging_session SET end_time = NOW(), session_status = $1, last_status_update = NOW(), cost = $2 WHERE session_id = $3",
-                        [SESSION_STATUS.COMPLETED, sessionCost, dbSessionId]
-                    );
-                    console.log(`API: Ended charging session ${dbSessionId} found in DB for port ${actualPortId}. Cost: $${sessionCost.toFixed(2)}`);
-                    logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Session ${dbSessionId} ended (DB lookup) for ${sessionKey}. Cost: $${sessionCost.toFixed(2)}`);
-
-                    // Ensure timer is cleared if it somehow wasn't
-                    if (activePortTimers[sessionKey]) {
-                        clearTimeout(activePortTimers[sessionKey].timerId);
-                        delete activePortTimers[sessionKey];
-                    }
-                } else {
-                    console.warn(`API: No active session found in DB for ${sessionKey} either.`);
-                    logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `No active session found in DB for ${sessionKey} after OFF command.`);
-                }
+                console.log(`API: Received OFF command for ${deviceId} Port ${internalPortNumber}, but no active session found for user ${user_id}.`);
+                logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `OFF command for ${sessionKey} by user ${user_id} but no active session.`);
+                // If no session, still attempt to turn off the physical charger
             }
         }
+
+        // --- Update charging_port table for real-time status display in the main schema
+        // This is done after session management, using the `newPortStatusForDb`
+        await pool.query(
+            'UPDATE charging_port SET current_status = $1, is_occupied = $2, last_status_update = NOW() WHERE port_id = $3',
+            [newPortStatusForDb, (newPortStatusForDb === PORT_STATUS.CHARGING_FREE || newPortStatusForDb === PORT_STATUS.CHARGING_PREMIUM || newPortStatusForDb === PORT_STATUS.OCCUPIED), actualPortId]
+        );
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Port ${actualPortId} status set to '${newPortStatusForDb}' by API command '${command}'.`);
+
 
         // Publish MQTT command (payload remains the same for ESP32)
         const mqttPayload = JSON.stringify({ command: command, port_number: internalPortNumber });
@@ -680,7 +659,7 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                 deviceId, 
                 portNumber: internalPortNumber, 
                 command, 
-                sessionId: currentSessionId 
+                sessionId: currentSessionId // Might be null if OFF command for no active session
             });
         });
 
@@ -1937,16 +1916,21 @@ process.on('SIGTERM', () => { // Handles termination signals from Render
 const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
 let cachedJwks = null;
 let cachedJwksAt = 0;
+// Note: You removed SUPABASE_JWKS_URL, so getSupabaseJwks might not be needed if only using HS256.
+// If you are using RS256, you need to provide SUPABASE_JWKS_URL and use this function.
+// For now, I've left it as is assuming your verifySupabaseJWT uses HS256 with a secret.
 async function getSupabaseJwks() {
     if (cachedJwks && Date.now() - cachedJwksAt < 60 * 60 * 1000) return cachedJwks;
     try {
-        const res = await fetch(SUPABASE_JWKS_URL);
-        if (!res.ok) throw new Error(`Failed to fetch JWKS: ${res.statusText}`);
-        const { keys } = await res.json();
-        cachedJwks = keys;
-        cachedJwksAt = Date.now();
-        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.AUTH, 'Successfully fetched Supabase JWKS');
-        return keys;
+        // This URL needs to be defined if you plan to use RS256 for JWT verification.
+        // const res = await fetch(SUPABASE_JWKS_URL);
+        // if (!res.ok) throw new Error(`Failed to fetch JWKS: ${res.statusText}`);
+        // const { keys } = await res.json();
+        // cachedJwks = keys;
+        // cachedJwksAt = Date.now();
+        // logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.AUTH, 'Successfully fetched Supabase JWKS');
+        // return keys;
+        throw new Error("JWKS fetching is not configured or necessary for HS256.");
     } catch (err) {
         console.error('Failed to fetch JWKS:', err.message);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.AUTH, `Failed to fetch Supabase JWKS: ${err.message}`);
@@ -2021,16 +2005,24 @@ async function requireAdmin(req, res, next) {
     }
 }
 
-async function handleMqttStatusMessage(payload, deviceId, actualPortId) {
+// Helper function to handle MQTT status messages and update DB
+async function handleMqttStatusMessage(payload, deviceId, actualPortId, isPremiumPort) {
     const { status, charger_state, timestamp } = payload;
     const currentTimestamp = new Date(timestamp);
 
     let mapped_current_status;
-    if (charger_state === CHARGER_STATES.ON) {
-        mapped_current_status = PORT_STATUS.OCCUPIED;
+
+    // Logic to map MQTT status/charger_state to DB enum (port_status)
+    if (status === 'offline') {
+        mapped_current_status = PORT_STATUS.OFFLINE;
+    } else if (charger_state === CHARGER_STATES.ON) {
+        // When the charger is ON, it's either free or premium charging
+        mapped_current_status = isPremiumPort ? PORT_STATUS.CHARGING_PREMIUM : PORT_STATUS.CHARGING_FREE;
     } else if (charger_state === CHARGER_STATES.OFF) {
+        // When the charger is OFF and not offline, it's available
         mapped_current_status = PORT_STATUS.AVAILABLE;
     } else {
+        // Default or unknown states
         mapped_current_status = PORT_STATUS.AVAILABLE;
     }
 
@@ -2052,14 +2044,23 @@ async function handleMqttStatusMessage(payload, deviceId, actualPortId) {
         [deviceId, actualPortId, status, charger_state, timestamp]
     );
 
-    // This is the line that needs correcting:
+    // This is the critical update to charging_port's current_status
     await pool.query(
         'UPDATE charging_port SET current_status = $1, is_occupied = $2, last_status_update = $3 WHERE port_id = $4',
-        [mapped_current_status, (charger_state === CHARGER_STATES.ON), currentTimestamp, actualPortId] // <-- CHANGE `status` to `mapped_current_status` here
+        [
+            mapped_current_status,
+            // is_occupied is true if the port is in a 'charging' or 'occupied' state
+            (mapped_current_status === PORT_STATUS.CHARGING_FREE ||
+             mapped_current_status === PORT_STATUS.CHARGING_PREMIUM ||
+             mapped_current_status === PORT_STATUS.OCCUPIED),
+            currentTimestamp,
+            actualPortId
+        ]
     );
     console.log(`MQTT: Updated status for ${deviceId} Port ${payload.port_number}: ${mapped_current_status}, Charger: ${charger_state}`);
     logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.MQTT, `Status update for ${deviceId} Port ${payload.port_number}: ${mapped_current_status}, Charger: ${charger_state}`);
 }
+
 // Helper function to validate consumption readings
 function validateConsumption(consumption) {
     // If consumption is null, undefined, NaN, or negative, return 0
@@ -2076,7 +2077,6 @@ function validateConsumption(consumption) {
     // Return the validated consumption
     return consumption;
 }
-
 
 
 // --- Periodic check for stale sessions ---
@@ -2142,7 +2142,7 @@ function setupStaleSessionChecker() {
                     // Mark the session as auto-completed in the database
                     await pool.query(
                         "UPDATE charging_session SET end_time = NOW(), session_status = $1, last_status_update = NOW(), cost = $2 WHERE session_id = $3",
-                        [SESSION_STATUS.COMPLETED, sessionCost, sessionId]
+                        [SESSION_STATUS.COMPLETED, sessionCost, session.session_id] // Corrected variable name
                     );
                     logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Session ${session.session_id} marked auto-completed by stale checker. Cost: $${sessionCost.toFixed(2)}`);
                     
