@@ -431,6 +431,21 @@ app.get('/', (req, res) => {
     res.send('SolarCharge Backend is running!');
 });
 
+// NEW: GET all subscription plans
+app.get('/api/subscription/plans', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+    try {
+        const { data, error } = await pool.query(
+            `SELECT * FROM subscription_plans ORDER BY price ASC`
+        );
+        if (error) throw error;
+        res.status(200).json(data.rows);
+    } catch (error) {
+        console.error('Error fetching subscription plans:', error.message);
+        res.status(500).json({ error: 'Internal Server Error: Could not fetch plans.' });
+    }
+});
+
+
 // Get consumption data for a specific device (station) AND internal port number
 app.get('/api/devices/:deviceId/:portNumber/consumption', async (req, res) => {
     const { deviceId, portNumber } = req.params;
@@ -864,105 +879,231 @@ app.get('/api/admin/stations/battery', supabaseAuthMiddleware, requireAdmin, asy
     }
 });
 
-// Admin Users Management
-app.get('/api/admin/users', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
-    try {
-        const result = await pool.query(`
-            SELECT 
-                user_id, 
-                fname, 
-                lname, 
-                email, 
-                contact_number,
-                is_admin, 
-                created_at, 
-                last_login
-            FROM users
-            ORDER BY created_at DESC
-        `);
+// // Admin Users Management
+// app.get('/api/admin/users', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+//     try {
+//         const result = await pool.query(`
+//             SELECT 
+//                 user_id, 
+//                 fname, 
+//                 lname, 
+//                 email, 
+//                 contact_number,
+//                 is_admin, 
+//                 created_at, 
+//                 last_login
+//             FROM users
+//             ORDER BY created_at DESC
+//         `);
         
-        res.json(result.rows);
-        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, 'Admin users list fetched successfully', req.user.user_id);
-    } catch (err) {
-        console.error('Admin users error:', err.message);
-        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Admin users error: ${err.message}`, req.user.user_id);
-        res.status(500).json({ error: 'Server error' });
-    }
-});
+//         res.json(result.rows);
+//         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, 'Admin users list fetched successfully', req.user.user_id);
+//     } catch (err) {
+//         console.error('Admin users error:', err.message);
+//         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Admin users error: ${err.message}`, req.user.user_id);
+//         res.status(500).json({ error: 'Server error' });
+//     }
+// });
 
 app.post('/api/admin/users', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+    const { fname, lname, email, contact_number, is_admin, plan_id, password } = req.body;
+    // Note: Creating a Supabase Auth user from the backend requires admin privileges
+    // and is more complex. This example focuses on the public.users table.
+    // A complete solution would involve using the Supabase Admin SDK.
+    const client = await pool.connect();
     try {
-        const { fname, lname, email, contact_number, is_admin } = req.body;
-        
-        // In a real implementation, you'd also create the Supabase auth user
-        // For now, we'll just create the user in the database
-        const result = await pool.query(
+        await client.query('BEGIN');
+
+        // This is a placeholder for creating the auth.users entry.
+        // You would typically use a Supabase admin client for this.
+        // For now, we assume the user_id is created separately or you have a trigger.
+        // Let's assume a user_id is generated or passed in for this example.
+        // const { data: authUser, error: authError } = await supabase.auth.admin.createUser({ email, password, ... });
+        // if (authError) throw authError;
+        // const userId = authUser.user.id;
+
+        const newUserResult = await client.query(
             `INSERT INTO users (fname, lname, email, contact_number, is_admin, created_at)
              VALUES ($1, $2, $3, $4, $5, NOW())
-             RETURNING user_id, fname, lname, email, contact_number, is_admin, created_at`,
+             RETURNING user_id`,
             [fname, lname, email, contact_number, is_admin]
         );
-        
-        res.status(201).json(result.rows[0]);
-        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `New user ${result.rows[0].user_id} created by admin`, req.user.user_id);
+        const userId = newUserResult.rows[0].user_id;
+
+        if (plan_id) {
+            const endDate = new Date();
+            endDate.setMonth(endDate.getMonth() + 1);
+            await client.query(
+                `INSERT INTO user_subscription (user_id, plan_id, start_date, end_date, is_active)
+                 VALUES ($1, $2, NOW(), $3, true)`,
+                [userId, plan_id, endDate]
+            );
+        }
+
+        await client.query('COMMIT');
+        res.status(201).json({ message: 'User created successfully', user_id: userId });
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `New user ${userId} created by admin`, req.user.user_id);
     } catch (err) {
+        await client.query('ROLLBACK');
         console.error('Create user error:', err.message);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Create user error: ${err.message}`, req.user.user_id);
         res.status(500).json({ error: 'Server error' });
+    } finally {
+        client.release();
     }
 });
 
-app.put('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
-    try {
-        const { userId } = req.params;
-        const { fname, lname, contact_number, is_admin } = req.body;
+// app.put('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+//     try {
+//         const { userId } = req.params;
+//         const { fname, lname, contact_number, is_admin } = req.body;
         
-        const result = await pool.query(
-            `UPDATE users
-             SET fname = $1, lname = $2, contact_number = $3, is_admin = $4
-             WHERE user_id = $5
-             RETURNING user_id, fname, lname, email, contact_number, is_admin, created_at`,
+//         const result = await pool.query(
+//             `UPDATE users
+//              SET fname = $1, lname = $2, contact_number = $3, is_admin = $4
+//              WHERE user_id = $5
+//              RETURNING user_id, fname, lname, email, contact_number, is_admin, created_at`,
+//             [fname, lname, contact_number, is_admin, userId]
+//         );
+        
+//         if (result.rows.length === 0) {
+//             logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `Attempt to update non-existent user ${userId}`, req.user.user_id);
+//             return res.status(404).json({ error: 'User not found' });
+//         }
+        
+//         res.json(result.rows[0]);
+//         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User ${userId} updated by admin`, req.user.user_id);
+//     } catch (err) {
+//         console.error('Update user error:', err.message);
+//         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Update user error for ${userId}: ${err.message}`, req.user.user_id);
+//         res.status(500).json({ error: 'Server error' });
+//     }
+// });
+
+app.put('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+    const { userId } = req.params;
+    const { fname, lname, contact_number, is_admin, plan_id } = req.body;
+    const client = await pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        // 1. Update user details
+        await client.query(
+            `UPDATE users SET fname = $1, lname = $2, contact_number = $3, is_admin = $4, updated_at = NOW()
+             WHERE user_id = $5`,
             [fname, lname, contact_number, is_admin, userId]
         );
-        
-        if (result.rows.length === 0) {
-            logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `Attempt to update non-existent user ${userId}`, req.user.user_id);
-            return res.status(404).json({ error: 'User not found' });
+
+        // 2. Get user's current active subscription
+        const currentSubResult = await client.query(
+            `SELECT user_subscription_id, plan_id FROM user_subscription
+             WHERE user_id = $1 AND is_active = true`,
+            [userId]
+        );
+        const currentSub = currentSubResult.rows[0];
+        const currentPlanId = currentSub?.plan_id;
+        const newPlanId = plan_id || null; // Handle empty string from form
+
+        // 3. Check if subscription needs to change
+        if (currentPlanId !== newPlanId) {
+            // Deactivate old subscription if it exists
+            if (currentSub) {
+                await client.query(
+                    `UPDATE user_subscription SET is_active = false, end_date = NOW()
+                     WHERE user_subscription_id = $1`,
+                    [currentSub.user_subscription_id]
+                );
+            }
+            // Add new subscription if a new plan was selected
+            if (newPlanId) {
+                const endDate = new Date();
+                endDate.setMonth(endDate.getMonth() + 1);
+                await client.query(
+                    `INSERT INTO user_subscription (user_id, plan_id, start_date, end_date, is_active)
+                     VALUES ($1, $2, NOW(), $3, true)`,
+                    [userId, newPlanId, endDate]
+                );
+            }
         }
-        
-        res.json(result.rows[0]);
+
+        await client.query('COMMIT');
+        res.json({ message: 'User updated successfully' });
         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User ${userId} updated by admin`, req.user.user_id);
     } catch (err) {
+        await client.query('ROLLBACK');
         console.error('Update user error:', err.message);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Update user error for ${userId}: ${err.message}`, req.user.user_id);
         res.status(500).json({ error: 'Server error' });
+    } finally {
+        client.release();
     }
 });
 
-app.delete('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
-    try {
-        const { userId } = req.params;
+// app.delete('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+//     try {
+//         const { userId } = req.params;
         
-        // Check if user exists
-        const userCheck = await pool.query('SELECT user_id FROM users WHERE user_id = $1', [userId]);
-        if (userCheck.rows.length === 0) {
-            logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `Attempt to delete non-existent user ${userId}`, req.user.user_id);
+//         // Check if user exists
+//         const userCheck = await pool.query('SELECT user_id FROM users WHERE user_id = $1', [userId]);
+//         if (userCheck.rows.length === 0) {
+//             logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `Attempt to delete non-existent user ${userId}`, req.user.user_id);
+//             return res.status(404).json({ error: 'User not found' });
+//         }
+        
+//         // Delete user
+//         await pool.query('DELETE FROM users WHERE user_id = $1', [userId]);
+        
+//         res.json({ message: 'User deleted successfully' });
+//         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User ${userId} deleted by admin`, req.user.user_id);
+//     } catch (err) {
+//         console.error('Delete user error:', err.message);
+//         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Delete user error for ${userId}: ${err.message}`, req.user.user_id);
+//         res.status(500).json({ error: 'Server error' });
+//     }
+// });
+
+// Admin Stations Management
+
+app.delete('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+    const { userId } = req.params;
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // Note: The order is important due to foreign key constraints.
+        // Delete related records before deleting the user.
+        await client.query('DELETE FROM payment WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM daily_energy_usage WHERE user_id = $1', [userId]);
+        // Cascading deletes for sessions and their consumption data
+        await client.query(`DELETE FROM consumption_data WHERE session_id IN (SELECT session_id FROM charging_session WHERE user_id = $1)`, [userId]);
+        await client.query('DELETE FROM charging_session WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM user_subscription WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM admin_profiles WHERE user_id = $1', [userId]);
+
+        // Finally, delete the user from the public.users table
+        const result = await client.query('DELETE FROM users WHERE user_id = $1', [userId]);
+        
+        // You would also need to delete the user from auth.users using the admin SDK
+        // await supabase.auth.admin.deleteUser(userId);
+
+        if (result.rowCount === 0) {
             return res.status(404).json({ error: 'User not found' });
         }
-        
-        // Delete user
-        await pool.query('DELETE FROM users WHERE user_id = $1', [userId]);
-        
+
+        await client.query('COMMIT');
         res.json({ message: 'User deleted successfully' });
         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User ${userId} deleted by admin`, req.user.user_id);
     } catch (err) {
+        await client.query('ROLLBACK');
         console.error('Delete user error:', err.message);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Delete user error for ${userId}: ${err.message}`, req.user.user_id);
         res.status(500).json({ error: 'Server error' });
+    } finally {
+        client.release();
     }
 });
 
-// Admin Stations Management
 app.get('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     try {
         const result = await pool.query(`
@@ -1819,24 +1960,30 @@ app.get('/api/admin/users', supabaseAuthMiddleware, requireAdmin, async (req, re
     try {
         const result = await pool.query(`
             SELECT 
-                user_id, 
-                fname, 
-                lname, 
-                email, 
-                contact_number,
-                is_admin, 
-                created_at, 
-                last_login
-            FROM users
-            ORDER BY created_at DESC
+                u.user_id, u.fname, u.lname, u.email, u.contact_number, u.is_admin, u.created_at, u.last_login,
+                sub.plan_id,
+                sp.plan_name
+            FROM users u
+            LEFT JOIN user_subscription sub ON u.user_id = sub.user_id AND sub.is_active = true
+            LEFT JOIN subscription_plans sp ON sub.plan_id = sp.plan_id
+            ORDER BY u.created_at DESC
         `);
         
-        res.json(result.rows);
+        // Format the response to nest subscription data as the frontend expects
+        const formattedUsers = result.rows.map(user => ({
+            ...user,
+            subscription: user.plan_id ? {
+                plan_id: user.plan_id,
+                plan_name: user.plan_name
+            } : null
+        }));
+
+        res.json(formattedUsers);
         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, 'Admin users list fetched successfully', req.user.user_id);
-    } catch (err) { // <--- This catch block is triggered
-        console.error('Admin users error:', err.message); // <--- THIS IS THE KEY!
+    } catch (err) {
+        console.error('Admin users error:', err.message);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Admin users error: ${err.message}`, req.user.user_id);
-        res.status(500).json({ error: 'Server error' }); // Sends the generic error to frontend
+        res.status(500).json({ error: 'Server error' });
     }
 });
 
@@ -1857,29 +2004,7 @@ app.get('/api/user/profile', supabaseAuthMiddleware, async (req, res) => {
     }
 });
 
-// GET /api/subscription/plans
-// Fetches all available subscription plans. Should be protected by admin middleware.
-app.get('/api/subscription/plans', async (req, res) => {
-    try {
-      // Assuming you have middleware that verifies the JWT and attaches user info to req
-      // You might want to add an admin check here if not already done by middleware
-  
-      const { data, error } = await supabase
-        .from('subscription_plans') // The name of your table for subscription plans
-        .select('*')
-        .order('price', { ascending: true });
-  
-      if (error) {
-        throw error;
-      }
-  
-      res.status(200).json(data);
-  
-    } catch (error) {
-      console.error('Error fetching subscription plans:', error.message);
-      res.status(500).json({ error: 'Internal Server Error: Could not fetch plans.' });
-    }
-  });
+
 
 // Error handling middleware (catches unhandled errors in async routes)
 app.use((err, req, res, next) => {
