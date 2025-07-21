@@ -1874,6 +1874,42 @@ app.get('/api/user/subscription', supabaseAuthMiddleware, async (req, res) => {
     }
 });
 
+// Allows a user to cancel their own subscription
+app.post('/api/subscription/cancel', supabaseAuthMiddleware, async (req, res) => {
+    const { user_id } = req.user; // Get user_id from the verified JWT
+
+    try {
+        // Find the user's current active subscription
+        const { rows } = await pool.query(
+            `SELECT user_subscription_id FROM user_subscription
+             WHERE user_id = $1 AND is_active = true`,
+            [user_id]
+        );
+
+        const activeSubscription = rows[0];
+
+        if (!activeSubscription) {
+            return res.status(404).json({ error: 'No active subscription found to cancel.' });
+        }
+
+        // Deactivate the subscription by setting is_active to false and end_date to now
+        await pool.query(
+            `UPDATE user_subscription
+             SET is_active = false, end_date = NOW()
+             WHERE user_subscription_id = $1`,
+            [activeSubscription.user_subscription_id]
+        );
+
+        res.status(200).json({ message: 'Subscription cancelled successfully.' });
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User ${user_id} cancelled their subscription.`, user_id);
+
+    } catch (error) {
+        console.error(`Error cancelling subscription for user ${user_id}:`, error.message);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error cancelling subscription: ${error.message}`, user_id);
+        res.status(500).json({ error: 'Internal Server Error: Could not cancel subscription.' });
+    }
+});
+
 // Get current user's monthly usage statistics
 app.get('/api/user/usage', supabaseAuthMiddleware, async (req, res) => {
     try {
