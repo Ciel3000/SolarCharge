@@ -431,7 +431,7 @@ app.get('/', (req, res) => {
     res.send('SolarCharge Backend is running!');
 });
 
-// NEW: GET all subscription plans
+//GET all subscription plans
 app.get('/api/subscription/plans', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     try {
         // Use standard pg pool.query which returns a result object
@@ -446,7 +446,49 @@ app.get('/api/subscription/plans', supabaseAuthMiddleware, requireAdmin, async (
     }
 });
 
+//Public endpoint to get all stations for the home page/map
+app.get('/api/stations', async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                s.station_id, 
+                s.station_name, 
+                s.location_description, 
+                s.latitude, 
+                s.longitude, 
+                s.is_active,
+                s.current_battery_level,
+                s.price_per_kwh,
+                COUNT(p.port_id) as total_ports,
+                COUNT(CASE WHEN p.current_status = 'available' THEN 1 END) as available_ports
+            FROM charging_station s
+            LEFT JOIN charging_port p ON s.station_id = p.station_id
+            GROUP BY s.station_id
+            ORDER BY s.station_name;
+        `);
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error fetching stations:', error.message);
+        res.status(500).json({ error: 'Failed to fetch stations' });
+    }
+});
 
+app.get('/api/stations/:stationId', async (req, res) => {
+    const { stationId } = req.params;
+    try {
+        const result = await pool.query(
+            `SELECT * FROM charging_station WHERE station_id = $1`,
+            [stationId]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Station not found' });
+        }
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error(`Error fetching station ${stationId}:`, error.message);
+        res.status(500).json({ error: 'Failed to fetch station details' });
+    }
+});
 
 // Get consumption data for a specific device (station) AND internal port number
 app.get('/api/devices/:deviceId/:portNumber/consumption', async (req, res) => {
@@ -686,36 +728,6 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
         res.status(500).json({ error: `Failed to process control command: ${error.message}` });
     }
 });
-
-
-// --- Your Existing API Routes for overall application management ---
-// (These routes are for your 'stations', 'readings', 'users' tables from your diagram)
-// Example:
-/*
-app.get('/api/stations', async (req, res) => {
-    try {
-        const result = await pool.query('SELECT * FROM stations ORDER BY created_at DESC');
-        res.json(result.rows);
-    } catch (error) {
-        console.error('Error fetching stations:', error);
-        res.status(500).json({ error: 'Failed to fetch stations' });
-    }
-});
-app.get('/api/stations/:id', async (req, res) => { /* ... */ /* });
-app.post('/api/stations', async (req, res) => { /* ... */ /* });
-app.put('/api/stations/:id', async (req, res) => { /* ... */ /* });
-app.delete('/api/stations/:id', async (req, res) => { /* ... */ /* });
-
-app.get('/api/readings', async (req, res) => { /* ... */ /* });
-app.get('/api/stations/:id/readings', async (req, res) => { /* ... */ /* });
-app.post('/api/readings', async (req, res) => { /* ... */ /* });
-
-app.get('/api/users', async (req, res) => { /* ... */ /* });
-app.get('/api/users/:id', async (req, res) => { /* ... */ /* });
-app.post('/api/users', async (req, res) => { /* ... */ /* });
-app.put('/api/users/:id', async (req, res) => { /* ... */ /* });
-app.delete('/api/users/:id', async (req, res) => { /* ... */ /* });
-*/
 
 // --- Admin API Routes ---
 
