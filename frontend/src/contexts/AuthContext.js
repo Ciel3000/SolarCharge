@@ -11,7 +11,8 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [subscription, setSubscription] = useState(null);
   const [plans, setPlans] = useState([]);
-  const [error, setError] = useState(null); // Add error state
+  const [error, setError] = useState(null);
+  const [initialized, setInitialized] = useState(false); // Track if auth has been initialized
 
   // --- Helper to check admin status by calling backend API ---
   const checkAdminStatus = useCallback(async (currentSession) => {
@@ -165,6 +166,7 @@ export const AuthProvider = ({ children }) => {
           }
           
           setLoading(false);
+          setInitialized(true); // Mark as initialized
         }
 
         // 2. Listen for real-time authentication state changes
@@ -178,13 +180,17 @@ export const AuthProvider = ({ children }) => {
             switch (event) {
               case 'SIGNED_IN':
                 console.log("AuthContext: User signed in");
-                setLoading(true);
+                // Only show loading if this is a fresh sign-in, not a tab switch
+                if (!initialized || !session) {
+                  setLoading(true);
+                }
                 setError(null);
                 setSession(currentSession);
                 setUser(currentSession?.user || null);
                 await checkAdminStatus(currentSession);
                 await fetchSubscriptionAndPlans(currentSession);
                 setLoading(false);
+                setInitialized(true);
                 break;
                 
               case 'SIGNED_OUT':
@@ -195,6 +201,7 @@ export const AuthProvider = ({ children }) => {
                 setSubscription(null);
                 setPlans([]);
                 setError(null);
+                setInitialized(false);
                 break;
                 
               case 'TOKEN_REFRESHED':
@@ -240,32 +247,32 @@ export const AuthProvider = ({ children }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Empty dependency array ensures this effect runs once on mount
 
-  // Separate useEffect for handling tab visibility and focus events
+  // Separate useEffect for handling tab visibility to prevent unnecessary loading
   useEffect(() => {
-    // --- Handle tab visibility changes ---
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        console.log("AuthContext: Tab became visible, checking session...");
-        recoverSession();
+      // Don't trigger any loading states when tab becomes visible again
+      if (!document.hidden && session) {
+        console.log("AuthContext: Tab became visible, but not triggering reload");
       }
     };
 
-    // --- Handle window focus ---
     const handleFocus = () => {
-      console.log("AuthContext: Window focused, verifying session...");
-      recoverSession();
+      // Don't trigger any loading states when window gets focus
+      if (session) {
+        console.log("AuthContext: Window focused, but not triggering reload");
+      }
     };
 
-    // Add event listeners for tab visibility and focus
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('focus', handleFocus);
 
-    // Cleanup function
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleFocus);
     };
-  }, [recoverSession]); // Include recoverSession as dependency
+  }, [session]);
+
+
 
   // Error recovery function
   const clearError = () => setError(null);

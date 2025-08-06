@@ -17,8 +17,9 @@ console.log('--- SUPABASE CLIENT DEBUG END ---');
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.error('ERROR: Supabase URL or Anon Key is missing. Check .env in root and ensure REACT_APP_ prefix.');
-  // Do NOT throw an error here for now, so we can see all logs
-  // throw new Error('Supabase credentials are not set.');
+  console.error('supabaseUrl:', supabaseUrl);
+  console.error('supabaseAnonKey:', supabaseAnonKey ? 'SET' : 'NOT SET');
+  throw new Error('Supabase credentials are not set. Please check your .env file.');
 }
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);

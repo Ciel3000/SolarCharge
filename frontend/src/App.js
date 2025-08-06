@@ -46,7 +46,7 @@ function AppContent() {
     if (isLoading) {
       const timer = setTimeout(() => {
         setLoadingTimeout(true);
-      }, 8000); // Show timeout message after 8 seconds
+      }, 3000); // Reduced to 3 seconds for faster UX
       
       return () => clearTimeout(timer);
     } else {
