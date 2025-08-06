@@ -7,6 +7,7 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001'
 function AdminStations({ navigateTo, handleSignOut }) {
   const [stations, setStations] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [initialLoad, setInitialLoad] = useState(true);
   const [error, setError] = useState(null);
   const [selectedStation, setSelectedStation] = useState(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -29,12 +30,17 @@ function AdminStations({ navigateTo, handleSignOut }) {
   });
   
   useEffect(() => {
-    fetchStations();
-    fetchBatteryLevels();
-  }, []);
+    if (initialLoad || stations.length === 0) {
+      fetchStations();
+      fetchBatteryLevels();
+    } else {
+      setLoading(false);
+    }
+  }, [initialLoad, stations.length]);
   
   async function fetchStations() {
     try {
+      setInitialLoad(false);
       setLoading(true);
       setError(null);
       

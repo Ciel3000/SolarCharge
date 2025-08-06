@@ -7,6 +7,7 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001'
 function AdminLogs({ navigateTo, handleSignOut }) {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [initialLoad, setInitialLoad] = useState(true);
   const [error, setError] = useState(null);
   
   // Filter and pagination state
@@ -41,12 +42,17 @@ function AdminLogs({ navigateTo, handleSignOut }) {
   ];
   
   useEffect(() => {
-    fetchLogs();
-  }, [filters.range, filters.type, filters.source]); // Re-fetch when filters change
+    if (initialLoad || logs.length === 0) {
+      fetchLogs();
+    } else {
+      setLoading(false);
+    }
+  }, [filters.range, filters.type, filters.source, initialLoad, logs.length]); // Re-fetch when filters change
   
   async function fetchLogs() {
     try {
       setLoading(true);
+      setInitialLoad(false);
       
       // Get authentication token
       const { data: { session } } = await supabase.auth.getSession();

@@ -13,16 +13,23 @@ function AdminRevenue({ navigateTo, handleSignOut }) {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [initialLoad, setInitialLoad] = useState(true);
   const [activeTab, setActiveTab] = useState('daily'); // 'daily', 'weekly', 'monthly'
   
   useEffect(() => {
-    fetchRevenueData();
-  }, []);
+    // Only fetch data if we haven't already initialized (prevents refetch on tab switch)
+    if (initialLoad) {
+      fetchRevenueData();
+    } else {
+      setLoading(false); // We already have data, no need to load
+    }
+  }, [initialLoad]);
   
   async function fetchRevenueData() {
     try {
       setLoading(true);
       setError(null);
+      setInitialLoad(false);
       
       // Get authentication token
       const { data: { session } } = await supabase.auth.getSession();

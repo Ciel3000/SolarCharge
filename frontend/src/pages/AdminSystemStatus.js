@@ -12,6 +12,7 @@ function AdminSystemStatus({ navigateTo, handleSignOut }) {
   const [batteryLevels, setBatteryLevels] = useState([]);
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [initialLoad, setInitialLoad] = useState(true);
   const [error, setError] = useState(null);
   
   // Filter state for logs
@@ -22,16 +23,21 @@ function AdminSystemStatus({ navigateTo, handleSignOut }) {
   });
   
   useEffect(() => {
-    fetchSystemStatus();
-    fetchBatteryLevels();
-    fetchSystemLogs();
+    if (initialLoad || logs.length === 0) {
+      fetchSystemStatus();
+      fetchBatteryLevels();
+      fetchSystemLogs();
+    } else {
+      setLoading(false);
+    }
+    setInitialLoad(false);
     
     // Set up polling for status updates (every 30 seconds)
     const statusInterval = setInterval(fetchSystemStatus, 30000);
     
     // Clean up interval on component unmount
     return () => clearInterval(statusInterval);
-  }, [logFilters]); // Re-fetch logs when filters change
+  }, [logFilters.range, logFilters.type, logFilters.source, initialLoad, logs.length]); // Use specific filter properties
   
   async function fetchSystemStatus() {
     try {

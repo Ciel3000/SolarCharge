@@ -13,6 +13,7 @@ function HomePage({ navigateTo, message }) {
   const [displayMessage, setDisplayMessage] = useState(message || '');
   const [stations, setStations] = useState([]);
   const [loadingStations, setLoadingStations] = useState(true);
+  const [stationsInitialized, setStationsInitialized] = useState(false);
 
   // Check for location state messages or URL parameters
   const locationMessage = location.state?.message;
@@ -60,6 +61,7 @@ function HomePage({ navigateTo, message }) {
       if (!session) return;
       try {
         setLoadingStations(true);
+        setStationsInitialized(true);
         const { supabase } = await import('../supabaseClient');
         const { data, error } = await supabase
           .from('public_station_view')
@@ -73,8 +75,15 @@ function HomePage({ navigateTo, message }) {
         setLoadingStations(false);
       }
     }
-    fetchStationsForHomePage();
-  }, [session]);
+    
+    // Only fetch stations if we have a session and haven't already fetched them
+    // This prevents refetching when returning from other browser tabs
+    if (session && !stationsInitialized && stations.length === 0) {
+      fetchStationsForHomePage();
+    } else if (session && stationsInitialized && stations.length > 0) {
+      setLoadingStations(false); // We already have data
+    }
+  }, [session, stationsInitialized, stations.length]);
 
   const [usage, setUsage] = useState({ totalSessions: 0, totalDuration: 0, totalCost: 0, totalEnergyKWH: 0 });
 
@@ -109,11 +118,12 @@ function HomePage({ navigateTo, message }) {
     window.open(`https://www.google.com/maps/search/?api=1&query=${encodedLocation}`, '_blank');
   };
 
-  if (authLoading) {
+  // Only show loading during initial app load, not for tab switches or minor updates
+  if (authLoading && !session) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
         <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-500"></div>
-        <p className="ml-4 text-lg text-gray-700">Loading user data...</p>
+        <p className="ml-4 text-lg text-gray-700">Loading...</p>
       </div>
     );
   }

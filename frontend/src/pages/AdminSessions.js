@@ -7,6 +7,7 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001'
 function AdminSessions({ navigateTo, handleSignOut }) {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [initialLoad, setInitialLoad] = useState(true);
   const [error, setError] = useState(null);
   const [selectedSession, setSelectedSession] = useState(null);
   const [showDetails, setShowDetails] = useState(false);
@@ -19,13 +20,18 @@ function AdminSessions({ navigateTo, handleSignOut }) {
   });
   
   useEffect(() => {
-    fetchSessions();
-  }, [filters]);
+    if (initialLoad || sessions.length === 0) {
+      fetchSessions();
+    } else {
+      setLoading(false);
+    }
+  }, [filters, initialLoad, sessions.length]);
   
   async function fetchSessions() {
     try {
       setLoading(true);
       setError(null);
+      setInitialLoad(false);
       
       // Get authentication token
       const { data: { session } } = await supabase.auth.getSession();

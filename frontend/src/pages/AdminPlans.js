@@ -10,6 +10,7 @@ function AdminPlans({ navigateTo, handleSignOut }) {
   
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [initialLoad, setInitialLoad] = useState(true);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [selectedPlan, setSelectedPlan] = useState(null);
@@ -32,6 +33,7 @@ function AdminPlans({ navigateTo, handleSignOut }) {
     try {
       setLoading(true);
       setError('');
+      setInitialLoad(false);
       
       const { data, error } = await supabase
         .from('subscription_plans')
@@ -49,8 +51,12 @@ function AdminPlans({ navigateTo, handleSignOut }) {
   }, []);
 
   useEffect(() => {
-    fetchPlans();
-  }, [fetchPlans]);
+    if (initialLoad || plans.length === 0) {
+      fetchPlans();
+    } else {
+      setLoading(false);
+    }
+  }, [initialLoad, plans.length]); // Remove function dependency to prevent re-runs
 
   // Handle form input changes
   const handleInputChange = (e) => {

@@ -37,6 +37,7 @@ const ConfirmationModal = ({ message, onConfirm, onCancel, isOpen }) => {
 function AdminUsers({ navigateTo, handleSignOut }) {
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(true);
+  const [initialLoad, setInitialLoad] = useState(true);
     const [error, setError] = useState(null);
     const [selectedUser, setSelectedUser] = useState(null);
     const [isEditing, setIsEditing] = useState(false);
@@ -64,6 +65,7 @@ function AdminUsers({ navigateTo, handleSignOut }) {
         try {
             setLoading(true);
             setError(null);
+            setInitialLoad(false);
             
             const { data: { session } } = await supabase.auth.getSession();
             if (!session) throw new Error("Not authenticated");
@@ -105,9 +107,13 @@ function AdminUsers({ navigateTo, handleSignOut }) {
     }, []);
 
     useEffect(() => {
-        fetchUsers();
-        fetchAvailablePlans();
-    }, [fetchUsers, fetchAvailablePlans]);
+        if (initialLoad || users.length === 0) {
+            fetchUsers();
+            fetchAvailablePlans();
+        } else {
+            setLoading(false);
+        }
+    }, [initialLoad, users.length]); // Remove function dependencies to prevent re-runs
 
     // When an admin selects a user to edit, populate the form with their data.
     // This includes their current subscription plan_id to pre-select the correct dropdown option.
