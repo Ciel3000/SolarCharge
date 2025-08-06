@@ -1,0 +1,20 @@
+{
+  "short_name": "SolarCharge",
+  "name": "SolarCharge Web Portal",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'><circle cx='96' cy='96' r='96' fill='%23007BFF'/><text x='96' y='110' text-anchor='middle' font-size='100' fill='white'>⚡</text></svg>",
+      "type": "image/svg+xml",
+      "sizes": "192x192"
+    },
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><circle cx='256' cy='256' r='256' fill='%23007BFF'/><text x='256' y='300' text-anchor='middle' font-size='280' fill='white'>⚡</text></svg>",
+      "type": "image/svg+xml",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#007BFF",
+  "background_color": "#ffffff"
+}
