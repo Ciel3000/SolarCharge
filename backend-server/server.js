@@ -19,8 +19,8 @@ const INACTIVITY_TIMEOUT_SECONDS = 60; // 60 seconds for inactivity timeout
 const NOMINAL_CHARGING_VOLTAGE_DC = 12; // Volts DC. Adjust this based on your battery system.
 const MAX_REASONABLE_CONSUMPTION = 10000; // 10kW in watts, for consumption validation
 
-// Default price per kWh if not found in station data (e.g., for ad-hoc sessions)
-const DEFAULT_PRICE_PER_KWH = 0.25; // Example: $0.25 per kWh
+// Default price per mAh if not found in station data (e.g., for ad-hoc sessions)
+const DEFAULT_PRICE_PER_MAH = 0.25; // Example: $0.25 per mAh
 
 const STALE_SESSION_CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -127,7 +127,6 @@ async function logSystemEvent(logType, source, message, userId = null) {
     }
 }
 
-
 // Test database connection
 pool.query('SELECT NOW()', (err, res) => {
     if (err) {
@@ -176,11 +175,14 @@ async function calculateSessionCost(sessionId, energyKWH) {
         if (sessionResult.rows.length > 0) {
             const stationId = sessionResult.rows[0].station_id;
             const stationPricing = await pool.query(
-                "SELECT price_per_kwh FROM charging_station WHERE station_id = $1",
+                "SELECT price_per_mah FROM charging_station WHERE station_id = $1",
                 [stationId]
             );
-            const pricePerKWH = stationPricing.rows[0]?.price_per_kwh || DEFAULT_PRICE_PER_KWH;
-            return energyKWH * pricePerKWH;
+            const pricePerMAH = stationPricing.rows[0]?.price_per_mah || DEFAULT_PRICE_PER_MAH;
+            // Convert kWh to mAh for pricing calculation
+            // Assuming 12V nominal voltage: mAh = kWh * 1000 / (12 * 1000) = kWh / 12
+            const energyMAH = energyKWH / 12;
+            return energyMAH * pricePerMAH;
         }
     } catch (error) {
         console.error(`Error calculating session cost for session ${sessionId}:`, error);
@@ -188,7 +190,6 @@ async function calculateSessionCost(sessionId, energyKWH) {
     }
     return 0; // Default to 0 if calculation fails
 }
-
 
 // --- Helper function to handle automatic port turn-off due to inactivity ---
 async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortId, sessionId) {
@@ -199,13 +200,14 @@ async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortI
     try {
         // Check if the session is still active in the DB (important if backend restarted)
         const sessionCheck = await pool.query(
-            "SELECT session_id, session_status, last_status_update, energy_consumed_kwh FROM charging_session WHERE session_id = $1",
+            "SELECT session_id, session_status, last_status_update, energy_consumed_kwh, energy_consumed_mah FROM charging_session WHERE session_id = $1",
             [sessionId]
         );
 
         if (sessionCheck.rows.length > 0 && sessionCheck.rows[0].session_status === SESSION_STATUS.ACTIVE) {
             const lastUpdate = sessionCheck.rows[0].last_status_update;
-            const energyConsumed = parseFloat(sessionCheck.rows[0].energy_consumed_kwh) || 0;
+                            const energyConsumed = parseFloat(sessionCheck.rows[0].energy_consumed_kwh) || 0;
+                const mAhConsumed = parseFloat(sessionCheck.rows[0].energy_consumed_mah) || 0;
             const now = new Date();
             
             // Calculate seconds since last activity
@@ -286,7 +288,6 @@ mqttClient.on('connect', () => {
         else logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.MQTT, `Failed to subscribe to ${MQTT_TOPICS.STATION_GENERIC_STATUS}: ${err.message}`);
     });
 });
-
 // --- Main MQTT Message Processing Handler ---
 mqttClient.on('message', async (topic, message) => {
     console.log(`Received message on ${topic}: ${message.toString()}`);
@@ -378,8 +379,8 @@ mqttClient.on('message', async (topic, message) => {
                         const mAhIncrement = (currentAmps * 1000) * (intervalSeconds / 3600); // mAh = Amps * 1000 * (seconds / 3600)
 
                         await pool.query(
-                            'UPDATE charging_session SET energy_consumed_kwh = COALESCE(energy_consumed_kwh, 0) + $1, total_mah_consumed = COALESCE(total_mah_consumed, 0) + $2, last_status_update = $3 WHERE session_id = $4',
-                            [kwhIncrement, mAhIncrement, currentTimestamp, currentSessionId]
+                            'UPDATE charging_session SET energy_consumed_kwh = COALESCE(energy_consumed_kwh, 0) + $1, energy_consumed_mah = COALESCE(energy_consumed_mah, 0) + $2, total_mah_consumed = COALESCE(total_mah_consumed, 0) + $3, last_status_update = $4 WHERE session_id = $5',
+                            [kwhIncrement, mAhIncrement, mAhIncrement, currentTimestamp, currentSessionId]
                         );
 
                         // --- Reset inactivity timer on new consumption data ---
@@ -423,18 +424,14 @@ mqttClient.on('message', async (topic, message) => {
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.MQTT, `Error processing message on topic "${topic}" with payload "${messageString}": ${error.message}`);
     }
 });
-
-
 mqttClient.on('error', (err) => {
     console.error('MQTT error:', err);
     logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.MQTT, `MQTT client error: ${err.message}`);
 });
-
 mqttClient.on('close', () => {
     console.log('MQTT client disconnected.');
     logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.MQTT, 'MQTT client disconnected.');
 });
-
 mqttClient.on('reconnect', () => {
     console.log('Reconnecting to EMQX Cloud...');
     logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.MQTT, 'Reconnecting to EMQX Cloud...');
@@ -490,6 +487,7 @@ app.get('/api/stations', async (req, res) => {
     }
 });
 
+//Get a specific station by stationId
 app.get('/api/stations/:stationId', async (req, res) => {
     const { stationId } = req.params;
     try {
@@ -668,10 +666,10 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
 
         } else if (command === CHARGER_STATES.OFF) {
             // Check if the session is currently active by this user
-            const sessionCheck = await pool.query(
-                "SELECT session_id, user_id, energy_consumed_kwh, total_mah_consumed FROM charging_session WHERE port_id = $1 AND session_status = $2",
-                [actualPortId, SESSION_STATUS.ACTIVE]
-            );
+                    const sessionCheck = await pool.query(
+            "SELECT session_id, user_id, energy_consumed_kwh, energy_consumed_mah FROM charging_session WHERE port_id = $1 AND session_status = $2",
+            [actualPortId, SESSION_STATUS.ACTIVE]
+        );
 
             if (sessionCheck.rows.length > 0) {
                 const dbSession = sessionCheck.rows[0];
@@ -682,7 +680,7 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
 
                 currentSessionId = dbSession.session_id; // Set currentSessionId from DB
                 const energyConsumed = parseFloat(dbSession.energy_consumed_kwh) || 0;
-                const mAhConsumed = parseFloat(dbSession.total_mah_consumed) || 0;
+                const mAhConsumed = parseFloat(dbSession.energy_consumed_mah) || 0;
                 
                 // Calculate final cost
                 const sessionCost = await calculateSessionCost(currentSessionId, energyConsumed);
@@ -824,6 +822,7 @@ app.get('/api/admin/sessions/recent', supabaseAuthMiddleware, requireAdmin, asyn
                 cs.end_time,
                 EXTRACT(EPOCH FROM (COALESCE(cs.end_time, NOW()) - cs.start_time))/60 as duration,
                 cs.energy_consumed_kwh as energy,
+                cs.energy_consumed_mah as energy_mah,
                 cs.cost,
                 cs.session_status as status
             FROM 
@@ -910,32 +909,7 @@ app.get('/api/admin/stations/battery', supabaseAuthMiddleware, requireAdmin, asy
     }
 });
 
-// // Admin Users Management
-// app.get('/api/admin/users', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
-//     try {
-//         const result = await pool.query(`
-//             SELECT 
-//                 user_id, 
-//                 fname, 
-//                 lname, 
-//                 email, 
-//                 contact_number,
-//                 is_admin, 
-//                 created_at, 
-//                 last_login
-//             FROM users
-//             ORDER BY created_at DESC
-//         `);
-        
-//         res.json(result.rows);
-//         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, 'Admin users list fetched successfully', req.user.user_id);
-//     } catch (err) {
-//         console.error('Admin users error:', err.message);
-//         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Admin users error: ${err.message}`, req.user.user_id);
-//         res.status(500).json({ error: 'Server error' });
-//     }
-// });
-
+//Create a new user
 app.post('/api/admin/users', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     const { fname, lname, email, contact_number, is_admin, plan_id, password } = req.body;
     // Note: Creating a Supabase Auth user from the backend requires admin privileges
@@ -984,33 +958,7 @@ app.post('/api/admin/users', supabaseAuthMiddleware, requireAdmin, async (req, r
     }
 });
 
-// app.put('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
-//     try {
-//         const { userId } = req.params;
-//         const { fname, lname, contact_number, is_admin } = req.body;
-        
-//         const result = await pool.query(
-//             `UPDATE users
-//              SET fname = $1, lname = $2, contact_number = $3, is_admin = $4
-//              WHERE user_id = $5
-//              RETURNING user_id, fname, lname, email, contact_number, is_admin, created_at`,
-//             [fname, lname, contact_number, is_admin, userId]
-//         );
-        
-//         if (result.rows.length === 0) {
-//             logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `Attempt to update non-existent user ${userId}`, req.user.user_id);
-//             return res.status(404).json({ error: 'User not found' });
-//         }
-        
-//         res.json(result.rows[0]);
-//         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User ${userId} updated by admin`, req.user.user_id);
-//     } catch (err) {
-//         console.error('Update user error:', err.message);
-//         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Update user error for ${userId}: ${err.message}`, req.user.user_id);
-//         res.status(500).json({ error: 'Server error' });
-//     }
-// });
-
+//Update a user
 app.put('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     const { userId } = req.params;
     const { fname, lname, contact_number, is_admin, plan_id } = req.body;
@@ -1071,31 +1019,9 @@ app.put('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, async 
     }
 });
 
-// app.delete('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
-//     try {
-//         const { userId } = req.params;
-        
-//         // Check if user exists
-//         const userCheck = await pool.query('SELECT user_id FROM users WHERE user_id = $1', [userId]);
-//         if (userCheck.rows.length === 0) {
-//             logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `Attempt to delete non-existent user ${userId}`, req.user.user_id);
-//             return res.status(404).json({ error: 'User not found' });
-//         }
-        
-//         // Delete user
-//         await pool.query('DELETE FROM users WHERE user_id = $1', [userId]);
-        
-//         res.json({ message: 'User deleted successfully' });
-//         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User ${userId} deleted by admin`, req.user.user_id);
-//     } catch (err) {
-//         console.error('Delete user error:', err.message);
-//         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Delete user error for ${userId}: ${err.message}`, req.user.user_id);
-//         res.status(500).json({ error: 'Server error' });
-//     }
-// });
-
 // Admin Stations Management
 
+//Delete a user
 app.delete('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     const { userId } = req.params;
     const client = await pool.connect();
@@ -1135,6 +1061,7 @@ app.delete('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, asy
     }
 });
 
+//Get all stations
 app.get('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     try {
         const result = await pool.query(`
@@ -1145,12 +1072,12 @@ app.get('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req,
                 latitude, 
                 longitude,
                 solar_panel_wattage,
-                battery_capacity_kwh,
+                battery_capacity_mah,
                 current_battery_level,
                 is_active,
                 created_at,
                 last_maintenance_date,
-                price_per_kwh, -- Include price_per_kwh
+                price_per_mah, -- Include price_per_mah
                 (SELECT COUNT(*) FROM charging_port WHERE station_id = s.station_id AND is_premium = false) as num_free_ports,
                 (SELECT COUNT(*) FROM charging_port WHERE station_id = s.station_id AND is_premium = true) as num_premium_ports
             FROM 
@@ -1168,6 +1095,7 @@ app.get('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req,
     }
 });
 
+//Create a new station
 app.post('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     try {
         const { 
@@ -1176,12 +1104,12 @@ app.post('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req
             latitude, 
             longitude,
             solar_panel_wattage,
-            battery_capacity_kwh,
+            battery_capacity_mah,
             num_free_ports,
             num_premium_ports,
             is_active,
             current_battery_level,
-            price_per_kwh // New field
+            price_per_mah // New field
         } = req.body;
         
         const client = await pool.connect();
@@ -1193,11 +1121,11 @@ app.post('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req
             const stationResult = await client.query(
                 `INSERT INTO charging_station 
                  (station_name, location_description, latitude, longitude, solar_panel_wattage, 
-                  battery_capacity_kwh, is_active, current_battery_level, created_at, price_per_kwh)
+                  battery_capacity_mah, is_active, current_battery_level, created_at, price_per_mah)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9)
                  RETURNING station_id`,
                 [station_name, location_description, latitude, longitude, solar_panel_wattage, 
-                 battery_capacity_kwh, is_active, current_battery_level, price_per_kwh]
+                 battery_capacity_mah, is_active, current_battery_level, price_per_mah]
             );
             
             const stationId = stationResult.rows[0].station_id;
@@ -1239,6 +1167,7 @@ app.post('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req
     }
 });
 
+//Update a station
 app.put('/api/admin/stations/:stationId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     try {
         const { stationId } = req.params;
@@ -1248,21 +1177,21 @@ app.put('/api/admin/stations/:stationId', supabaseAuthMiddleware, requireAdmin, 
             latitude, 
             longitude,
             solar_panel_wattage,
-            battery_capacity_kwh,
+            battery_capacity_mah,
             is_active,
             current_battery_level,
-            price_per_kwh // New field
+            price_per_mah // New field
         } = req.body;
         
         const result = await pool.query(
             `UPDATE charging_station
              SET station_name = $1, location_description = $2, latitude = $3, longitude = $4,
-                 solar_panel_wattage = $5, battery_capacity_kwh = $6, is_active = $7, 
-                 current_battery_level = $8, price_per_kwh = $9
+                 solar_panel_wattage = $5, battery_capacity_mah = $6, is_active = $7, 
+                 current_battery_level = $8, price_per_mah = $9
              WHERE station_id = $10
              RETURNING station_id`,
             [station_name, location_description, latitude, longitude, solar_panel_wattage,
-             battery_capacity_kwh, is_active, current_battery_level, price_per_kwh, stationId]
+             battery_capacity_mah, is_active, current_battery_level, price_per_mah, stationId]
         );
         
         if (result.rows.length === 0) {
@@ -1279,6 +1208,7 @@ app.put('/api/admin/stations/:stationId', supabaseAuthMiddleware, requireAdmin, 
     }
 });
 
+//Delete a station
 app.delete('/api/admin/stations/:stationId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     try {
         const { stationId } = req.params;
@@ -1403,6 +1333,7 @@ app.get('/api/admin/sessions', supabaseAuthMiddleware, requireAdmin, async (req,
                 cs.end_time,
                 EXTRACT(EPOCH FROM (COALESCE(cs.end_time, NOW()) - cs.start_time))/60 as duration,
                 cs.energy_consumed_kwh as energy,
+                cs.energy_consumed_mah as energy_mah,
                 cs.cost,
                 cs.session_status as status
             FROM 
@@ -1429,6 +1360,7 @@ app.get('/api/admin/sessions', supabaseAuthMiddleware, requireAdmin, async (req,
     }
 });
 
+//Get revenue reports
 app.get('/api/admin/revenue', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     try {
         const { range = 'week' } = req.query;
@@ -1506,6 +1438,7 @@ app.get('/api/admin/revenue', supabaseAuthMiddleware, requireAdmin, async (req, 
     }
 });
 
+//Get usage reports
 app.get('/api/admin/usage', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     try {
         const { range = 'week' } = req.query; // 'range' is currently not used in these specific queries, but kept for consistency
@@ -1516,6 +1449,7 @@ app.get('/api/admin/usage', supabaseAuthMiddleware, requireAdmin, async (req, re
                 s.station_name,
                 COUNT(cs.session_id) as sessions,
                 SUM(cs.energy_consumed_kwh) as energy,
+                SUM(cs.energy_consumed_mah) as energy_mah,
                 SUM(EXTRACT(EPOCH FROM (COALESCE(cs.end_time, NOW()) - cs.start_time))/60) as duration
             FROM 
                 charging_session cs
@@ -1679,6 +1613,7 @@ app.get('/api/sessions/:sessionId/consumption', async (req, res) => {
             `SELECT 
                 cs.session_id, 
                 cs.energy_consumed_kwh, 
+                cs.energy_consumed_mah,
                 cs.total_mah_consumed,
                 cs.start_time,
                 cs.end_time,
@@ -1744,6 +1679,7 @@ app.get('/api/sessions/:sessionId/consumption', async (req, res) => {
             status: session.session_status,
             duration_minutes: durationMinutes,
             energy_consumed_kwh: parseFloat(session.energy_consumed_kwh || 0).toFixed(3),
+            energy_consumed_mah: Math.round(session.energy_consumed_mah || 0),
             total_mah_consumed: Math.round(session.total_mah_consumed || 0),
             cost: parseFloat(session.cost || 0).toFixed(2), // Format cost
             avg_power_watts: Math.round(avgPower),
@@ -1776,6 +1712,7 @@ app.get('/api/sessions/active', async (req, res) => {
                 cst.station_name,
                 cs.start_time,
                 cs.energy_consumed_kwh,
+                cs.energy_consumed_mah,
                 cs.total_mah_consumed,
                 cs.is_premium,
                 cs.last_status_update,
@@ -1806,6 +1743,7 @@ app.get('/api/sessions/active', async (req, res) => {
             start_time: session.start_time,
             duration_minutes: Math.round(session.duration_minutes),
             energy_consumed_kwh: parseFloat(session.energy_consumed_kwh || 0).toFixed(3),
+            energy_consumed_mah: Math.round(session.energy_consumed_mah || 0),
             total_mah_consumed: Math.round(session.total_mah_consumed || 0),
             is_premium: session.is_premium,
             last_update: session.last_status_update
@@ -1832,12 +1770,12 @@ app.get('/api/user/subscription', supabaseAuthMiddleware, async (req, res) => {
                 us.start_date,
                 us.end_date,
                 us.is_active as status, -- Rename to status for frontend clarity
-                us.current_daily_mwh_consumed,
+                us.current_daily_mah_consumed,
                 sp.plan_id,
                 sp.plan_name,
                 sp.description,
                 sp.price,
-                sp.daily_mwh_limit,
+                sp.daily_mah_limit,
                 sp.max_session_duration_hours,
                 sp.fast_charging_access,
                 sp.priority_access,
@@ -1878,7 +1816,7 @@ app.get('/api/user/subscription', supabaseAuthMiddleware, async (req, res) => {
         // Process subscription features for frontend display (e.g., create a list of strings)
         if (subscription) {
             const features = [];
-            if (subscription.daily_mwh_limit) features.push(`${subscription.daily_mwh_limit} MWh daily limit`);
+            if (subscription.daily_mah_limit) features.push(`${subscription.daily_mah_limit} mAh daily limit`);
             if (subscription.max_session_duration_hours) features.push(`${subscription.max_session_duration_hours} hour max session`);
             if (subscription.fast_charging_access) features.push('Fast Charging Access');
             if (subscription.priority_access) features.push('Priority Access');
@@ -2109,6 +2047,7 @@ process.on('SIGINT', () => { // Handles Ctrl+C
     });
 });
 
+//Graceful shutdown handlers
 process.on('SIGTERM', () => { // Handles termination signals from Render
     console.log('Shutting down server (SIGTERM)...');
     logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, 'Server shutting down (SIGTERM)').finally(() => {
@@ -2155,12 +2094,16 @@ async function getSupabaseJwks() {
 function getKeyFromJwks(kid, jwks) {
     return jwks.find(k => k.kid === kid);
 }
+
+//Convert certificate to PEM format
 function certToPEM(cert) {
     // Convert x5c to PEM format
     let pem = cert.match(/.{1,64}/g).join('\n');
     pem = `-----BEGIN CERTIFICATE-----\n${pem}\n-----END CERTIFICATE-----\n`;
     return pem;
 }
+
+//Verify Supabase JWT
 async function verifySupabaseJWT(token) {
      if (!SUPABASE_JWT_SECRET) {
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.AUTH, 'SUPABASE_JWT_SECRET environment variable is not set!');
