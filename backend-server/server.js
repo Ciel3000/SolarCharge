@@ -15,7 +15,7 @@ const activeChargerSessions = {};
 const activePortTimers = {};
 
 // --- Constants ---
-const INACTIVITY_TIMEOUT_SECONDS = 60; // 60 seconds for inactivity timeout
+const INACTIVITY_TIMEOUT_SECONDS = 60 ; // 5 minutes for inactivity timeout
 const NOMINAL_CHARGING_VOLTAGE_DC = 12; // Volts DC. Adjust this based on your battery system.
 const MAX_REASONABLE_CONSUMPTION = 10000; // 10kW in watts, for consumption validation
 
@@ -243,9 +243,24 @@ async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortI
                 console.log(`Marked session ${sessionId} as '${SESSION_STATUS.COMPLETED}' due to inactivity. Final Cost: $${sessionCost.toFixed(2)}`);
                 logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Session ${sessionId} auto-completed due to inactivity. Cost: $${sessionCost.toFixed(2)}`);
 
+                // Update user's daily consumption
+                const userResult = await pool.query(
+                    "SELECT user_id FROM charging_session WHERE session_id = $1",
+                    [sessionId]
+                );
+                if (userResult.rows.length > 0) {
+                    const userId = userResult.rows[0].user_id;
+                    await pool.query(
+                        "UPDATE user_subscription SET current_daily_mah_consumed = COALESCE(current_daily_mah_consumed, 0) + $1 WHERE user_id = $2 AND is_active = true",
+                        [mAhConsumed, userId]
+                    );
+                    console.log(`Inactivity: Updated daily consumption for user ${userId} by ${mAhConsumed.toFixed(0)} mAh`);
+                }
+
                 // Clear from in-memory tracking
                 delete activeChargerSessions[sessionKey];
                 delete activePortTimers[sessionKey];
+                console.log(`Inactivity: Removed session ${sessionId} from tracking maps for ${sessionKey}`);
             } else {
                 // If still active but timer expired, reset the timer
                 console.log(`Session ${sessionId} for ${sessionKey} is still active. Resetting inactivity timer.`);
@@ -256,11 +271,13 @@ async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortI
                     ),
                     lastConsumptionTime: Date.now()
                 };
+                console.log(`Inactivity: Reset timer for ${sessionKey} for another ${INACTIVITY_TIMEOUT_SECONDS} seconds`);
             }
         } else {
             console.log(`Session ${sessionId} for ${sessionKey} was already inactive or not found. No auto turn-off needed.`);
             delete activeChargerSessions[sessionKey]; // Clean up if session was manually ended but timer persisted
             delete activePortTimers[sessionKey];
+            console.log(`Inactivity: Cleaned up tracking maps for ${sessionKey} (session was already inactive)`);
         }
     } catch (error) {
         console.error(`Error during inactivity turn-off for ${sessionKey}:`, error);
@@ -314,6 +331,8 @@ mqttClient.on('message', async (topic, message) => {
             payload = JSON.parse(messageString);
         }
 
+        console.log(`MQTT: Parsed payload for ${topic}:`, JSON.stringify(payload, null, 2));
+
         // Extract the deviceId (which is the station's MQTT Client ID)
         const deviceId = topic.split('/')[2]; // e.g., ESP32_CHARGER_STATION_001
 
@@ -353,15 +372,21 @@ mqttClient.on('message', async (topic, message) => {
         const sessionKey = `${deviceId}_${portNumberInDevice}`;
         const currentSessionId = activeChargerSessions[sessionKey]; // Get session_id from in-memory map
 
+        console.log(`MQTT: Session tracking for ${sessionKey}: Session ID = ${currentSessionId}, Active sessions:`, Object.keys(activeChargerSessions));
+
         // --- Handle charger/usage topic (for consumption data and session management) ---
         if (topic.startsWith(MQTT_TOPICS.USAGE)) {
             const { consumption, timestamp, charger_state } = payload;
             const currentTimestamp = new Date(timestamp); // Convert milliseconds to Date object
 
+            console.log(`MQTT: Processing usage message for ${sessionKey}. Charger state: ${charger_state}, Consumption: ${consumption}W, Session ID: ${currentSessionId}`);
+
             if (charger_state === CHARGER_STATES.ON) { // Only insert consumption if charger is ON
                 if (currentSessionId) { // Only insert if an active session is tracked (created by API)
                     // Validate consumption value to prevent negative or unreasonable readings
                     const validatedConsumption = validateConsumption(consumption);
+                    
+                    console.log(`MQTT: Validated consumption for ${sessionKey}: ${validatedConsumption}W (original: ${consumption}W)`);
                     
                     if (validatedConsumption > 0) { // Only record if consumption is positive
                         await pool.query(
@@ -378,6 +403,8 @@ mqttClient.on('message', async (topic, message) => {
                         const currentAmps = validatedConsumption / NOMINAL_CHARGING_VOLTAGE_DC; // Amps = Watts / Volts
                         const mAhIncrement = (currentAmps * 1000) * (intervalSeconds / 3600); // mAh = Amps * 1000 * (seconds / 3600)
 
+                        console.log(`MQTT: Energy increment for ${sessionKey}: ${kwhIncrement.toFixed(6)} kWh, ${mAhIncrement.toFixed(2)} mAh`);
+
                         await pool.query(
                             'UPDATE charging_session SET energy_consumed_kwh = COALESCE(energy_consumed_kwh, 0) + $1, energy_consumed_mah = COALESCE(energy_consumed_mah, 0) + $2, total_mah_consumed = COALESCE(total_mah_consumed, 0) + $3, last_status_update = $4 WHERE session_id = $5',
                             [kwhIncrement, mAhIncrement, mAhIncrement, currentTimestamp, currentSessionId]
@@ -391,7 +418,18 @@ mqttClient.on('message', async (topic, message) => {
                                 () => handleInactivityTurnOff(deviceId, portNumberInDevice, actualPortId, currentSessionId),
                                 INACTIVITY_TIMEOUT_SECONDS * 1000
                             );
-                            console.log(`MQTT: Timer reset for ${sessionKey} due to new consumption.`);
+                            console.log(`MQTT: Timer reset for ${sessionKey} due to new consumption. Timer set for ${INACTIVITY_TIMEOUT_SECONDS} seconds.`);
+                        } else {
+                            console.warn(`MQTT: No active timer found for ${sessionKey} when consumption received. This might indicate a session tracking issue.`);
+                            // Try to reinitialize the timer if it's missing but we have a valid session
+                            activePortTimers[sessionKey] = {
+                                timerId: setTimeout(
+                                    () => handleInactivityTurnOff(deviceId, portNumberInDevice, actualPortId, currentSessionId),
+                                    INACTIVITY_TIMEOUT_SECONDS * 1000
+                                ),
+                                lastConsumptionTime: Date.now()
+                            };
+                            console.log(`MQTT: Reinitialized timer for ${sessionKey} due to missing timer.`);
                         }
                     } else {
                         console.warn(`MQTT: Ignoring invalid consumption value (${consumption}W) for ${deviceId} Port ${portNumberInDevice}`);
@@ -628,6 +666,7 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                 currentSessionId = sessionResult.rows[0].session_id;
                 activeChargerSessions[sessionKey] = currentSessionId;
                 console.log(`API: Started new charging session ${currentSessionId} for port ${actualPortId} (User: ${user_id})`);
+                console.log(`API: Session tracking map updated: ${sessionKey} = ${currentSessionId}`);
                 logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `New charging session ${currentSessionId} started for ${sessionKey} by user ${user_id}`);
             } else {
                 // Session already active
@@ -654,6 +693,7 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
             // --- Start/Reset inactivity timer when charger is turned ON via API ---
             if (activePortTimers[sessionKey]) {
                 clearTimeout(activePortTimers[sessionKey].timerId);
+                console.log(`API: Cleared existing timer for ${sessionKey}`);
             }
             activePortTimers[sessionKey] = {
                 timerId: setTimeout(
@@ -662,7 +702,7 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                 ),
                 lastConsumptionTime: Date.now() // Initialize last consumption time
             };
-            console.log(`API: Inactivity timer started for ${sessionKey}.`);
+            console.log(`API: Inactivity timer started for ${sessionKey}. Timer set for ${INACTIVITY_TIMEOUT_SECONDS} seconds. Session ID: ${currentSessionId}`);
 
         } else if (command === CHARGER_STATES.OFF) {
             // Check if the session is currently active by this user
@@ -692,7 +732,16 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                 );
                 console.log(`API: Ended charging session ${currentSessionId} for port ${actualPortId}. Energy consumed: ${energyConsumed.toFixed(3)} kWh, ${mAhConsumed.toFixed(0)} mAh. Cost: $${sessionCost.toFixed(2)}`);
                 logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Session ${currentSessionId} ended for ${sessionKey}. Cost: $${sessionCost.toFixed(2)}`);
+                
+                // Update user's daily consumption
+                await pool.query(
+                    "UPDATE user_subscription SET current_daily_mah_consumed = COALESCE(current_daily_mah_consumed, 0) + $1 WHERE user_id = $2 AND is_active = true",
+                    [mAhConsumed, user_id]
+                );
+                console.log(`API: Updated daily consumption for user ${user_id} by ${mAhConsumed.toFixed(0)} mAh`);
+                
                 delete activeChargerSessions[sessionKey]; // Remove from tracking map
+                console.log(`API: Removed session ${currentSessionId} from tracking map for ${sessionKey}`);
 
                 // --- Clear inactivity timer when charger is turned OFF via API ---
                 if (activePortTimers[sessionKey]) {
