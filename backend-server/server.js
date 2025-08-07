@@ -75,8 +75,7 @@ const allowedOrigins = [
     /^http:\/\/10\.\d+\.\d+\.\d+:\d+$/,  // 10.x.x.x network
     /^http:\/\/172\.(1[6-9]|2[0-9]|3[0-1])\.\d+\.\d+:\d+$/, // 172.16-31.x.x network
     // !!! IMPORTANT: Add your deployed frontend URL here when it's ready !!!
-    // e.g., 'https://your-frontend-app.onrender.com',
-    // e.g., 'https://your-custom-domain.com'
+    'https://solar-charge-frontend.onrender.com'
 ];
 
 app.use(cors({
