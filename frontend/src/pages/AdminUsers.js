@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import Navigation from '../components/Navigation'; // Assuming this component exists
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://solar-charger-backend.onrender.com';
 
 // A simple modal for confirmations to avoid using window.confirm
 const ConfirmationModal = ({ message, onConfirm, onCancel, isOpen }) => {

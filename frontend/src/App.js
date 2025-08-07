@@ -37,6 +37,7 @@ function AppContent() {
 
   const [stations, setStations] = useState([]);
   const [loadingStations, setLoadingStations] = useState(true);
+  const [stationsInitialized, setStationsInitialized] = useState(false);
   const [stationData, setStationData] = useState(null); // Data for a specific station on StationPage
   const [globalMessage, setGlobalMessage] = useState(''); // For global messages from App.js
   const [loadingTimeout, setLoadingTimeout] = useState(false); // Track if loading is taking too long
@@ -91,6 +92,7 @@ function AppContent() {
     async function fetchStations() {
       try {
         setLoadingStations(true);
+        setStationsInitialized(true);
         const { supabase } = await import('./supabaseClient');
         const { data, error } = await supabase
           .from('public_station_view')
@@ -108,11 +110,14 @@ function AppContent() {
       }
     }
 
-    // Fetch stations on initial load and potentially on session changes if stations
-    // are dependent on login status (though public_station_view suggests not).
-    // Avoid fetching repeatedly unless truly necessary.
-    fetchStations();
-  }, []); // Empty dependency array means this runs once on mount.
+    // Only fetch stations if we haven't already initialized them
+    // This prevents refetching when returning from other browser tabs
+    if (!stationsInitialized && stations.length === 0) {
+      fetchStations();
+    } else if (stationsInitialized && stations.length > 0) {
+      setLoadingStations(false); // We already have data
+    }
+  }, [stationsInitialized, stations.length]); // Dependencies to control when this runs
 
 
   // Custom navigate function using React Router's navigate
@@ -176,19 +181,40 @@ function AppContent() {
 
 
   const handleSignOut = async () => {
+    console.log('handleSignOut called!');
     setGlobalMessage('');
     try {
-      const { error } = await signOut();
+      console.log('Calling signOut...');
+      
+      // Add timeout to prevent hanging
+      const signOutPromise = signOut();
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Sign out timeout')), 500)
+      );
+      
+      const { error } = await Promise.race([signOutPromise, timeoutPromise]);
+      console.log('signOut result:', { error });
+      
       if (error) {
         throw error;
       }
+      console.log('Sign out successful, navigating to landing...');
       setGlobalMessage('Signed out successfully!');
-      // After signOut, AuthContext updates session to null,
-      // and the useEffect will eventually redirect to landing page if at root.
-      navigate('/landing'); // Explicitly navigate to landing after sign out
+      navigate('/landing');
     } catch (error) {
+      console.error('Sign out error:', error);
+      
+      // If sign out fails or times out, force a manual cleanup
+      if (error.message === 'Sign out timeout') {
+        console.log('Sign out timed out, forcing manual logout...');
+        // Clear local storage and navigate manually
+        localStorage.clear();
+        sessionStorage.clear();
+        window.location.href = '/landing';
+        return;
+      }
+      
       setGlobalMessage(`Sign out error: ${error.message}`);
-      console.error('Sign out error:', error.message);
     }
   };
 

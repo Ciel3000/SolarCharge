@@ -74,8 +74,8 @@ function Navigation({ navigateTo, handleSignOut }) {
 
   const navLinks = getNavLinks();
 
-  // If loading auth state, render a simplified header
-  if (isLoading) {
+  // Only show loading during initial app load, not for tab switches or minor updates
+  if (isLoading && !session) {
     return (
       <nav className="fixed top-0 left-0 right-0 z-50 bg-white/90 backdrop-blur-md border-b border-white/20 shadow-lg">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex justify-between items-center">
@@ -83,7 +83,7 @@ function Navigation({ navigateTo, handleSignOut }) {
             <span className="text-2xl">⚡</span>
             <span className="text-xl font-bold text-gray-800">SolarCharge</span>
           </div>
-          <div className="text-gray-600 text-sm">Loading user info...</div>
+          <div className="text-gray-600 text-sm">Loading...</div>
         </div>
       </nav>
     );
@@ -149,11 +149,19 @@ function Navigation({ navigateTo, handleSignOut }) {
               <div className="flex items-center space-x-4">
                 <span className="text-gray-600 text-sm hidden sm:inline">Welcome, {user?.email?.split('@')[0] || 'User'}</span>
                 <button
-                  onClick={() => { handleSignOut(); setIsMenuOpen(false); }}
-                  className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-xl shadow-lg transform transition-all duration-300 hover:scale-105"
-                  disabled={isLoading}
+                  onClick={(e) => { 
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log('Sign out clicked!', { handleSignOut: !!handleSignOut });
+                    if (handleSignOut) {
+                      handleSignOut(); 
+                    }
+                    setIsMenuOpen(false); 
+                  }}
+                  className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-xl shadow-lg transform transition-all duration-300 hover:scale-105 cursor-pointer"
+                  style={{ pointerEvents: 'auto' }}
                 >
-                  {isLoading ? 'Signing Out...' : 'Sign Out'}
+                  Sign Out
                 </button>
               </div>
             )}
@@ -223,11 +231,19 @@ function Navigation({ navigateTo, handleSignOut }) {
                     Welcome, {user?.email?.split('@')[0] || 'User'}
                   </div>
                   <button
-                    onClick={() => { handleSignOut(); setIsMenuOpen(false); }}
-                    className="block w-full text-left px-3 py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition-all duration-200 disabled:opacity-50"
-                    disabled={isLoading}
+                    onClick={(e) => { 
+                      e.preventDefault();
+                      e.stopPropagation();
+                      console.log('Mobile sign out clicked!', { handleSignOut: !!handleSignOut });
+                      if (handleSignOut) {
+                        handleSignOut(); 
+                      }
+                      setIsMenuOpen(false); 
+                    }}
+                    className="block w-full text-left px-3 py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition-all duration-200 cursor-pointer"
+                    style={{ pointerEvents: 'auto' }}
                   >
-                    {isLoading ? 'Signing Out...' : 'Sign Out'}
+                    Sign Out
                   </button>
                 </>
               )}

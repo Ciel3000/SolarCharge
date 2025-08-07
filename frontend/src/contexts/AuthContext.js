@@ -247,30 +247,7 @@ export const AuthProvider = ({ children }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Empty dependency array ensures this effect runs once on mount
 
-  // Separate useEffect for handling tab visibility to prevent unnecessary loading
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      // Don't trigger any loading states when tab becomes visible again
-      if (!document.hidden && session) {
-        console.log("AuthContext: Tab became visible, but not triggering reload");
-      }
-    };
 
-    const handleFocus = () => {
-      // Don't trigger any loading states when window gets focus
-      if (session) {
-        console.log("AuthContext: Window focused, but not triggering reload");
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('focus', handleFocus);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('focus', handleFocus);
-    };
-  }, [session]);
 
 
 

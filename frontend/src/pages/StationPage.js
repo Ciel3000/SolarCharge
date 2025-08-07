@@ -167,14 +167,17 @@ function StationPage({ station, navigateTo }) {
     const status = chargerPortStatus[key];
     const isActiveSession = activeSessions[key];
 
-    if (!status) {
-      return { display: 'Unknown', class: 'text-gray-500', buttonText: 'Unknown Status' };
-    }
-
-    if (status.status_message === 'offline') {
+    // Check if status exists and if it's explicitly offline
+    if (status?.status_message === 'offline') {
       return { display: 'Offline', class: 'text-red-600', buttonText: 'Offline' };
     }
 
+    // If no status data at all, consider it offline (device not responding)
+    if (!status) {
+      return { display: 'Offline', class: 'text-red-600', buttonText: 'Device Offline' };
+    }
+
+    // Check for active user session first
     if (isActiveSession) {
       return { display: 'Charging (Your Session)', class: 'text-green-600', buttonText: 'Stop Charging' };
     } else if (status.charger_state === 'ON') {
@@ -261,7 +264,8 @@ function StationPage({ station, navigateTo }) {
                     </div>
 
                     {currentStatus.display === 'Offline' ||
-                    currentStatus.display === 'Unknown' ||
+                    currentStatus.display === 'Device Offline' ||
+                    currentStatus.display === 'Unknown State' ||
                     currentStatus.display === 'In Use (Other User)' ? (
                       <button
                         className="bg-gray-400 text-white font-bold py-2 px-6 rounded-lg cursor-not-allowed"

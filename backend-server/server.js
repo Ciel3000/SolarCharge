@@ -70,6 +70,10 @@ const LOG_SOURCES = {
 // Middleware
 const allowedOrigins = [
     'http://localhost:3000', // Your local frontend development server
+    // Allow local network access (for testing from other devices)
+    /^http:\/\/192\.168\.\d+\.\d+:\d+$/, // Local network IPs
+    /^http:\/\/10\.\d+\.\d+\.\d+:\d+$/,  // 10.x.x.x network
+    /^http:\/\/172\.(1[6-9]|2[0-9]|3[0-1])\.\d+\.\d+:\d+$/, // 172.16-31.x.x network
     // !!! IMPORTANT: Add your deployed frontend URL here when it's ready !!!
     // e.g., 'https://your-frontend-app.onrender.com',
     // e.g., 'https://your-custom-domain.com'
@@ -80,8 +84,22 @@ app.use(cors({
         if (!origin || allowedOrigins.includes(origin)) {
             callback(null, true);
         } else {
-            console.warn(`CORS: Blocking request from origin: ${origin}`);
-            callback(new Error('Not allowed by CORS'), false);
+            // Check if origin matches any of the regex patterns
+            const isAllowed = allowedOrigins.some(allowedOrigin => {
+                if (typeof allowedOrigin === 'string') {
+                    return allowedOrigin === origin;
+                } else if (allowedOrigin instanceof RegExp) {
+                    return allowedOrigin.test(origin);
+                }
+                return false;
+            });
+            
+            if (isAllowed) {
+                callback(null, true);
+            } else {
+                console.warn(`CORS: Blocking request from origin: ${origin}`);
+                callback(new Error('Not allowed by CORS'), false);
+            }
         }
     },
     credentials: true // Important if you're sending cookies or authorization headers
