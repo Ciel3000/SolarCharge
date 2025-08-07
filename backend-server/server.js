@@ -15,7 +15,7 @@ const activeChargerSessions = {};
 const activePortTimers = {};
 
 // --- Constants ---
-const INACTIVITY_TIMEOUT_SECONDS = 60 ; // 5 minutes for inactivity timeout
+const INACTIVITY_TIMEOUT_SECONDS = 300; // 5 minutes for inactivity timeout
 const NOMINAL_CHARGING_VOLTAGE_DC = 12; // Volts DC. Adjust this based on your battery system.
 const MAX_REASONABLE_CONSUMPTION = 10000; // 10kW in watts, for consumption validation
 
