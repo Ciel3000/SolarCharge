@@ -615,12 +615,15 @@ app.get('/api/devices/consumption', async (req, res) => {
                 COALESCE(cs.energy_consumed_kwh, 0) as energy_consumed_kwh,
                 COALESCE(cs.last_status_update, NOW()) as timestamp,
                 -- Calculate current consumption from recent consumption_data
-                (SELECT AVG(consumption_watts) 
-                 FROM consumption_data cd 
-                 WHERE cd.session_id = cs.session_id 
-                 AND cd.timestamp > NOW() - INTERVAL '1 minute'
-                 ORDER BY cd.timestamp DESC 
-                 LIMIT 6) as recent_consumption_watts
+                (SELECT AVG(sub.consumption_watts) 
+                 FROM (
+                     SELECT consumption_watts
+                     FROM consumption_data cd 
+                     WHERE cd.session_id = cs.session_id 
+                     AND cd.timestamp > NOW() - INTERVAL '1 minute'
+                     ORDER BY cd.timestamp DESC 
+                     LIMIT 6
+                 ) sub) as recent_consumption_watts
             FROM
                 current_device_status cds
             JOIN
