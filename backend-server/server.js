@@ -606,14 +606,21 @@ app.get('/api/devices/status', async (req, res) => {
 // Get all current device/port consumption data
 app.get('/api/devices/consumption', async (req, res) => {
     try {
-        // Get consumption data for all devices and ports
+        // Get consumption data for all devices and ports with current consumption calculation
         const result = await pool.query(`
             SELECT
                 cds.device_id,
                 cp.port_number_in_device as port_number,
                 cs.total_mah_consumed,
                 cs.energy_consumed_kwh,
-                cs.last_status_update as timestamp
+                cs.last_status_update as timestamp,
+                -- Calculate current consumption from recent consumption_data
+                (SELECT AVG(consumption_watts) 
+                 FROM consumption_data cd 
+                 WHERE cd.session_id = cs.session_id 
+                 AND cd.timestamp > NOW() - INTERVAL '1 minute'
+                 ORDER BY cd.timestamp DESC 
+                 LIMIT 6) as recent_consumption_watts
             FROM
                 current_device_status cds
             JOIN
@@ -624,15 +631,23 @@ app.get('/api/devices/consumption', async (req, res) => {
                 cds.device_id, cp.port_number_in_device
         `);
         
-        // Transform the data to include current consumption (we'll use total_mah_consumed as current for now)
-        const consumptionData = result.rows.map(row => ({
-            device_id: row.device_id,
-            port_number: row.port_number,
-            total_mah: Number(row.total_mah_consumed) || 0,
-            current_consumption: Number(row.total_mah_consumed) || 0, // For now, use total as current
-            energy_consumed_kwh: Number(row.energy_consumed_kwh) || 0,
-            timestamp: row.timestamp
-        }));
+        // Transform the data to include current consumption calculation
+        const consumptionData = result.rows.map(row => {
+            const totalMah = Number(row.total_mah_consumed) || 0;
+            const recentWatts = Number(row.recent_consumption_watts) || 0;
+            
+            // Calculate current consumption in mA: Watts / Voltage * 1000
+            const currentConsumption = recentWatts > 0 ? (recentWatts / NOMINAL_CHARGING_VOLTAGE_DC) * 1000 : 0;
+            
+            return {
+                device_id: row.device_id,
+                port_number: row.port_number,
+                total_mah: totalMah,
+                current_consumption: currentConsumption, // Current consumption rate in mA
+                energy_consumed_kwh: Number(row.energy_consumed_kwh) || 0,
+                timestamp: row.timestamp
+            };
+        });
         
         console.log('Backend: Consumption data being sent:', consumptionData);
         res.json(consumptionData);
