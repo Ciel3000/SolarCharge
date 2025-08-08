@@ -603,6 +603,45 @@ app.get('/api/devices/status', async (req, res) => {
     }
 });
 
+// Get all current device/port consumption data
+app.get('/api/devices/consumption', async (req, res) => {
+    try {
+        // Get consumption data for all devices and ports
+        const result = await pool.query(`
+            SELECT
+                cds.device_id,
+                cp.port_number_in_device as port_number,
+                cs.total_mah_consumed,
+                cs.energy_consumed_kwh,
+                cs.last_status_update as timestamp
+            FROM
+                current_device_status cds
+            JOIN
+                charging_port cp ON cds.port_id = cp.port_id
+            LEFT JOIN
+                charging_session cs ON cds.port_id = cs.port_id AND cs.session_status = '${SESSION_STATUS.ACTIVE}'
+            ORDER BY
+                cds.device_id, cp.port_number_in_device
+        `);
+        
+        // Transform the data to include current consumption (we'll use total_mah_consumed as current for now)
+        const consumptionData = result.rows.map(row => ({
+            device_id: row.device_id,
+            port_number: row.port_number,
+            total_mah: row.total_mah_consumed || 0,
+            current_consumption: row.total_mah_consumed || 0, // For now, use total as current
+            energy_consumed_kwh: row.energy_consumed_kwh || 0,
+            timestamp: row.timestamp
+        }));
+        
+        res.json(consumptionData);
+    } catch (error) {
+        console.error('Error fetching device consumption:', error);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching all device consumption: ${error.message}`);
+        res.status(500).json({ error: 'Failed to fetch device consumption' });
+    }
+});
+
 // Send control command to a specific device (station) AND internal port number
 app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
     const { deviceId, portNumber } = req.params;
