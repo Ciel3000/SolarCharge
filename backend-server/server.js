@@ -593,8 +593,8 @@ app.get('/api/devices/status', async (req, res) => {
             JOIN
                 charging_port cp ON cds.port_id = cp.port_id
             LEFT JOIN -- Use LEFT JOIN to include ports even if no active session
-                charging_session cs ON cds.port_id = cs.port_id AND cs.session_status = '${SESSION_STATUS.ACTIVE}'
-        `);
+                charging_session cs ON cds.port_id = cs.port_id AND cs.session_status = $1
+        `, [SESSION_STATUS.ACTIVE]);
         res.json(result.rows);
     } catch (error) {
         console.error('Error fetching device status:', error);
@@ -626,10 +626,10 @@ app.get('/api/devices/consumption', async (req, res) => {
             JOIN
                 charging_port cp ON cds.port_id = cp.port_id
             LEFT JOIN
-                charging_session cs ON cds.port_id = cs.port_id AND cs.session_status = '${SESSION_STATUS.ACTIVE}'
+                charging_session cs ON cds.port_id = cs.port_id AND cs.session_status = $1
             ORDER BY
                 cds.device_id, cp.port_number_in_device
-        `);
+        `, [SESSION_STATUS.ACTIVE]);
         
         // Transform the data to include current consumption calculation
         const consumptionData = result.rows.map(row => {
@@ -1830,10 +1830,10 @@ app.get('/api/sessions/active', async (req, res) => {
             JOIN 
                 charging_station cst ON cs.station_id = cst.station_id
             WHERE 
-                cs.session_status = '${SESSION_STATUS.ACTIVE}'
+                cs.session_status = $1
             ORDER BY 
                 cs.start_time DESC`
-        );
+        , [SESSION_STATUS.ACTIVE]);
         
         // Format the response
         const activeSessions = result.rows.map(session => ({
@@ -2366,8 +2366,9 @@ function setupStaleSessionChecker() {
                 JOIN 
                     charging_port cp ON cs.port_id = cp.port_id
                 WHERE 
-                    cs.session_status = '${SESSION_STATUS.ACTIVE}'
+                    cs.session_status = $1
                     AND cs.last_status_update < NOW() - INTERVAL '${INACTIVITY_TIMEOUT_SECONDS * 2} seconds'`,
+                [SESSION_STATUS.ACTIVE]
             );
             
             if (staleSessions.rows.length > 0) {
