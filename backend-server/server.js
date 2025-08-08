@@ -611,9 +611,9 @@ app.get('/api/devices/consumption', async (req, res) => {
             SELECT
                 cds.device_id,
                 cp.port_number_in_device as port_number,
-                cs.total_mah_consumed,
-                cs.energy_consumed_kwh,
-                cs.last_status_update as timestamp,
+                COALESCE(cs.total_mah_consumed, 0) as total_mah_consumed,
+                COALESCE(cs.energy_consumed_kwh, 0) as energy_consumed_kwh,
+                COALESCE(cs.last_status_update, NOW()) as timestamp,
                 -- Calculate current consumption from recent consumption_data
                 (SELECT AVG(consumption_watts) 
                  FROM consumption_data cd 
@@ -626,10 +626,10 @@ app.get('/api/devices/consumption', async (req, res) => {
             JOIN
                 charging_port cp ON cds.port_id = cp.port_id
             LEFT JOIN
-                charging_session cs ON cds.port_id = cs.port_id AND cs.session_status = '${SESSION_STATUS.ACTIVE}'
+                charging_session cs ON cds.port_id = cs.port_id AND cs.session_status = $1
             ORDER BY
                 cds.device_id, cp.port_number_in_device
-        `);
+        `, [SESSION_STATUS.ACTIVE]);
         
         // Transform the data to include current consumption calculation
         const consumptionData = result.rows.map(row => {
