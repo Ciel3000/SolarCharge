@@ -593,8 +593,8 @@ app.get('/api/devices/status', async (req, res) => {
             JOIN
                 charging_port cp ON cds.port_id = cp.port_id
             LEFT JOIN -- Use LEFT JOIN to include ports even if no active session
-                charging_session cs ON cds.port_id = cs.port_id AND cs.session_status = $1
-        `, [SESSION_STATUS.ACTIVE]);
+                charging_session cs ON cds.port_id = cs.port_id AND cs.session_status = '${SESSION_STATUS.ACTIVE}'
+        `);
         res.json(result.rows);
     } catch (error) {
         console.error('Error fetching device status:', error);
@@ -606,61 +606,40 @@ app.get('/api/devices/status', async (req, res) => {
 // Get all current device/port consumption data
 app.get('/api/devices/consumption', async (req, res) => {
     try {
-        // Get consumption data for all devices and ports with current consumption calculation
+        // Get consumption data for all devices and ports
         const result = await pool.query(`
             SELECT
                 cds.device_id,
                 cp.port_number_in_device as port_number,
-                COALESCE(cs.total_mah_consumed, 0) as total_mah_consumed,
-                COALESCE(cs.energy_consumed_kwh, 0) as energy_consumed_kwh,
-                cs.last_status_update as timestamp,
-                -- Calculate current consumption from recent consumption_data
-                COALESCE((
-                    SELECT AVG(consumption_watts) 
-                    FROM consumption_data cd 
-                    WHERE cd.session_id = cs.session_id 
-                    AND cd.timestamp > NOW() - INTERVAL '1 minute'
-                    ORDER BY cd.timestamp DESC 
-                    LIMIT 6
-                ), 0) as recent_consumption_watts
+                cs.total_mah_consumed,
+                cs.energy_consumed_kwh,
+                cs.last_status_update as timestamp
             FROM
                 current_device_status cds
             JOIN
                 charging_port cp ON cds.port_id = cp.port_id
             LEFT JOIN
-                charging_session cs ON cds.port_id = cs.port_id AND cs.session_status = $1
+                charging_session cs ON cds.port_id = cs.port_id AND cs.session_status = '${SESSION_STATUS.ACTIVE}'
             ORDER BY
                 cds.device_id, cp.port_number_in_device
-        `, [SESSION_STATUS.ACTIVE]);
+        `);
         
-        // Transform the data to include current consumption calculation
-        const consumptionData = result.rows.map(row => {
-            const totalMah = Number(row.total_mah_consumed) || 0;
-            const recentWatts = Number(row.recent_consumption_watts) || 0;
-            
-            // Calculate current consumption in mA: Watts / Voltage * 1000
-            const currentConsumption = recentWatts > 0 ? (recentWatts / NOMINAL_CHARGING_VOLTAGE_DC) * 1000 : 0;
-            
-            return {
-                device_id: row.device_id,
-                port_number: row.port_number,
-                total_mah: totalMah,
-                current_consumption: currentConsumption, // Current consumption rate in mA
-                energy_consumed_kwh: Number(row.energy_consumed_kwh) || 0,
-                timestamp: row.timestamp
-            };
-        });
+        // Transform the data to include current consumption (we'll use total_mah_consumed as current for now)
+        const consumptionData = result.rows.map(row => ({
+            device_id: row.device_id,
+            port_number: row.port_number,
+            total_mah: Number(row.total_mah_consumed) || 0,
+            current_consumption: Number(row.total_mah_consumed) || 0, // For now, use total as current
+            energy_consumed_kwh: Number(row.energy_consumed_kwh) || 0,
+            timestamp: row.timestamp
+        }));
         
         console.log('Backend: Consumption data being sent:', consumptionData);
         res.json(consumptionData);
     } catch (error) {
         console.error('Error fetching device consumption:', error);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching all device consumption: ${error.message}`);
-        res.status(500).json({ 
-            error: 'Failed to fetch device consumption',
-            details: error.message,
-            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-        });
+        res.status(500).json({ error: 'Failed to fetch device consumption' });
     }
 });
 
@@ -1836,10 +1815,10 @@ app.get('/api/sessions/active', async (req, res) => {
             JOIN 
                 charging_station cst ON cs.station_id = cst.station_id
             WHERE 
-                cs.session_status = $1
+                cs.session_status = '${SESSION_STATUS.ACTIVE}'
             ORDER BY 
                 cs.start_time DESC`
-        , [SESSION_STATUS.ACTIVE]);
+        );
         
         // Format the response
         const activeSessions = result.rows.map(session => ({
@@ -2372,9 +2351,8 @@ function setupStaleSessionChecker() {
                 JOIN 
                     charging_port cp ON cs.port_id = cp.port_id
                 WHERE 
-                    cs.session_status = $1
+                    cs.session_status = '${SESSION_STATUS.ACTIVE}'
                     AND cs.last_status_update < NOW() - INTERVAL '${INACTIVITY_TIMEOUT_SECONDS * 2} seconds'`,
-                [SESSION_STATUS.ACTIVE]
             );
             
             if (staleSessions.rows.length > 0) {
