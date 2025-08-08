@@ -611,16 +611,18 @@ app.get('/api/devices/consumption', async (req, res) => {
             SELECT
                 cds.device_id,
                 cp.port_number_in_device as port_number,
-                cs.total_mah_consumed,
-                cs.energy_consumed_kwh,
+                COALESCE(cs.total_mah_consumed, 0) as total_mah_consumed,
+                COALESCE(cs.energy_consumed_kwh, 0) as energy_consumed_kwh,
                 cs.last_status_update as timestamp,
                 -- Calculate current consumption from recent consumption_data
-                (SELECT AVG(consumption_watts) 
-                 FROM consumption_data cd 
-                 WHERE cd.session_id = cs.session_id 
-                 AND cd.timestamp > NOW() - INTERVAL '1 minute'
-                 ORDER BY cd.timestamp DESC 
-                 LIMIT 6) as recent_consumption_watts
+                COALESCE((
+                    SELECT AVG(consumption_watts) 
+                    FROM consumption_data cd 
+                    WHERE cd.session_id = cs.session_id 
+                    AND cd.timestamp > NOW() - INTERVAL '1 minute'
+                    ORDER BY cd.timestamp DESC 
+                    LIMIT 6
+                ), 0) as recent_consumption_watts
             FROM
                 current_device_status cds
             JOIN
@@ -654,7 +656,11 @@ app.get('/api/devices/consumption', async (req, res) => {
     } catch (error) {
         console.error('Error fetching device consumption:', error);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching all device consumption: ${error.message}`);
-        res.status(500).json({ error: 'Failed to fetch device consumption' });
+        res.status(500).json({ 
+            error: 'Failed to fetch device consumption',
+            details: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
 });
 
