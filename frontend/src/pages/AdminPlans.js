@@ -20,7 +20,7 @@ function AdminPlans({ navigateTo, handleSignOut }) {
     plan_name: '',
     description: '',
     price: '',
-    daily_mwh_limit: '',
+    daily_mah_limit: '',
     max_session_duration_hours: '',
     fast_charging_access: false,
     priority_access: false,
@@ -73,7 +73,7 @@ function AdminPlans({ navigateTo, handleSignOut }) {
       plan_name: '',
       description: '',
       price: '',
-      daily_mwh_limit: '',
+      daily_mah_limit: '',
       max_session_duration_hours: '',
       fast_charging_access: false,
       priority_access: false,
@@ -98,7 +98,7 @@ function AdminPlans({ navigateTo, handleSignOut }) {
       plan_name: plan.plan_name || '',
       description: plan.description || '',
       price: plan.price || '',
-      daily_mwh_limit: plan.daily_mwh_limit || '',
+      daily_mah_limit: plan.daily_mah_limit || '',
       max_session_duration_hours: plan.max_session_duration_hours || '',
       fast_charging_access: plan.fast_charging_access || false,
       priority_access: plan.priority_access || false,
@@ -129,7 +129,7 @@ function AdminPlans({ navigateTo, handleSignOut }) {
 
     try {
       // Validate required fields
-      if (!formData.plan_name.trim() || !formData.price || !formData.daily_mwh_limit) {
+      if (!formData.plan_name.trim() || !formData.price || !formData.daily_mah_limit) {
         throw new Error('Plan name, price, and daily limit are required');
       }
 
@@ -138,7 +138,7 @@ function AdminPlans({ navigateTo, handleSignOut }) {
         plan_name: formData.plan_name.trim(),
         description: formData.description.trim() || null,
         price: parseFloat(formData.price),
-        daily_mwh_limit: parseFloat(formData.daily_mwh_limit),
+        daily_mah_limit: parseFloat(formData.daily_mah_limit),
         max_session_duration_hours: formData.max_session_duration_hours ? parseFloat(formData.max_session_duration_hours) : null,
         fast_charging_access: formData.fast_charging_access,
         priority_access: formData.priority_access,
@@ -319,7 +319,7 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                         <div className="text-sm text-gray-500">per month</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">{plan.daily_mwh_limit} mWh</div>
+                        <div className="text-sm font-medium text-gray-900">{plan.daily_mah_limit} mAh</div>
                         {plan.max_session_duration_hours && (
                           <div className="text-sm text-gray-500">{plan.max_session_duration_hours}h max session</div>
                         )}
@@ -417,7 +417,7 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Daily Limit</label>
-                      <p className="text-sm text-gray-900">{selectedPlan?.daily_mwh_limit} mWh</p>
+                      <p className="text-sm text-gray-900">{selectedPlan?.daily_mah_limit || 'N/A'} mAh</p>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Max Session Duration</label>
@@ -505,14 +505,14 @@ function AdminPlans({ navigateTo, handleSignOut }) {
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label htmlFor="daily_mwh_limit" className="block text-sm font-medium text-gray-700">
-                        Daily Limit (mWh) *
+                      <label htmlFor="daily_mah_limit" className="block text-sm font-medium text-gray-700">
+                        Daily Limit (mAh) *
                       </label>
                       <input
                         type="number"
-                        id="daily_mwh_limit"
-                        name="daily_mwh_limit"
-                        value={formData.daily_mwh_limit}
+                        id="daily_mah_limit"
+                        name="daily_mah_limit"
+                        value={formData.daily_mah_limit}
                         onChange={handleInputChange}
                         step="0.1"
                         min="0"

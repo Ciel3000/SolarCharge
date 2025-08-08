@@ -447,7 +447,7 @@ function SubscriptionPage() {
                                                     <h3 className="text-xl font-bold text-gray-800 mb-2">{plan.plan_name}</h3>
                                                     <p className="text-gray-600 mb-4 h-12">{plan.description}</p>
                                                     <div className="text-3xl font-bold text-blue-600 mb-2">{formatCurrency(plan.price)}<span className="text-sm text-gray-500">/month</span></div>
-                                                    <div className="text-sm text-gray-600 mb-4">Daily Limit: {plan.daily_mwh_limit} mWh</div>
+                                                    <div className="text-sm text-gray-600 mb-4">Daily Limit: {plan.daily_mah_limit} mAh</div>
                                                     
                                                     {subscription?.plan_id === plan.plan_id ? (
                                                         <div className="bg-green-200 text-green-800 py-3 px-4 rounded-lg font-semibold">Current Plan</div>

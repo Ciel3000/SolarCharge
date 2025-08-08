@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'; // Add React Router
 import { useAuth } from '../contexts/AuthContext';
 
 
-function HomePage({ navigateTo, message }) {
+function HomePage({ navigateTo, message, stations: propStations, loadingStations: propLoadingStations }) {
   console.log('HomePage rendered.');
 
   const { session, user, subscription, plans, isLoading: authLoading } = useAuth();
@@ -11,9 +11,14 @@ function HomePage({ navigateTo, message }) {
   const navigate = useNavigate(); // Get navigate function
 
   const [displayMessage, setDisplayMessage] = useState(message || '');
-  const [stations, setStations] = useState([]);
-  const [loadingStations, setLoadingStations] = useState(true);
+  // Use props if available, otherwise fall back to internal state
+  const [internalStations, setInternalStations] = useState([]);
+  const [internalLoadingStations, setInternalLoadingStations] = useState(true);
   const [stationsInitialized, setStationsInitialized] = useState(false);
+  
+  // Use props if provided, otherwise use internal state
+  const stations = propStations || internalStations;
+  const loadingStations = propLoadingStations !== undefined ? propLoadingStations : internalLoadingStations;
 
   // Check for location state messages or URL parameters
   const locationMessage = location.state?.message;
@@ -40,6 +45,15 @@ function HomePage({ navigateTo, message }) {
     }
   }, [scrollToSection]);
 
+  // Force refresh stations when navigating back to home page
+  useEffect(() => {
+    if (session && location.pathname === '/home' && stations.length === 0 && !loadingStations) {
+      setStationsInitialized(false);
+      setInternalStations([]);
+      setInternalLoadingStations(true);
+    }
+  }, [session, location.pathname, stations.length, loadingStations]);
+
   // Enhanced station navigation with state passing
   const handleStationClick = (station) => {
     if (subscription) {
@@ -60,7 +74,7 @@ function HomePage({ navigateTo, message }) {
     async function fetchStationsForHomePage() {
       if (!session) return;
       try {
-        setLoadingStations(true);
+        setInternalLoadingStations(true);
         setStationsInitialized(true);
         const { supabase } = await import('../supabaseClient');
         const { data, error } = await supabase
@@ -68,22 +82,27 @@ function HomePage({ navigateTo, message }) {
           .select('*');
 
         if (error) throw error;
-        setStations(data);
+        setInternalStations(data);
       } catch (err) {
         console.error('HomePage: Error fetching stations:', err.message);
       } finally {
-        setLoadingStations(false);
+        setInternalLoadingStations(false);
       }
     }
     
     // Only fetch stations if we have a session and haven't already fetched them
     // This prevents refetching when returning from other browser tabs
-    if (session && !stationsInitialized && stations.length === 0) {
+    if (session && !stationsInitialized && internalStations.length === 0 && !propStations) {
       fetchStationsForHomePage();
-    } else if (session && stationsInitialized && stations.length > 0) {
-      setLoadingStations(false); // We already have data
+    } else if (session && (stations.length > 0 || propStations)) {
+      // If we have stations data (from props or internal), we're not loading anymore
+      setInternalLoadingStations(false);
+      setStationsInitialized(true);
+    } else if (session && stationsInitialized) {
+      // If we're initialized but have no data, we're not loading
+      setInternalLoadingStations(false);
     }
-  }, [session, stationsInitialized, stations.length]);
+  }, [session, stationsInitialized, internalStations.length, propStations]);
 
   const [usage, setUsage] = useState({ totalSessions: 0, totalDuration: 0, totalCost: 0, totalEnergyKWH: 0 });
 
@@ -166,7 +185,7 @@ function HomePage({ navigateTo, message }) {
                 <div className="mb-2 text-lg font-semibold text-gray-800">{subscription.plan_name}</div>
                 <div className="mb-2 text-gray-600">{subscription.description}</div>
                 <div className="mb-2 text-gray-600"><strong>Price:</strong> {formatCurrency(subscription.price)}</div>
-                <div className="mb-6 text-gray-600"><strong>Daily Limit:</strong> {subscription.daily_mwh_limit} mWh</div>
+                <div className="mb-6 text-gray-600"><strong>Daily Limit:</strong> {subscription.daily_mah_limit} mAh</div>
                 {/* Usage Analytics */}
                 <div className="flex flex-row justify-center gap-6 w-full mb-6">
                   <div className="flex flex-col items-center bg-blue-50 rounded-lg px-4 py-2 shadow">
@@ -190,7 +209,7 @@ function HomePage({ navigateTo, message }) {
                   </div>
                   {(() => {
                     const daysSoFar = new Date().getDate();
-                    const monthlyLimit = subscription.daily_mwh_limit * daysSoFar;
+                    const monthlyLimit = subscription.daily_mah_limit * daysSoFar;
                     const percent = monthlyLimit > 0 ? Math.min(100, ((usage.totalEnergyKWH / monthlyLimit) * 100).toFixed(0)) : 0;
                     return (
                       <div className="w-full bg-gray-200 rounded-full h-4">
@@ -204,9 +223,9 @@ function HomePage({ navigateTo, message }) {
                   <div className="flex justify-end mt-1">
                     <span className="text-xs text-gray-500">{(() => {
                       const daysSoFar = new Date().getDate();
-                      const monthlyLimit = subscription.daily_mwh_limit * daysSoFar;
+                      const monthlyLimit = subscription.daily_mah_limit * daysSoFar;
                       const percent = monthlyLimit > 0 ? Math.min(100, ((usage.totalEnergyKWH / monthlyLimit) * 100).toFixed(0)) : 0;
-                      return `${percent}% of monthly limit (${monthlyLimit} mWh)`;
+                      return `${percent}% of monthly limit (${monthlyLimit} mAh)`;
                     })()}</span>
                   </div>
                 </div>
@@ -226,7 +245,7 @@ function HomePage({ navigateTo, message }) {
                       <div className="text-xl font-bold text-blue-700 mb-2">{plan.plan_name}</div>
                       <div className="text-gray-600 mb-2">{plan.description}</div>
                       <div className="text-gray-600 mb-2"><strong>Price:</strong> {formatCurrency(plan.price)}</div>
-                      <div className="text-gray-600 mb-4"><strong>Daily Limit:</strong> {plan.daily_mwh_limit} mWh</div>
+                      <div className="text-gray-600 mb-4"><strong>Daily Limit:</strong> {plan.daily_mah_limit} mAh</div>
                       <button
                         className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-6 rounded-xl transition-colors w-full"
                         onClick={() => navigateTo('subscription')}

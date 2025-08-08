@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
 import Navigation from '../components/Navigation';
 
@@ -22,7 +22,49 @@ function AdminSystemStatus({ navigateTo, handleSignOut }) {
     source: 'all'
   });
   
+  // Refs to store interval ID and visibility state
+  const statusIntervalRef = useRef(null);
+  const isPageVisibleRef = useRef(true);
+
+  // Function to start interval
+  const startInterval = useCallback(() => {
+    if (statusIntervalRef.current) clearInterval(statusIntervalRef.current);
+    statusIntervalRef.current = setInterval(fetchSystemStatus, 30000);
+  }, []);
+
+  // Function to stop interval
+  const stopInterval = useCallback(() => {
+    if (statusIntervalRef.current) {
+      clearInterval(statusIntervalRef.current);
+      statusIntervalRef.current = null;
+    }
+  }, []);
+
+  // Handle page visibility changes
   useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Page is hidden - stop interval to save resources
+        console.log('AdminSystemStatus: Tab hidden, stopping interval');
+        isPageVisibleRef.current = false;
+        stopInterval();
+      } else {
+        // Page is visible again - restart interval and fetch fresh data
+        console.log('AdminSystemStatus: Tab visible, restarting interval');
+        isPageVisibleRef.current = true;
+        
+        // Immediately fetch fresh data
+        fetchSystemStatus();
+        
+        // Restart interval
+        startInterval();
+      }
+    };
+
+    // Add visibility change listener
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Initial setup
     if (initialLoad || logs.length === 0) {
       fetchSystemStatus();
       fetchBatteryLevels();
@@ -31,13 +73,14 @@ function AdminSystemStatus({ navigateTo, handleSignOut }) {
       setLoading(false);
     }
     setInitialLoad(false);
-    
-    // Set up polling for status updates (every 30 seconds)
-    const statusInterval = setInterval(fetchSystemStatus, 30000);
-    
-    // Clean up interval on component unmount
-    return () => clearInterval(statusInterval);
-  }, [logFilters.range, logFilters.type, logFilters.source, initialLoad, logs.length]); // Use specific filter properties
+    startInterval();
+
+    // Cleanup
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      stopInterval();
+    };
+  }, [logFilters.range, logFilters.type, logFilters.source, initialLoad, logs.length, startInterval, stopInterval]); // Use specific filter properties
   
   async function fetchSystemStatus() {
     try {

@@ -37,7 +37,7 @@ const ConfirmationModal = ({ message, onConfirm, onCancel, isOpen }) => {
 function AdminUsers({ navigateTo, handleSignOut }) {
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(true);
-  const [initialLoad, setInitialLoad] = useState(true);
+    const [initialLoad, setInitialLoad] = useState(true);
     const [error, setError] = useState(null);
     const [selectedUser, setSelectedUser] = useState(null);
     const [isEditing, setIsEditing] = useState(false);
@@ -125,8 +125,6 @@ function AdminUsers({ navigateTo, handleSignOut }) {
             email: user.email || '',
             contact_number: user.contact_number || '',
             is_admin: user.is_admin || false,
-            // The user object from the backend should contain their active subscription.
-            // We use optional chaining `?.` in case the user has no subscription.
             plan_id: user.subscription?.plan_id || '' 
         });
         setIsEditing(true);
@@ -172,14 +170,7 @@ function AdminUsers({ navigateTo, handleSignOut }) {
                 : `${BACKEND_URL}/api/admin/users`;
             
             const method = selectedUser ? 'PUT' : 'POST';
-            
-            // The entire formData (including fname, lname, email, is_admin, and plan_id)
-            // is sent to the backend. The backend must handle:
-            // 1. Updating the 'users' table.
-            // 2. Managing the 'user_subscription' table:
-            //    - If plan_id is new, create a new user_subscription record.
-            //    - If plan_id has changed, end the old subscription and start a new one.
-            //    - If plan_id is empty, end the current subscription.
+
             const res = await fetch(url, {
                 method,
                 headers: {
@@ -251,8 +242,8 @@ function AdminUsers({ navigateTo, handleSignOut }) {
             <form onSubmit={handleSubmit}>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* User Details */}
-                    <div><label className="block text-gray-700 font-bold mb-2">First Name</label><input type="text" name="fname" value={formData.fname} onChange={handleInputChange} className="input-style" required /></div>
-                    <div><label className="block text-gray-700 font-bold mb-2">Last Name</label><input type="text" name="lname" value={formData.lname} onChange={handleInputChange} className="input-style" required /></div>
+                    <div><label className="block text-gray-700 font-bold mb-2">First Name</label><input type="text" name="fname" value={formData.fname} onChange={handleInputChange} className="input-style" /></div>
+                    <div><label className="block text-gray-700 font-bold mb-2">Last Name</label><input type="text" name="lname" value={formData.lname} onChange={handleInputChange} className="input-style" /></div>
                     <div><label className="block text-gray-700 font-bold mb-2">Email</label><input type="email" name="email" value={formData.email} onChange={handleInputChange} className="input-style" required disabled={!isAdding} />{!isAdding && <p className="text-xs text-gray-500 mt-1">Email cannot be changed.</p>}</div>
                     <div><label className="block text-gray-700 font-bold mb-2">Contact Number</label><input type="text" name="contact_number" value={formData.contact_number} onChange={handleInputChange} className="input-style" /></div>
                     {isAdding && <div><label className="block text-gray-700 font-bold mb-2">Password</label><input type="password" name="password" value={formData.password} onChange={handleInputChange} className="input-style" required /></div>}

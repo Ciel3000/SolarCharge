@@ -5,6 +5,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom'; // IMPORT: React Router
 import { AuthProvider, useAuth } from './contexts/AuthContext'; // IMPORT: Use the AuthContext
 import ErrorBoundary from './components/ErrorBoundary'; // IMPORT: Error Boundary
+import PageVisibilityDebug from './components/PageVisibilityDebug'; // IMPORT: Debug component
 
 // Import the new page components
 import HomePage from './pages/HomePage';
@@ -114,8 +115,13 @@ function AppContent() {
     // This prevents refetching when returning from other browser tabs
     if (!stationsInitialized && stations.length === 0) {
       fetchStations();
-    } else if (stationsInitialized && stations.length > 0) {
-      setLoadingStations(false); // We already have data
+    } else if (stations.length > 0) {
+      // If we have stations data, we're not loading anymore
+      setLoadingStations(false);
+      setStationsInitialized(true);
+    } else if (stationsInitialized) {
+      // If we're initialized but have no data, we're not loading
+      setLoadingStations(false);
     }
   }, [stationsInitialized, stations.length]); // Dependencies to control when this runs
 
@@ -127,7 +133,7 @@ function AppContent() {
     // Special handling for 'station' page to pass data via state
     if (path === 'station' && params && params.station) {
       setStationData(params.station); // Set data before navigating
-      navigate('/station', {
+      navigate(`/station?stationId=${params.station.station_id}`, {
         state: {
           station: params.station,
           from: location.pathname,
@@ -288,6 +294,7 @@ function AppContent() {
 
       {/* Add top padding to content if navigation is shown */}
       <div className={showNavigation ? "pt-16" : ""}>
+        <PageVisibilityDebug />
         <Routes>
           {/* Default routes: Redirects handled by useEffect above for '/' */}
           <Route path="/" element={
@@ -379,23 +386,9 @@ function AppContent() {
                 <LoginPage navigateTo={navigateTo} message={'Please log in to access this station details.'} />
               ) : isAdmin ? ( // Prevent admin from accessing user station control page
                 <AdminDashboard navigateTo={navigateTo} handleSignOut={handleSignOut} message={'Access Denied: Admin should use admin station management.'} />
-              ) : (!stationData ? (
-                // If no station data is set, redirect back to home or show error
-                <div className="min-h-screen flex items-center justify-center bg-gray-100">
-                  <div className="text-center">
-                    <h2 className="text-2xl font-bold mb-4">No Station Selected</h2>
-                    <p className="text-gray-600 mb-6">Please select a station from the home page.</p>
-                    <button
-                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg"
-                      onClick={() => navigateTo('home')}
-                    >
-                      Go to Home
-                    </button>
-                  </div>
-                </div>
               ) : (
                 <StationPage station={stationData} navigateTo={navigateTo} />
-              ))
+              )
             }
           />
           <Route

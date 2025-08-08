@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -13,15 +13,59 @@ function StationPage({ station, navigateTo }) {
   const { user, session } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  const stationData = station || location.state?.station;
+  const [stationData, setStationData] = useState(station || location.state?.station);
+  const [loadingStation, setLoadingStation] = useState(!station && !location.state?.station);
 
   const [loadingPort, setLoadingPort] = useState(null);
   const [feedback, setFeedback] = useState('');
   const [chargerPortStatus, setChargerPortStatus] = useState({});
   const [activeSessions, setActiveSessions] = useState({});
+  const [portConsumption, setPortConsumption] = useState({}); // Track mAh consumption for each port
+
+  // Refs to store interval IDs
+  const statusIntervalRef = useRef(null);
+  const sessionIntervalRef = useRef(null);
+  const isPageVisibleRef = useRef(true);
 
   const fromRoute = location.state?.from || '/home';
   const premiumPorts = Object.entries(DEVICE_PORT_MAPPING);
+
+  // Fetch station data if not provided
+  useEffect(() => {
+    if (!stationData && !loadingStation) {
+      setLoadingStation(true);
+      // Try to get station ID from URL params or localStorage
+      const urlParams = new URLSearchParams(window.location.search);
+      const stationId = urlParams.get('stationId');
+      
+      if (stationId) {
+        // Fetch station data from database
+        fetchStationData(stationId);
+      } else {
+        // No station ID available, redirect to home
+        navigate('/home');
+      }
+    }
+  }, [stationData, loadingStation, navigate]);
+
+  const fetchStationData = async (stationId) => {
+    try {
+      const { supabase } = await import('../supabaseClient');
+      const { data, error } = await supabase
+        .from('public_station_view')
+        .select('*')
+        .eq('station_id', stationId)
+        .single();
+
+      if (error) throw error;
+      setStationData(data);
+    } catch (err) {
+      console.error('Error fetching station data:', err);
+      navigate('/home');
+    } finally {
+      setLoadingStation(false);
+    }
+  };
 
   const fetchChargerDeviceStatus = useCallback(async () => {
     try {
@@ -39,6 +83,43 @@ function StationPage({ station, navigateTo }) {
     }
   }, []);
 
+  // Fetch port consumption
+  const fetchPortConsumption = useCallback(async () => {
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/devices/consumption`);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      
+      // Handle case where response might be an error object
+      if (data.error) {
+        console.error('Backend error:', data.error);
+        return;
+      }
+      
+      // Ensure data is an array
+      if (!Array.isArray(data)) {
+        console.error('Expected array response, got:', typeof data, data);
+        return;
+      }
+      
+      const consumptionMap = {};
+      data.forEach(portData => {
+        const key = `${portData.device_id}_${portData.port_number}`;
+        consumptionMap[key] = {
+          total_mah: portData.total_mah || 0,
+          current_consumption: portData.current_consumption || 0,
+          timestamp: portData.timestamp
+        };
+      });
+      setPortConsumption(consumptionMap);
+    } catch (error) {
+      console.error('Error fetching port consumption:', error);
+    }
+  }, []);
+
+  // Fetch active user sessions
   const fetchActiveUserSessions = useCallback(async () => {
     if (!user?.id || !session?.access_token) return;
     try {
@@ -52,10 +133,10 @@ function StationPage({ station, navigateTo }) {
       const newActiveSessions = {};
       userActiveSessions.forEach(s => {
         const mappedPort = Object.values(DEVICE_PORT_MAPPING).find(
-          map => map.internalPortNumber === s.port_number_in_device
+          map => map.internalPortNumber === s.port_number
         );
         if (mappedPort) {
-          newActiveSessions[`${mappedPort.stationDeviceId}_${s.port_number_in_device}`] = s.session_id;
+          newActiveSessions[`${mappedPort.stationDeviceId}_${s.port_number}`] = s.session_id;
         }
       });
 
@@ -66,16 +147,80 @@ function StationPage({ station, navigateTo }) {
     }
   }, [user?.id, session?.access_token]);
 
-  useEffect(() => {
+  // Function to start intervals
+  const startIntervals = useCallback(() => {
+    if (statusIntervalRef.current) clearInterval(statusIntervalRef.current);
+    if (sessionIntervalRef.current) clearInterval(sessionIntervalRef.current);
+    
+    statusIntervalRef.current = setInterval(fetchChargerDeviceStatus, 5000);
+    sessionIntervalRef.current = setInterval(fetchActiveUserSessions, 10000);
+    
+    // Initial fetch
     fetchChargerDeviceStatus();
     fetchActiveUserSessions();
-    const statusIntervalId = setInterval(fetchChargerDeviceStatus, 5000);
-    const sessionIntervalId = setInterval(fetchActiveUserSessions, 10000);
+    fetchPortConsumption();
+    
+    // Set up consumption fetch interval (every 10 seconds)
+    const consumptionInterval = setInterval(fetchPortConsumption, 10000);
+    
+    // Store the interval ref for cleanup
+    const consumptionIntervalRef = { current: consumptionInterval };
+    
     return () => {
-      clearInterval(statusIntervalId);
-      clearInterval(sessionIntervalId);
+      if (consumptionIntervalRef.current) {
+        clearInterval(consumptionIntervalRef.current);
+      }
     };
-  }, [fetchChargerDeviceStatus, fetchActiveUserSessions]);
+  }, [fetchChargerDeviceStatus, fetchActiveUserSessions, fetchPortConsumption]);
+
+  // Function to stop intervals
+  const stopIntervals = useCallback(() => {
+    if (statusIntervalRef.current) {
+      clearInterval(statusIntervalRef.current);
+      statusIntervalRef.current = null;
+    }
+    if (sessionIntervalRef.current) {
+      clearInterval(sessionIntervalRef.current);
+      sessionIntervalRef.current = null;
+    }
+  }, []);
+
+  // Handle page visibility changes
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Page is hidden - stop intervals to save resources
+        console.log('StationPage: Tab hidden, stopping intervals');
+        isPageVisibleRef.current = false;
+        stopIntervals();
+      } else {
+        // Page is visible again - restart intervals and fetch fresh data
+        console.log('StationPage: Tab visible, restarting intervals');
+        isPageVisibleRef.current = true;
+        
+        // Immediately fetch fresh data
+        fetchChargerDeviceStatus();
+        fetchActiveUserSessions();
+        
+        // Restart intervals
+        startIntervals();
+      }
+    };
+
+    // Add visibility change listener
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // Initial setup
+    fetchChargerDeviceStatus();
+    fetchActiveUserSessions();
+    startIntervals();
+
+    // Cleanup
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      stopIntervals();
+    };
+  }, [fetchChargerDeviceStatus, fetchActiveUserSessions, startIntervals, stopIntervals]);
 
   const handleControlCommand = async (frontendPortNumber, action) => {
     if (!user?.id) {
@@ -189,6 +334,19 @@ function StationPage({ station, navigateTo }) {
     return { display: 'Unknown State', class: 'text-gray-500', buttonText: 'Unknown' };
   };
 
+  // Show loading state if station data is not available
+  if (loadingStation) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-blue-50 to-cyan-100 flex items-center justify-center p-4 text-gray-800">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <p className="text-lg text-gray-700">Loading station...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show error if no station data
   if (!stationData) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -223,12 +381,6 @@ function StationPage({ station, navigateTo }) {
         <p className="text-gray-700 mb-2"><strong>Battery Level:</strong> {stationData.current_battery_level}%</p>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-          <div className="bg-blue-50 p-4 rounded-lg">
-            <span className="text-gray-600">Free Ports</span>
-            <div className="text-2xl font-bold text-blue-600">
-              {stationData.available_free_ports} / {stationData.num_free_ports}
-            </div>
-          </div>
           <div className="bg-purple-50 p-4 rounded-lg">
             <span className="text-gray-600">Premium Ports</span>
             <div className="text-2xl font-bold text-purple-600">
@@ -259,8 +411,23 @@ function StationPage({ station, navigateTo }) {
                 return (
                   <div key={frontendPortNumber} className="bg-gray-50 rounded-lg p-6 flex flex-col items-center shadow">
                     <div className="text-lg font-semibold mb-2">{label}</div>
-                    <div className={`mb-4 text-sm font-bold ${currentStatus.class}`}>
+                    <div className={`mb-2 text-sm font-bold ${currentStatus.class}`}>
                       {currentStatus.display}
+                    </div>
+                    
+                    {/* Display mAh consumption */}
+                    <div className="mb-4 text-center">
+                      <div className="text-xs text-gray-600 mb-1">Current Consumption</div>
+                      <div className="text-lg font-bold text-blue-600">
+                        {portConsumption[key] && typeof portConsumption[key].current_consumption === 'number' ? 
+                          `${portConsumption[key].current_consumption.toFixed(2)} mA` : 
+                          '0.00 mA'
+                        }
+                      </div>
+                      <div className="text-xs text-gray-600 mt-1">Total: {portConsumption[key] && typeof portConsumption[key].total_mah === 'number' ? 
+                        `${portConsumption[key].total_mah.toFixed(2)} mAh` : 
+                        '0.00 mAh'
+                      }</div>
                     </div>
 
                     {currentStatus.display === 'Offline' ||

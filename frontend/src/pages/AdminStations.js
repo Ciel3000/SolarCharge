@@ -29,6 +29,7 @@ function AdminStations({ navigateTo, handleSignOut }) {
     is_active: true
   });
   
+  //Fetch stations and battery levels
   useEffect(() => {
     if (initialLoad || stations.length === 0) {
       fetchStations();
@@ -38,6 +39,7 @@ function AdminStations({ navigateTo, handleSignOut }) {
     }
   }, [initialLoad, stations.length]);
   
+  //Fetch stations
   async function fetchStations() {
     try {
       setInitialLoad(false);
@@ -73,6 +75,7 @@ function AdminStations({ navigateTo, handleSignOut }) {
     }
   }
   
+  //Fetch battery levels
   async function fetchBatteryLevels() {
     try {
       // Get authentication token
@@ -101,6 +104,7 @@ function AdminStations({ navigateTo, handleSignOut }) {
     }
   }
   
+  //Select a station
   const handleSelectStation = (station) => {
     setSelectedStation(station);
     setFormData({
@@ -118,6 +122,7 @@ function AdminStations({ navigateTo, handleSignOut }) {
     });
   };
   
+  //Handle input change
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target;
     setFormData({
@@ -126,6 +131,7 @@ function AdminStations({ navigateTo, handleSignOut }) {
     });
   };
   
+  //Add a station
   const handleAddStation = () => {
     setIsAdding(true);
     setSelectedStation(null);
@@ -144,6 +150,7 @@ function AdminStations({ navigateTo, handleSignOut }) {
     });
   };
   
+  //Submit a station
   const handleSubmit = async (e) => {
     e.preventDefault();
     
@@ -181,6 +188,7 @@ function AdminStations({ navigateTo, handleSignOut }) {
         method = 'PUT';
       }
       
+      //Create or update station
       const res = await fetch(url, {
         method,
         headers: {
@@ -209,6 +217,7 @@ function AdminStations({ navigateTo, handleSignOut }) {
     }
   };
   
+  //Delete a station
   const handleDeleteStation = async (stationId) => {
     if (!window.confirm("Are you sure you want to delete this station? This action cannot be undone.")) {
       return;

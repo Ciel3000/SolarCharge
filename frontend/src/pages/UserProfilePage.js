@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../supabaseClient';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://solar-charger-backend.onrender.com';
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
 function UserProfilePage({ navigateTo }) {
   const { session, user } = useAuth();
