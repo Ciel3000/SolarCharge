@@ -14,20 +14,20 @@ function AdminStations({ navigateTo, handleSignOut }) {
   const [isAdding, setIsAdding] = useState(false);
   const [batteryLevels, setBatteryLevels] = useState([]);
   
-  // Form state for editing or adding a station
-  const [formData, setFormData] = useState({
-    station_name: '',
-    location_description: '',
-    latitude: '',
-    longitude: '',
-    solar_panel_wattage: '',
-    battery_capacity_kwh: '',
-    current_battery_level: '',
-    price_per_kwh: '',
-    num_free_ports: 2,
-    num_premium_ports: 2,
-    is_active: true
-  });
+     // Form state for editing or adding a station
+   const [formData, setFormData] = useState({
+     station_name: '',
+     location_description: '',
+     latitude: '',
+     longitude: '',
+     solar_panel_wattage: '',
+     battery_capacity_kwh: '',
+     current_battery_level: '',
+     price_per_kwh: '',
+     num_free_ports: 2,
+     num_premium_ports: 2,
+     is_active: true
+   });
   
   //Fetch stations and battery levels
   useEffect(() => {
@@ -113,12 +113,12 @@ function AdminStations({ navigateTo, handleSignOut }) {
       latitude: station.latitude,
       longitude: station.longitude,
       solar_panel_wattage: station.solar_panel_wattage,
-      battery_capacity_kwh: station.battery_capacity_kwh,
-      current_battery_level: station.current_battery_level,
-      price_per_kwh: station.price_per_kwh,
-      num_free_ports: station.num_free_ports,
-      num_premium_ports: station.num_premium_ports,
-      is_active: station.is_active
+             battery_capacity_kwh: station.battery_capacity_mah ? (station.battery_capacity_mah / 1000).toFixed(2) : '', // Convert mAh to kWh
+       current_battery_level: station.current_battery_level,
+       price_per_kwh: station.price_per_mah ? (station.price_per_mah * 1000).toFixed(2) : 0.25, // Convert price per mAh to price per kWh
+       num_free_ports: station.num_free_ports,
+       num_premium_ports: station.num_premium_ports,
+       is_active: station.is_active
     });
   };
   
@@ -135,19 +135,19 @@ function AdminStations({ navigateTo, handleSignOut }) {
   const handleAddStation = () => {
     setIsAdding(true);
     setSelectedStation(null);
-    setFormData({
-      station_name: '',
-      location_description: '',
-      latitude: '',
-      longitude: '',
-      solar_panel_wattage: '',
-      battery_capacity_kwh: '',
-      current_battery_level: 100,
-      price_per_kwh: 0.25,
-      num_free_ports: 2,
-      num_premium_ports: 2,
-      is_active: true
-    });
+         setFormData({
+       station_name: '',
+       location_description: '',
+       latitude: '',
+       longitude: '',
+       solar_panel_wattage: '',
+       battery_capacity_kwh: '',
+       current_battery_level: 100,
+       price_per_kwh: 0.25,
+       num_free_ports: 2,
+       num_premium_ports: 2,
+       is_active: true
+     });
   };
   
   //Submit a station
@@ -164,20 +164,41 @@ function AdminStations({ navigateTo, handleSignOut }) {
         throw new Error("Not authenticated");
       }
       
-      // Prepare data
-      const stationData = {
-        station_name: formData.station_name,
-        location_description: formData.location_description,
-        latitude: parseFloat(formData.latitude),
-        longitude: parseFloat(formData.longitude),
-        solar_panel_wattage: parseInt(formData.solar_panel_wattage),
-        battery_capacity_kwh: parseFloat(formData.battery_capacity_kwh),
-        current_battery_level: parseFloat(formData.current_battery_level),
-        price_per_kwh: parseFloat(formData.price_per_kwh),
-        num_free_ports: parseInt(formData.num_free_ports),
-        num_premium_ports: parseInt(formData.num_premium_ports),
-        is_active: formData.is_active
-      };
+                              // Validate required fields
+         if (!formData.station_name || !formData.location_description || !formData.latitude || 
+             !formData.longitude || !formData.solar_panel_wattage || !formData.battery_capacity_kwh || 
+             !formData.current_battery_level || !formData.price_per_kwh || !formData.num_free_ports || !formData.num_premium_ports) {
+           throw new Error('All fields are required');
+         }
+       
+       // Prepare data with proper validation
+       const stationData = {
+         station_name: formData.station_name.trim(),
+         location_description: formData.location_description.trim(),
+         latitude: parseFloat(formData.latitude) || 0,
+         longitude: parseFloat(formData.longitude) || 0,
+         solar_panel_wattage: parseInt(formData.solar_panel_wattage) || 0,
+         battery_capacity_mah: (parseFloat(formData.battery_capacity_kwh) || 0) * 1000, // Convert kWh to mAh
+         current_battery_level: parseFloat(formData.current_battery_level) || 0,
+         price_per_mah: (parseFloat(formData.price_per_kwh) || 0.25) / 1000, // Convert price per kWh to price per mAh
+         num_free_ports: parseInt(formData.num_free_ports) || 0,
+         num_premium_ports: parseInt(formData.num_premium_ports) || 0,
+         is_active: formData.is_active
+       };
+       
+       // Log the exact data being sent
+       console.log('Form data:', formData);
+       console.log('Processed station data:', stationData);
+       
+       // Validate numeric values
+                if (isNaN(stationData.latitude) || isNaN(stationData.longitude) || 
+             isNaN(stationData.solar_panel_wattage) || isNaN(stationData.battery_capacity_mah) || 
+             isNaN(stationData.current_battery_level) || isNaN(stationData.price_per_mah) ||
+             isNaN(stationData.num_free_ports) || isNaN(stationData.num_premium_ports)) {
+           throw new Error('Invalid numeric values in form');
+         }
+       
+       console.log('Sending station data:', stationData);
       
       // Create or update station
       let url = `${BACKEND_URL}/api/admin/stations`;
@@ -198,9 +219,11 @@ function AdminStations({ navigateTo, handleSignOut }) {
         body: JSON.stringify(stationData)
       });
       
-      if (!res.ok) {
-        throw new Error(`Error ${isAdding ? 'adding' : 'updating'} station: ${res.statusText}`);
-      }
+             if (!res.ok) {
+         const errorText = await res.text();
+         console.error('Backend error response:', errorText);
+         throw new Error(`Error ${isAdding ? 'adding' : 'updating'} station: ${res.status} - ${errorText}`);
+       }
       
       // Refresh stations list
       await fetchStations();
@@ -397,9 +420,9 @@ function AdminStations({ navigateTo, handleSignOut }) {
                 </div>
                 
                 <div>
-                  <label className="block text-gray-700 text-sm font-bold mb-2">
-                    Price per kWh ($)
-                  </label>
+                                     <label className="block text-gray-700 text-sm font-bold mb-2">
+                     Price per kWh (₱)
+                   </label>
                   <input
                     type="number"
                     name="price_per_kwh"
@@ -411,25 +434,25 @@ function AdminStations({ navigateTo, handleSignOut }) {
                   />
                 </div>
                 
-                <div>
-                  <label className="block text-gray-700 text-sm font-bold mb-2">
-                    Number of Free Ports
-                  </label>
-                  <input
-                    type="number"
-                    name="num_free_ports"
-                    value={formData.num_free_ports}
-                    onChange={handleInputChange}
-                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-                    min="0"
-                    required
-                  />
-                </div>
-                
-                <div>
-                  <label className="block text-gray-700 text-sm font-bold mb-2">
-                    Number of Premium Ports
-                  </label>
+                                 <div>
+                   <label className="block text-gray-700 text-sm font-bold mb-2">
+                     Number of Free Ports
+                   </label>
+                   <input
+                     type="number"
+                     name="num_free_ports"
+                     value={formData.num_free_ports}
+                     onChange={handleInputChange}
+                     className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                     min="0"
+                     required
+                   />
+                 </div>
+                 
+                 <div>
+                   <label className="block text-gray-700 text-sm font-bold mb-2">
+                     Number of Premium Ports
+                   </label>
                   <input
                     type="number"
                     name="num_premium_ports"
@@ -499,18 +522,18 @@ function AdminStations({ navigateTo, handleSignOut }) {
                   
                   <p className="text-gray-600 mt-2">{station.location_description}</p>
                   
-                  <div className="mt-4 grid grid-cols-2 gap-2">
-                    <div>
-                      <p className="text-gray-600 text-sm">Free Ports</p>
-                      <p className="font-bold">{station.num_free_ports}</p>
-                    </div>
-                    <div>
-                      <p className="text-gray-600 text-sm">Premium Ports</p>
-                      <p className="font-bold">{station.num_premium_ports}</p>
-                    </div>
+                                     <div className="mt-4 grid grid-cols-2 gap-2">
+                     <div>
+                       <p className="text-gray-600 text-sm">Free Ports</p>
+                       <p className="font-bold">{station.num_free_ports}</p>
+                     </div>
+                     <div>
+                       <p className="text-gray-600 text-sm">Premium Ports</p>
+                       <p className="font-bold">{station.num_premium_ports}</p>
+                     </div>
                     <div>
                       <p className="text-gray-600 text-sm">Battery</p>
-                      <p className="font-bold">{station.battery_capacity_kwh} kWh</p>
+                      <p className="font-bold">{station.battery_capacity_mah ? (station.battery_capacity_mah / 1000).toFixed(2) : '0'} kWh</p>
                     </div>
                     <div>
                       <p className="text-gray-600 text-sm">Level</p>

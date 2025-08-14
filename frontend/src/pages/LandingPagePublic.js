@@ -8,6 +8,13 @@ function LandingPage({ stations, loading, navigateTo }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const location = useLocation(); // Get the location object to access state
   const navigate = useNavigate(); // Get navigate function
+  
+  // Location state
+  const [userLocation, setUserLocation] = useState(null);
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [locationError, setLocationError] = useState('');
+  const [nearbyStations, setNearbyStations] = useState([]);
+  const [showAllStations, setShowAllStations] = useState(false);
 
   // Redirect if user is already logged in
   useEffect(() => {
@@ -33,6 +40,88 @@ function LandingPage({ stations, loading, navigateTo }) {
       }
     }
   }, [location.state]); // Re-run this effect when location.state changes
+
+  // Calculate distance between two coordinates using Haversine formula
+  const calculateDistance = (lat1, lon1, lat2, lon2) => {
+    const R = 6371; // Radius of the Earth in kilometers
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const distance = R * c; // Distance in kilometers
+    return distance;
+  };
+
+  // Get user's current location
+  const getUserLocation = () => {
+    setLocationLoading(true);
+    setLocationError('');
+    
+    if (!navigator.geolocation) {
+      setLocationError('Geolocation is not supported by this browser.');
+      setLocationLoading(false);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const { latitude, longitude } = position.coords;
+        setUserLocation({ latitude, longitude });
+        setLocationLoading(false);
+        
+        // Calculate nearby stations
+        if (stations && stations.length > 0) {
+          const stationsWithDistance = stations.map(station => {
+            // For now, we'll use a simple approach - stations with coordinates
+            // In a real app, you'd store lat/lng in the database
+            // For demo purposes, we'll generate random nearby coordinates
+            const stationLat = station.latitude || (latitude + (Math.random() - 0.5) * 0.01);
+            const stationLng = station.longitude || (longitude + (Math.random() - 0.5) * 0.01);
+            const distance = calculateDistance(latitude, longitude, stationLat, stationLng);
+            
+            return {
+              ...station,
+              latitude: stationLat,
+              longitude: stationLng,
+              distance: distance
+            };
+          });
+          
+          // Sort by distance and take the closest 6
+          const sortedStations = stationsWithDistance
+            .sort((a, b) => a.distance - b.distance)
+            .slice(0, 6);
+          
+          setNearbyStations(sortedStations);
+        }
+      },
+      (error) => {
+        setLocationLoading(false);
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            setLocationError('Location access was denied. Please enable location services.');
+            break;
+          case error.POSITION_UNAVAILABLE:
+            setLocationError('Location information is unavailable.');
+            break;
+          case error.TIMEOUT:
+            setLocationError('Location request timed out.');
+            break;
+          default:
+            setLocationError('An unknown error occurred while getting location.');
+            break;
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 60000
+      }
+    );
+  };
 
   // The rest of your LandingPagePublic.js component remains the same
   const scrollToSection = (sectionId) => {
@@ -234,34 +323,124 @@ function LandingPage({ stations, loading, navigateTo }) {
           <div className="text-center mb-10">
             <h3 className="text-4xl font-bold text-gray-800 mb-4">Find a Charging Station Near You</h3>
             <p className="text-xl text-gray-600">Locate and use our solar-powered charging stations across the city</p>
+            
+            {/* Location Controls */}
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mt-6">
+              {!userLocation ? (
+                <button
+                  onClick={getUserLocation}
+                  disabled={locationLoading}
+                  className="bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 text-white font-bold py-3 px-6 rounded-xl shadow-lg transform transition-all duration-300 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {locationLoading ? (
+                    <>
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                      Getting Location...
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd"></path>
+                      </svg>
+                      Find Stations Near Me
+                    </>
+                  )}
+                </button>
+              ) : (
+                <div className="flex flex-col sm:flex-row items-center gap-4">
+                  <div className="bg-green-100 text-green-800 px-4 py-2 rounded-lg flex items-center gap-2">
+                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"></path>
+                    </svg>
+                    Location Found!
+                  </div>
+                  <button
+                    onClick={() => setShowAllStations(!showAllStations)}
+                    className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded-lg transition-colors"
+                  >
+                    {showAllStations ? 'Show Nearby Only' : 'Show All Stations'}
+                  </button>
+                </div>
+              )}
+            </div>
+            
+            {/* Location Error */}
+            {locationError && (
+              <div className="mt-4 bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg">
+                {locationError}
+              </div>
+            )}
           </div>
+          
           {loading ? (
             <div className="flex items-center justify-center py-12">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
               <p className="text-gray-600 text-lg ml-4">Loading stations...</p>
             </div>
+          ) : (userLocation && nearbyStations.length > 0 && !showAllStations) ? (
+            // Show nearby stations
+            <div>
+              <div className="text-center mb-6">
+                <h4 className="text-2xl font-bold text-gray-800 mb-2">Nearby Charging Stations</h4>
+                <p className="text-gray-600">Showing the closest stations to your location</p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                {nearbyStations.map((station, index) => (
+                  <a
+                    key={station.station_id}
+                    href={`http://google.com/maps?q=${encodeURIComponent(station.location_description)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="group bg-gradient-to-br from-green-50 to-emerald-50 p-8 rounded-2xl shadow-lg border border-green-200 text-left transform transition-all duration-300 hover:scale-105 hover:shadow-xl cursor-pointer relative"
+                    style={{ animationDelay: `${index * 100}ms` }}
+                  >
+                    <div className="absolute top-4 right-4 bg-green-500 text-white text-xs font-bold px-2 py-1 rounded-full">
+                      {station.distance < 1 ? `${Math.round(station.distance * 1000)}m` : `${station.distance.toFixed(1)}km`}
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <h4 className="text-2xl font-bold text-green-800">{station.station_name}</h4>
+                      <p className="text-gray-700 text-base flex items-center">
+                        <svg className="w-5 h-5 mr-3 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd"></path>
+                        </svg>
+                        {station.location_description}
+                      </p>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
           ) : stations.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {stations.map((station, index) => (
-                <a
-                  key={station.station_id}
-                  href={`http://google.com/maps?q=${encodeURIComponent(station.location_description)}`} // Corrected Google Maps URL
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="group bg-gradient-to-br from-blue-50 to-cyan-50 p-8 rounded-2xl shadow-lg border border-blue-200 text-left transform transition-all duration-300 hover:scale-105 hover:shadow-xl cursor-pointer"
-                  style={{ animationDelay: `${index * 100}ms` }}
-                >
-                  <div className="flex flex-col gap-2">
-                    <h4 className="text-2xl font-bold text-blue-800">{station.station_name}</h4>
-                    <p className="text-gray-700 text-base flex items-center">
-                      <svg className="w-5 h-5 mr-3 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd"></path>
-                      </svg>
-                      {station.location_description}
-                    </p>
-                  </div>
-                </a>
-              ))}
+            // Show all stations
+            <div>
+              {userLocation && (
+                <div className="text-center mb-6">
+                  <h4 className="text-2xl font-bold text-gray-800 mb-2">All Charging Stations</h4>
+                  <p className="text-gray-600">Showing all available stations</p>
+                </div>
+              )}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                {stations.map((station, index) => (
+                  <a
+                    key={station.station_id}
+                    href={`http://google.com/maps?q=${encodeURIComponent(station.location_description)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="group bg-gradient-to-br from-blue-50 to-cyan-50 p-8 rounded-2xl shadow-lg border border-blue-200 text-left transform transition-all duration-300 hover:scale-105 hover:shadow-xl cursor-pointer"
+                    style={{ animationDelay: `${index * 100}ms` }}
+                  >
+                    <div className="flex flex-col gap-2">
+                      <h4 className="text-2xl font-bold text-blue-800">{station.station_name}</h4>
+                      <p className="text-gray-700 text-base flex items-center">
+                        <svg className="w-5 h-5 mr-3 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd"></path>
+                        </svg>
+                        {station.location_description}
+                      </p>
+                    </div>
+                  </a>
+                ))}
+              </div>
             </div>
           ) : (
             <div className="text-center py-12">

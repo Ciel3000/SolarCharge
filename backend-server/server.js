@@ -1267,6 +1267,9 @@ app.get('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req,
 //Create a new station
 app.post('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     try {
+        console.log('Received request body:', req.body);
+        console.log('User ID:', req.user.user_id);
+        
         const { 
             station_name, 
             location_description, 
@@ -1281,41 +1284,48 @@ app.post('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req
             price_per_mah // New field
         } = req.body;
         
+        console.log('Extracted values:', {
+            station_name, 
+            location_description, 
+            latitude, 
+            longitude,
+            solar_panel_wattage,
+            battery_capacity_mah,
+            num_free_ports,
+            num_premium_ports,
+            is_active,
+            current_battery_level,
+            price_per_mah
+        });
+        
         const client = await pool.connect();
         
         try {
             await client.query('BEGIN');
             
+            console.log('About to insert station with values:', [station_name, location_description, latitude, longitude, solar_panel_wattage, 
+                 battery_capacity_mah, is_active, current_battery_level, price_per_mah, num_free_ports, num_premium_ports]);
+            
             // Insert station
             const stationResult = await client.query(
                 `INSERT INTO charging_station 
                  (station_name, location_description, latitude, longitude, solar_panel_wattage, 
-                  battery_capacity_mah, is_active, current_battery_level, created_at, price_per_mah)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9)
+                  battery_capacity_mah, is_active, current_battery_level, created_at, price_per_mah, num_free_ports, num_premium_ports)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11)
                  RETURNING station_id`,
                 [station_name, location_description, latitude, longitude, solar_panel_wattage, 
-                 battery_capacity_mah, is_active, current_battery_level, price_per_mah]
+                 battery_capacity_mah, is_active, current_battery_level, price_per_mah, num_free_ports, num_premium_ports]
             );
             
             const stationId = stationResult.rows[0].station_id;
             
-            // Create free ports
-            for (let i = 0; i < num_free_ports; i++) {
-                await client.query(
-                    `INSERT INTO charging_port 
-                     (station_id, port_number_in_device, is_premium, is_occupied, current_status, device_mqtt_id)
-                     VALUES ($1, $2, false, false, '${PORT_STATUS.AVAILABLE}', $3)`,
-                    [stationId, i + 1, `ESP32_CHARGER_STATION_${stationId.substring(0, 3)}`]
-                );
-            }
-            
-            // Create premium ports
+            // Create premium ports only (since system can only detect premium ports)
             for (let i = 0; i < num_premium_ports; i++) {
                 await client.query(
                     `INSERT INTO charging_port 
                      (station_id, port_number_in_device, is_premium, is_occupied, current_status, device_mqtt_id)
                      VALUES ($1, $2, true, false, '${PORT_STATUS.AVAILABLE}', $3)`,
-                    [stationId, num_free_ports + i + 1, `ESP32_CHARGER_STATION_${stationId.substring(0, 3)}`]
+                    [stationId, i + 1, `ESP32_CHARGER_STATION_${stationId.substring(0, 3)}`]
                 );
             }
             
@@ -1331,8 +1341,10 @@ app.post('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req
         }
     } catch (err) {
         console.error('Create station error:', err.message);
+        console.error('Full error details:', err);
+        console.error('Request body:', req.body);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Create station error: ${err.message}`, req.user.user_id);
-        res.status(500).json({ error: 'Server error' });
+        res.status(500).json({ error: `Server error: ${err.message}` });
     }
 });
 
@@ -1347,6 +1359,8 @@ app.put('/api/admin/stations/:stationId', supabaseAuthMiddleware, requireAdmin, 
             longitude,
             solar_panel_wattage,
             battery_capacity_mah,
+            num_free_ports,
+            num_premium_ports,
             is_active,
             current_battery_level,
             price_per_mah // New field
@@ -1356,11 +1370,11 @@ app.put('/api/admin/stations/:stationId', supabaseAuthMiddleware, requireAdmin, 
             `UPDATE charging_station
              SET station_name = $1, location_description = $2, latitude = $3, longitude = $4,
                  solar_panel_wattage = $5, battery_capacity_mah = $6, is_active = $7, 
-                 current_battery_level = $8, price_per_mah = $9
-             WHERE station_id = $10
+                 current_battery_level = $8, price_per_mah = $9, num_free_ports = $10, num_premium_ports = $11
+             WHERE station_id = $12
              RETURNING station_id`,
             [station_name, location_description, latitude, longitude, solar_panel_wattage,
-             battery_capacity_mah, is_active, current_battery_level, price_per_mah, stationId]
+             battery_capacity_mah, is_active, current_battery_level, price_per_mah, num_free_ports, num_premium_ports, stationId]
         );
         
         if (result.rows.length === 0) {
