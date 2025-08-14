@@ -119,7 +119,13 @@ function SubscriptionPage() {
                 .order('price', { ascending: true });
 
             if (error) throw error;
-            setAvailablePlans(data || []);
+            
+            // Filter out discontinued plans
+            const activePlans = (data || []).filter(plan => 
+                !plan.plan_name.includes('(DISCONTINUED)')
+            );
+            
+            setAvailablePlans(activePlans);
         } catch (err) {
             console.error('Failed to load subscription plans:', err);
             setAvailablePlans([]);
@@ -487,6 +493,15 @@ function SubscriptionPage() {
                                                     
                                                     {subscription?.plan_id === plan.plan_id ? (
                                                         <div className="bg-green-200 text-green-800 py-3 px-4 rounded-lg font-semibold">Current Plan</div>
+                                                    ) : plan.paypal_link ? (
+                                                        <a
+                                                            href={plan.paypal_link}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg transition-colors text-center block"
+                                                        >
+                                                            Pay with PayPal
+                                                        </a>
                                                     ) : (
                                                         <button
                                                             onClick={() => handleSelectPlan(plan)}

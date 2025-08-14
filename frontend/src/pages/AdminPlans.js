@@ -27,7 +27,8 @@ function AdminPlans({ navigateTo, handleSignOut }) {
     cooldown_percentage: '',
     cooldown_time_hour: '',
     duration_type: 'monthly',
-    duration_value: 1
+    duration_value: 1,
+    paypal_link: ''
   });
 
   // Fetch subscription plans from database
@@ -82,7 +83,8 @@ function AdminPlans({ navigateTo, handleSignOut }) {
       cooldown_percentage: '',
       cooldown_time_hour: '',
       duration_type: 'monthly',
-      duration_value: 1
+      duration_value: 1,
+      paypal_link: ''
     });
   };
 
@@ -109,9 +111,11 @@ function AdminPlans({ navigateTo, handleSignOut }) {
       cooldown_percentage: plan.cooldown_percentage || '',
       cooldown_time_hour: plan.cooldown_time_hour || '',
       duration_type: plan.duration_type || 'monthly',
-      duration_value: plan.duration_value || 1
+      duration_value: plan.duration_value || 1,
+      paypal_link: plan.paypal_link || ''
     });
     setSelectedPlan(plan);
+    setModalMode('edit');
     setModalMode('edit');
     setShowModal(true);
     setError('');
@@ -151,7 +155,8 @@ function AdminPlans({ navigateTo, handleSignOut }) {
         cooldown_percentage: formData.cooldown_percentage ? parseFloat(formData.cooldown_percentage) : null,
         cooldown_time_hour: formData.cooldown_time_hour ? parseFloat(formData.cooldown_time_hour) : null,
         duration_type: formData.duration_type,
-        duration_value: parseInt(formData.duration_value)
+        duration_value: parseInt(formData.duration_value),
+        paypal_link: formData.paypal_link.trim() || null
       };
 
       let result;
@@ -181,8 +186,8 @@ function AdminPlans({ navigateTo, handleSignOut }) {
   };
 
   // Handle plan deletion
-  const handleDeletePlan = async (planId, planName) => {
-    if (!window.confirm(`Are you sure you want to delete the plan "${planName}"? This action cannot be undone and may affect existing subscriptions.`)) {
+  const handleDeletePlan = async (plan) => {
+    if (!window.confirm(`Are you sure you want to delete the plan "${plan.plan_name}"? This action cannot be undone and may affect existing subscriptions.`)) {
       return;
     }
 
@@ -190,10 +195,49 @@ function AdminPlans({ navigateTo, handleSignOut }) {
       setError('');
       setSuccess('');
 
+      // First, check if there are any active subscriptions using this plan
+      const { data: activeSubscriptions, error: checkError } = await supabase
+        .from('user_subscription')
+        .select('user_subscription_id, user_id, is_active')
+        .eq('plan_id', plan.plan_id)
+        .eq('is_active', true);
+
+      if (checkError) throw checkError;
+
+      if (activeSubscriptions && activeSubscriptions.length > 0) {
+        const subscriptionCount = activeSubscriptions.length;
+        const confirmDeactivate = window.confirm(
+          `Cannot delete plan "${plan.plan_name}" because it has ${subscriptionCount} active subscription(s).\n\n` +
+          `Would you like to deactivate this plan instead? This will:\n` +
+          `• Keep existing subscriptions active\n` +
+          `• Prevent new users from subscribing to this plan\n` +
+          `• Allow you to delete the plan later when no active subscriptions remain`
+        );
+
+        if (confirmDeactivate) {
+          // Deactivate the plan instead of deleting it
+          const { error: deactivateError } = await supabase
+            .from('subscription_plans')
+            .update({ 
+              plan_name: `${plan.plan_name} (DISCONTINUED)`,
+              description: plan.description ? `${plan.description} - This plan has been discontinued.` : 'This plan has been discontinued.',
+              updated_at: new Date().toISOString()
+            })
+            .eq('plan_id', plan.plan_id);
+
+          if (deactivateError) throw deactivateError;
+
+          setSuccess(`Plan "${plan.plan_name}" has been discontinued. It will no longer appear for new subscriptions.`);
+          await fetchPlans(); // Refresh the list
+        }
+        return;
+      }
+
+      // If no active subscriptions, proceed with deletion
       const { error } = await supabase
         .from('subscription_plans')
         .delete()
-        .eq('plan_id', planId);
+        .eq('plan_id', plan.plan_id);
 
       if (error) throw error;
 
@@ -327,6 +371,7 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Duration</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Daily Limit</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PayPal Link</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Features</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
@@ -335,12 +380,17 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                 <tbody className="bg-white divide-y divide-gray-200">
                   {plans.map((plan) => (
                     <tr key={plan.plan_id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div>
-                          <div className="text-sm font-medium text-gray-900">{plan.plan_name}</div>
-                          <div className="text-sm text-gray-500">{plan.description}</div>
-                        </div>
-                      </td>
+                                             <td className="px-6 py-4 whitespace-nowrap">
+                         <div>
+                           <div className={`text-sm font-medium ${plan.plan_name.includes('(DISCONTINUED)') ? 'text-red-600 line-through' : 'text-gray-900'}`}>
+                             {plan.plan_name}
+                           </div>
+                           <div className="text-sm text-gray-500">{plan.description}</div>
+                           {plan.plan_name.includes('(DISCONTINUED)') && (
+                             <div className="text-xs text-red-500 font-medium mt-1">DISCONTINUED</div>
+                           )}
+                         </div>
+                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm font-medium text-gray-900">{formatCurrency(plan.price)}</div>
                         <div className="text-sm text-gray-500">
@@ -363,6 +413,20 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                         <div className="text-sm font-medium text-gray-900">{plan.daily_mah_limit} mAh</div>
                         {plan.max_session_duration_hours && (
                           <div className="text-sm text-gray-500">{plan.max_session_duration_hours}h max session</div>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        {plan.paypal_link ? (
+                          <a
+                            href={plan.paypal_link}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-600 hover:text-blue-800 text-sm underline"
+                          >
+                            View Link
+                          </a>
+                        ) : (
+                          <span className="text-gray-400 text-sm">No link</span>
                         )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -396,12 +460,12 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                           >
                             Edit
                           </button>
-                          <button
-                            onClick={() => handleDeletePlan(plan.plan_id, plan.plan_name)}
-                            className="text-red-600 hover:text-red-900"
-                          >
-                            Delete
-                          </button>
+                                                     <button
+                             onClick={() => handleDeletePlan(plan)}
+                             className={`${plan.plan_name.includes('(DISCONTINUED)') ? 'text-orange-600 hover:text-orange-900' : 'text-red-600 hover:text-red-900'}`}
+                           >
+                             {plan.plan_name.includes('(DISCONTINUED)') ? 'Force Delete' : 'Delete'}
+                           </button>
                         </div>
                       </td>
                     </tr>
@@ -587,6 +651,24 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                         required
                       />
                     </div>
+                  </div>
+                  
+                  <div>
+                    <label htmlFor="paypal_link" className="block text-sm font-medium text-gray-700">
+                      PayPal Payment Link
+                    </label>
+                    <input
+                      type="url"
+                      id="paypal_link"
+                      name="paypal_link"
+                      value={formData.paypal_link}
+                      onChange={handleInputChange}
+                      placeholder="https://www.paypal.com/paypalme/yourusername/amount"
+                      className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    />
+                    <p className="mt-1 text-sm text-gray-500">
+                      Direct PayPal payment link for this plan (optional)
+                    </p>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
