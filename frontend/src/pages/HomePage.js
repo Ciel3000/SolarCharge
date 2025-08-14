@@ -66,7 +66,7 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
         }
       });
     } else {
-      openGoogleMaps(station.location_description);
+      openGoogleMaps(station.location_description, station.latitude, station.longitude);
     }
   };
 
@@ -104,7 +104,8 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
     }
   }, [session, stationsInitialized, internalStations.length, propStations]);
 
-  const [usage, setUsage] = useState({ totalSessions: 0, totalDuration: 0, totalCost: 0, totalEnergyKWH: 0 });
+  const [usage, setUsage] = useState({ totalSessions: 0, totalDuration: 0, totalCost: 0, totalEnergyMAH: 0 });
+  const [userDevices, setUserDevices] = useState([]);
 
   useEffect(() => {
     async function fetchUsageAnalytics() {
@@ -119,11 +120,195 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
         setUsage(data);
       } catch (err) {
         console.error('HomePage: Error fetching usage analytics:', err.message);
-        setUsage({ totalSessions: 0, totalDuration: 0, totalCost: 0, totalEnergyKWH: 0 });
+        setUsage({ totalSessions: 0, totalDuration: 0, totalCost: 0, totalEnergyMAH: 0 });
       }
     }
     fetchUsageAnalytics();
   }, [session]);
+
+  // Function to detect device information
+  const detectDeviceInfo = () => {
+    const userAgent = navigator.userAgent;
+    const platform = navigator.platform;
+    const vendor = navigator.vendor;
+    
+    let deviceType = 'unknown';
+    let deviceName = 'Unknown Device';
+    let deviceModel = 'Unknown Model';
+    
+    // More comprehensive device detection
+    if (/Android/i.test(userAgent)) {
+      deviceType = 'phone';
+      deviceName = 'Android Device';
+      
+      // Try to extract specific device model
+      const androidMatch = userAgent.match(/Android\s+\d+\.?\d*;\s*(.+?)\s+build/i);
+      if (androidMatch) {
+        const deviceInfo = androidMatch[1].trim();
+        if (deviceInfo.includes('SM-') || deviceInfo.includes('Samsung')) {
+          deviceName = 'Samsung Galaxy';
+          deviceModel = deviceInfo;
+        } else if (deviceInfo.includes('Pixel')) {
+          deviceName = 'Google Pixel';
+          deviceModel = deviceInfo;
+        } else if (deviceInfo.includes('OnePlus')) {
+          deviceName = 'OnePlus';
+          deviceModel = deviceInfo;
+        } else if (deviceInfo.includes('Xiaomi') || deviceInfo.includes('Redmi')) {
+          deviceName = 'Xiaomi';
+          deviceModel = deviceInfo;
+        } else {
+          deviceModel = deviceInfo;
+        }
+      }
+    } else if (/iPhone|iPad|iPod/i.test(userAgent)) {
+      if (/iPad/i.test(userAgent)) {
+        deviceType = 'tablet';
+        deviceName = 'iPad';
+      } else if (/iPod/i.test(userAgent)) {
+        deviceType = 'phone';
+        deviceName = 'iPod Touch';
+      } else {
+        deviceType = 'phone';
+        deviceName = 'iPhone';
+      }
+      
+      // Try to extract iOS version
+      const iosMatch = userAgent.match(/OS\s+(\d+_\d+_\d+)/i);
+      if (iosMatch) {
+        deviceModel = `iOS ${iosMatch[1].replace(/_/g, '.')}`;
+      } else {
+        deviceModel = 'iOS Device';
+      }
+    } else if (/Windows/i.test(userAgent)) {
+      deviceType = 'desktop';
+      deviceName = 'Windows PC';
+      
+      // Try to detect Windows version
+      if (/Windows NT 10\.0/i.test(userAgent)) {
+        deviceModel = 'Windows 10/11';
+      } else if (/Windows NT 6\.3/i.test(userAgent)) {
+        deviceModel = 'Windows 8.1';
+      } else if (/Windows NT 6\.2/i.test(userAgent)) {
+        deviceModel = 'Windows 8';
+      } else if (/Windows NT 6\.1/i.test(userAgent)) {
+        deviceModel = 'Windows 7';
+      } else {
+        deviceModel = 'Windows Desktop';
+      }
+    } else if (/Mac/i.test(userAgent)) {
+      deviceType = 'desktop';
+      deviceName = 'Mac';
+      
+      // Try to detect macOS version
+      if (/Mac OS X 10_15/i.test(userAgent) || /Mac OS X 11_/i.test(userAgent) || /Mac OS X 12_/i.test(userAgent) || /Mac OS X 13_/i.test(userAgent)) {
+        deviceModel = 'macOS (Recent)';
+      } else if (/Mac OS X 10_14/i.test(userAgent)) {
+        deviceModel = 'macOS Mojave';
+      } else if (/Mac OS X 10_13/i.test(userAgent)) {
+        deviceModel = 'macOS High Sierra';
+      } else {
+        deviceModel = 'macOS';
+      }
+    } else if (/Linux/i.test(userAgent)) {
+      deviceType = 'desktop';
+      deviceName = 'Linux PC';
+      
+      // Try to detect specific Linux distribution
+      if (/Ubuntu/i.test(userAgent)) {
+        deviceModel = 'Ubuntu';
+      } else if (/Fedora/i.test(userAgent)) {
+        deviceModel = 'Fedora';
+      } else if (/Debian/i.test(userAgent)) {
+        deviceModel = 'Debian';
+      } else {
+        deviceModel = 'Linux';
+      }
+    } else if (/ChromeOS/i.test(userAgent)) {
+      deviceType = 'desktop';
+      deviceName = 'Chromebook';
+      deviceModel = 'Chrome OS';
+    }
+    
+    // Fallback for unknown devices
+    if (deviceType === 'unknown') {
+      deviceType = 'desktop';
+      deviceName = 'Web Browser';
+      deviceModel = platform || 'Unknown Platform';
+    }
+    
+    return { deviceType, deviceName, deviceModel };
+  };
+
+  // Function to get battery information (if available)
+  const getBatteryInfo = async () => {
+    if ('getBattery' in navigator) {
+      try {
+        const battery = await navigator.getBattery();
+        return {
+          level: Math.round(battery.level * 100),
+          charging: battery.charging,
+          chargingTime: battery.chargingTime,
+          dischargingTime: battery.dischargingTime
+        };
+      } catch (error) {
+        console.log('Battery API not available');
+        return null;
+      }
+    }
+    return null;
+  };
+
+  // Effect to detect and store device information
+  useEffect(() => {
+    if (subscription && session) {
+      const deviceInfo = detectDeviceInfo();
+      getBatteryInfo().then(batteryInfo => {
+        const device = {
+          ...deviceInfo,
+          batteryLevel: batteryInfo?.level || null,
+          isCharging: batteryInfo?.charging || false,
+          batteryCapacity: null // We don't have this info from browser APIs
+        };
+        setUserDevices([device]);
+        
+        // Save device information to database
+        saveDeviceToDatabase(device);
+      });
+    }
+  }, [subscription, session]);
+
+  // Function to save device information to database
+  const saveDeviceToDatabase = async (device) => {
+    try {
+      const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+      const response = await fetch(`${BACKEND_URL}/api/user/devices`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          device_type: device.deviceType,
+          device_name: device.deviceName,
+          device_model: device.deviceModel,
+          battery_capacity_mah: device.batteryCapacity,
+          current_battery_level: device.batteryLevel,
+          is_charging: device.isCharging
+        }),
+      });
+      
+      if (!response.ok) {
+        console.warn('Device API not available yet, continuing without saving to database');
+        return; // Don't throw error, just continue
+      }
+      
+      console.log('Device information saved successfully');
+    } catch (error) {
+      console.warn('Error saving device information (API may not be deployed yet):', error);
+      // Don't throw error, just continue without saving to database
+    }
+  };
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-US', {
@@ -132,9 +317,14 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
     }).format(amount || 0);
   };
 
-  const openGoogleMaps = (locationDescription) => {
-    const encodedLocation = encodeURIComponent(locationDescription);
-    window.open(`https://www.google.com/maps/search/?api=1&query=${encodedLocation}`, '_blank');
+  const openGoogleMaps = (locationDescription, latitude, longitude) => {
+    // Use coordinates if available, otherwise fall back to location description
+    if (latitude && longitude) {
+      window.open(`https://www.google.com/maps?q=${latitude},${longitude}`, '_blank');
+    } else {
+      const encodedLocation = encodeURIComponent(locationDescription);
+      window.open(`https://www.google.com/maps/search/?api=1&query=${encodedLocation}`, '_blank');
+    }
   };
 
   // Only show loading during initial app load, not for tab switches or minor updates
@@ -178,63 +368,141 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
               </div>
             )}
             {subscription ? (
-              <div className="bg-white rounded-xl shadow-lg p-8 border-2 border-green-300 w-full max-w-md animate-fade-in-up flex flex-col items-center">
-                <h4 className="text-xl font-bold text-green-700 mb-2 flex items-center gap-2">
-                  <span className="text-green-500">🌟</span> Your Current Plan
-                </h4>
-                <div className="mb-2 text-lg font-semibold text-gray-800">{subscription.plan_name}</div>
-                <div className="mb-2 text-gray-600">{subscription.description}</div>
-                <div className="mb-2 text-gray-600"><strong>Price:</strong> {formatCurrency(subscription.price)}</div>
-                <div className="mb-6 text-gray-600"><strong>Daily Limit:</strong> {subscription.daily_mah_limit} mAh</div>
-                {/* Usage Analytics */}
-                <div className="flex flex-row justify-center gap-6 w-full mb-6">
-                  <div className="flex flex-col items-center bg-blue-50 rounded-lg px-4 py-2 shadow">
-                    <span className="text-blue-600 text-2xl font-bold">{usage.totalSessions}</span>
-                    <span className="text-xs text-gray-500 mt-1">Sessions</span>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 w-full max-w-6xl animate-fade-in-up">
+                {/* Left Panel - Current Plan */}
+                <div className="bg-white rounded-xl shadow-lg p-6 border-2 border-green-300 flex flex-col">
+                  <h4 className="text-xl font-bold text-green-700 mb-4 flex items-center gap-2">
+                    <span className="text-green-500">🌟</span> Your Current Plan
+                  </h4>
+                  <div className="mb-3 text-lg font-semibold text-gray-800">{subscription.plan_name}</div>
+                  <div className="mb-3 text-gray-600 text-sm">{subscription.description}</div>
+                  <div className="mb-3 text-gray-600 text-sm"><strong>Price:</strong> {formatCurrency(subscription.price)}</div>
+                  <div className="mb-6 text-gray-600 text-sm"><strong>Daily Limit:</strong> {subscription.daily_mah_limit} mAh</div>
+                  
+                  {/* Usage Analytics - Made more compact */}
+                  <div className="grid grid-cols-3 gap-3 w-full mb-6">
+                    <div className="flex flex-col items-center bg-blue-50 rounded-lg px-3 py-3 shadow">
+                      <span className="text-blue-600 text-xl font-bold">{usage.totalSessions}</span>
+                      <span className="text-xs text-gray-500 mt-1">Sessions</span>
+                    </div>
+                    <div className="flex flex-col items-center bg-green-50 rounded-lg px-3 py-3 shadow">
+                      <span className="text-green-600 text-xl font-bold">{usage.totalDuration}</span>
+                      <span className="text-xs text-gray-500 mt-1">Minutes</span>
+                    </div>
+                    <div className="flex flex-col items-center bg-purple-50 rounded-lg px-3 py-3 shadow">
+                      <span className="text-purple-600 text-lg font-bold">{formatCurrency(usage.totalCost)}</span>
+                      <span className="text-xs text-gray-500 mt-1">Total Cost</span>
+                    </div>
                   </div>
-                  <div className="flex flex-col items-center bg-green-50 rounded-lg px-4 py-2 shadow">
-                    <span className="text-green-600 text-2xl font-bold">{usage.totalDuration}</span>
-                    <span className="text-xs text-gray-500 mt-1">Minutes</span>
-                  </div>
-                  <div className="flex flex-col items-center bg-purple-50 rounded-lg px-4 py-2 shadow">
-                    <span className="text-purple-600 text-2xl font-bold">{formatCurrency(usage.totalCost)}</span>
-                    <span className="text-xs text-gray-500 mt-1">Total Cost</span>
-                  </div>
-                </div>
-                {/* Energy Consumed and Progress Bar */}
-                <div className="w-full mb-6">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm text-gray-600 font-medium">Energy Consumed (This Month)</span>
-                    <span className="text-sm text-gray-700 font-bold">{usage.totalEnergyKWH} Ah</span>
-                  </div>
-                  {(() => {
-                    const daysSoFar = new Date().getDate();
-                    const monthlyLimit = subscription.daily_mah_limit * daysSoFar;
-                    const percent = monthlyLimit > 0 ? Math.min(100, ((usage.totalEnergyKWH / monthlyLimit) * 100).toFixed(0)) : 0;
-                    return (
-                      <div className="w-full bg-gray-200 rounded-full h-4">
-                        <div
-                          className={`h-4 rounded-full transition-all duration-500 ${percent < 80 ? 'bg-green-400' : percent < 100 ? 'bg-yellow-400' : 'bg-red-500'}`}
-                          style={{ width: `${percent}%` }}
-                        ></div>
-                      </div>
-                    );
-                  })()}
-                  <div className="flex justify-end mt-1">
-                    <span className="text-xs text-gray-500">{(() => {
+                  
+                  {/* Energy Consumed and Progress Bar */}
+                  <div className="w-full mb-6">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm text-gray-600 font-medium">Energy Consumed (This Month)</span>
+                      <span className="text-sm text-gray-700 font-bold">{usage.totalEnergyMAH} mAh</span>
+                    </div>
+                    {(() => {
                       const daysSoFar = new Date().getDate();
                       const monthlyLimit = subscription.daily_mah_limit * daysSoFar;
-                      const percent = monthlyLimit > 0 ? Math.min(100, ((usage.totalEnergyKWH / monthlyLimit) * 100).toFixed(0)) : 0;
-                      return `${percent}% of monthly limit (${monthlyLimit} mAh)`;
-                    })()}</span>
+                      const percent = monthlyLimit > 0 ? Math.min(100, ((usage.totalEnergyMAH / monthlyLimit) * 100).toFixed(0)) : 0;
+                      return (
+                        <div className="w-full bg-gray-200 rounded-full h-3">
+                          <div
+                            className={`h-3 rounded-full transition-all duration-500 ${percent < 80 ? 'bg-green-400' : percent < 100 ? 'bg-yellow-400' : 'bg-red-500'}`}
+                            style={{ width: `${percent}%` }}
+                          ></div>
+                        </div>
+                      );
+                    })()}
+                    <div className="flex justify-end mt-1">
+                      <span className="text-xs text-gray-500">{(() => {
+                        const daysSoFar = new Date().getDate();
+                        const monthlyLimit = subscription.daily_mah_limit * daysSoFar;
+                        const percent = monthlyLimit > 0 ? Math.min(100, ((usage.totalEnergyMAH / monthlyLimit) * 100).toFixed(0)) : 0;
+                        return `${percent}% of monthly limit (${monthlyLimit} mAh)`;
+                      })()}</span>
+                    </div>
                   </div>
+                  
+                  <button
+                    className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-xl transition-colors w-full mt-auto"
+                    onClick={() => navigateTo('subscription')}
+                  >
+                    Manage Subscription
+                  </button>
                 </div>
-                <button
-                  className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-xl transition-colors w-full"
-                  onClick={() => navigateTo('subscription')}
-                >
-                  Manage Subscription
-                </button>
+
+                {/* Right Panel - Device Battery Details */}
+                <div className="bg-white rounded-xl shadow-lg p-6 border-2 border-blue-300 flex flex-col">
+                  <h4 className="text-xl font-bold text-blue-700 mb-4 flex items-center gap-2">
+                    <span className="text-blue-500">📱</span> Device Details
+                  </h4>
+                  {userDevices.length > 0 ? (
+                    userDevices.map((device, index) => (
+                      <div key={index} className="w-full flex-1 flex flex-col">
+                        <div className="text-center mb-4">
+                          <div className="text-lg font-semibold text-gray-800 mb-1">{device.deviceName}</div>
+                          <div className="text-sm text-gray-600 mb-4">{device.deviceModel}</div>
+                          
+                          {/* Device Type Icon */}
+                          <div className="flex justify-center mb-4">
+                            <span className="text-4xl">
+                              {device.deviceType === 'phone' ? '📱' : 
+                               device.deviceType === 'tablet' ? '📱' : 
+                               device.deviceType === 'laptop' ? '💻' : 
+                               device.deviceType === 'desktop' ? '🖥️' : '📱'}
+                            </span>
+                          </div>
+                        </div>
+                        
+                        {/* Battery Level */}
+                        {device.batteryLevel !== null ? (
+                          <div className="mb-4 flex-1">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-sm text-gray-600 font-medium">Battery Level</span>
+                              <span className={`text-sm font-bold ${
+                                device.batteryLevel > 50 ? 'text-green-600' : 
+                                device.batteryLevel > 20 ? 'text-yellow-600' : 'text-red-600'
+                              }`}>
+                                {device.batteryLevel}%
+                              </span>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-3">
+                              <div
+                                className={`h-3 rounded-full transition-all duration-500 ${
+                                  device.batteryLevel > 50 ? 'bg-green-400' : 
+                                  device.batteryLevel > 20 ? 'bg-yellow-400' : 'bg-red-500'
+                                }`}
+                                style={{ width: `${device.batteryLevel}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mb-4 flex-1 flex items-center justify-center">
+                            <div className="text-sm text-gray-500">Battery level not available</div>
+                          </div>
+                        )}
+
+                        {/* Charging Status */}
+                        <div className="mt-auto">
+                          <div className="flex items-center justify-center gap-2 p-3 bg-gray-50 rounded-lg">
+                            <span className="text-sm text-gray-600">Status:</span>
+                            <span className={`text-sm font-semibold ${
+                              device.isCharging ? 'text-green-600' : 'text-gray-600'
+                            }`}>
+                              {device.isCharging ? '🔌 Charging' : '🔋 Not Charging'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center text-gray-500 flex-1 flex flex-col items-center justify-center">
+                      <div className="text-4xl mb-4">📱</div>
+                      <div className="text-sm">Detecting device information...</div>
+                    </div>
+                  )}
+                </div>
               </div>
             ) : (
               <div className="flex flex-col items-center w-full animate-fade-in-up">
@@ -263,7 +531,7 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
         {/* Available Stations Section */}
         <section id="stations" className="w-full max-w-5xl mx-auto bg-white/90 backdrop-blur-sm p-10 rounded-3xl shadow-2xl mb-12 relative z-10 border border-white/20">
           <div className="text-center mb-10">
-            <h3 className="text-4xl font-bold text-gray-800 mb-4">Find a Charging Station Near You</h3>
+            <h3 className="text-4xl font-bold text-gray-800 mb-4">Find a Charging Station</h3>
             <p className="text-xl text-gray-600">Locate and use our solar-powered charging stations across the city</p>
           </div>
           {loadingStations ? (
