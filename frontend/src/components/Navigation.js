@@ -168,8 +168,12 @@ function Navigation({ navigateTo, handleSignOut }) {
             )}
           </div>
 
-          {/* Mobile menu button */}
-          <div className="md:hidden">
+          {/* Mobile Navigation Controls */}
+          <div className="md:hidden flex items-center space-x-2">
+            {/* Notification Bell for Mobile */}
+            {session && <NotificationBell />}
+            
+            {/* Mobile menu button */}
             <button
               onClick={() => setIsMenuOpen(!isMenuOpen)}
               className="text-gray-700 hover:text-blue-600 focus:outline-none focus:text-blue-600"
@@ -230,9 +234,6 @@ function Navigation({ navigateTo, handleSignOut }) {
                 <>
                   <div className="px-3 py-2 text-gray-600 text-sm">
                     Welcome, {user?.email?.split('@')[0] || 'User'}
-                  </div>
-                  <div className="px-3 py-2">
-                    <NotificationBell />
                   </div>
                   <button
                     onClick={(e) => { 

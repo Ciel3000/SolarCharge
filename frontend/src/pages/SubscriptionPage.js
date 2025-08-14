@@ -11,7 +11,7 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://solar-charger-
 const PAYPAL_CLIENT_ID = process.env.REACT_APP_PAYPAL_CLIENT_ID || 'sb'; // Using a default sandbox client ID
 const PAYPAL_OPTIONS = {
     "client-id": PAYPAL_CLIENT_ID,
-    currency: "USD",
+    currency: "PHP",
     intent: "subscription",
     vault: true
 };
@@ -181,7 +181,7 @@ function SubscriptionPage() {
             purchase_units: [{
                 description: `${selectedPlanForPayment.plan_name} Subscription`,
                 amount: {
-                    currency_code: 'USD',
+                    currency_code: 'PHP',
                     value: selectedPlanForPayment.price.toString(),
                 },
             }],
@@ -249,9 +249,27 @@ function SubscriptionPage() {
         return new Date(dateString).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
     };
 
-    const formatCurrency = (amount) => {
-        return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
-    };
+      const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(amount || 0);
+  };
+
+  // Get duration display text
+  const getDurationDisplayText = (durationType, durationValue) => {
+    switch (durationType) {
+      case 'daily':
+        return durationValue === 1 ? '1 Day' : `${durationValue} Days`;
+      case 'weekly':
+        return durationValue === 1 ? '1 Week' : `${durationValue} Weeks`;
+      case 'monthly':
+        return durationValue === 1 ? '1 Month' : `${durationValue} Months`;
+      case 'quarterly':
+        return durationValue === 1 ? '3 Months' : `${durationValue * 3} Months`;
+      case 'yearly':
+        return durationValue === 1 ? '1 Year' : `${durationValue} Years`;
+      default:
+        return '1 Month';
+    }
+  };
     
     const formatStatusText = (status) => {
         if (typeof status === 'boolean') {
@@ -332,7 +350,17 @@ function SubscriptionPage() {
                                     </div>
                                     <div className="text-gray-600">
                                         <p className="mb-2">{subscription.description || 'No description available'}</p>
-                                        <p className="font-semibold text-2xl text-green-600">{formatCurrency(subscription.price)}<span className="text-base text-gray-500">/month</span></p>
+                                        <p className="font-semibold text-2xl text-green-600">
+                                            {formatCurrency(subscription.price)}
+                                            <span className="text-base text-gray-500">
+                                                /{subscription.duration_display ? subscription.duration_display.toLowerCase() : 'month'}
+                                            </span>
+                                        </p>
+                                        {subscription.duration_display && (
+                                            <p className="text-sm text-blue-600 font-medium">
+                                                Duration: {subscription.duration_display}
+                                            </p>
+                                        )}
                                     </div>
                                     <div className="border-t border-gray-200 pt-4">
                                         <h3 className="font-semibold text-gray-700 mb-2">Plan Features:</h3>
@@ -446,7 +474,15 @@ function SubscriptionPage() {
                                                 <div className="text-center">
                                                     <h3 className="text-xl font-bold text-gray-800 mb-2">{plan.plan_name}</h3>
                                                     <p className="text-gray-600 mb-4 h-12">{plan.description}</p>
-                                                    <div className="text-3xl font-bold text-blue-600 mb-2">{formatCurrency(plan.price)}<span className="text-sm text-gray-500">/month</span></div>
+                                                    <div className="text-3xl font-bold text-blue-600 mb-2">
+                                                        {formatCurrency(plan.price)}
+                                                        <span className="text-sm text-gray-500">
+                                                            /{getDurationDisplayText(plan.duration_type || 'monthly', plan.duration_value || 1).toLowerCase()}
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-sm text-blue-600 font-medium mb-2">
+                                                        {getDurationDisplayText(plan.duration_type || 'monthly', plan.duration_value || 1)}
+                                                    </div>
                                                     <div className="text-sm text-gray-600 mb-4">Daily Limit: {plan.daily_mah_limit} mAh</div>
                                                     
                                                     {subscription?.plan_id === plan.plan_id ? (
@@ -477,7 +513,12 @@ function SubscriptionPage() {
                             <div className="max-w-md mx-auto">
                                 <div className="bg-blue-50 p-4 rounded-lg mb-6 border border-blue-200">
                                     <h3 className="font-semibold text-blue-800 mb-2">Selected Plan: {selectedPlanForPayment.plan_name}</h3>
-                                    <p className="text-blue-700">Price: {formatCurrency(selectedPlanForPayment.price)}/month</p>
+                                    <p className="text-blue-700">
+                                        Price: {formatCurrency(selectedPlanForPayment.price)} per {getDurationDisplayText(selectedPlanForPayment.duration_type || 'monthly', selectedPlanForPayment.duration_value || 1).toLowerCase()}
+                                    </p>
+                                    <p className="text-blue-700">
+                                        Duration: {getDurationDisplayText(selectedPlanForPayment.duration_type || 'monthly', selectedPlanForPayment.duration_value || 1)}
+                                    </p>
                                 </div>
                                 
                                 {paypalLoading && (

@@ -257,7 +257,7 @@ function AdminUsers({ navigateTo, handleSignOut }) {
                                 <option value="">No Subscription</option>
                                 {availablePlans.map(plan => (
                                     <option key={plan.plan_id} value={plan.plan_id}>
-                                        {plan.plan_name} ({new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(plan.price)}/month)
+                                        {plan.plan_name} ({new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(plan.price)}/month)
                                     </option>
                                 ))}
                             </select>

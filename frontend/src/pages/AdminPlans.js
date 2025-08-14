@@ -25,7 +25,9 @@ function AdminPlans({ navigateTo, handleSignOut }) {
     fast_charging_access: false,
     priority_access: false,
     cooldown_percentage: '',
-    cooldown_time_hour: ''
+    cooldown_time_hour: '',
+    duration_type: 'monthly',
+    duration_value: 1
   });
 
   // Fetch subscription plans from database
@@ -78,7 +80,9 @@ function AdminPlans({ navigateTo, handleSignOut }) {
       fast_charging_access: false,
       priority_access: false,
       cooldown_percentage: '',
-      cooldown_time_hour: ''
+      cooldown_time_hour: '',
+      duration_type: 'monthly',
+      duration_value: 1
     });
   };
 
@@ -103,7 +107,9 @@ function AdminPlans({ navigateTo, handleSignOut }) {
       fast_charging_access: plan.fast_charging_access || false,
       priority_access: plan.priority_access || false,
       cooldown_percentage: plan.cooldown_percentage || '',
-      cooldown_time_hour: plan.cooldown_time_hour || ''
+      cooldown_time_hour: plan.cooldown_time_hour || '',
+      duration_type: plan.duration_type || 'monthly',
+      duration_value: plan.duration_value || 1
     });
     setSelectedPlan(plan);
     setModalMode('edit');
@@ -143,7 +149,9 @@ function AdminPlans({ navigateTo, handleSignOut }) {
         fast_charging_access: formData.fast_charging_access,
         priority_access: formData.priority_access,
         cooldown_percentage: formData.cooldown_percentage ? parseFloat(formData.cooldown_percentage) : null,
-        cooldown_time_hour: formData.cooldown_time_hour ? parseFloat(formData.cooldown_time_hour) : null
+        cooldown_time_hour: formData.cooldown_time_hour ? parseFloat(formData.cooldown_time_hour) : null,
+        duration_type: formData.duration_type,
+        duration_value: parseInt(formData.duration_value)
       };
 
       let result;
@@ -199,9 +207,9 @@ function AdminPlans({ navigateTo, handleSignOut }) {
 
   // Format currency
   const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-US', {
+    return new Intl.NumberFormat('en-PH', {
       style: 'currency',
-      currency: 'USD'
+      currency: 'PHP'
     }).format(amount || 0);
   };
 
@@ -215,6 +223,24 @@ function AdminPlans({ navigateTo, handleSignOut }) {
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  // Get duration display text
+  const getDurationDisplayText = (durationType, durationValue) => {
+    switch (durationType) {
+      case 'daily':
+        return durationValue === 1 ? '1 Day' : `${durationValue} Days`;
+      case 'weekly':
+        return durationValue === 1 ? '1 Week' : `${durationValue} Weeks`;
+      case 'monthly':
+        return durationValue === 1 ? '1 Month' : `${durationValue} Months`;
+      case 'quarterly':
+        return durationValue === 1 ? '3 Months' : `${durationValue * 3} Months`;
+      case 'yearly':
+        return durationValue === 1 ? '1 Year' : `${durationValue} Years`;
+      default:
+        return '1 Month';
+    }
   };
 
   if (isLoading) {
@@ -299,6 +325,7 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Plan Name</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Duration</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Daily Limit</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Features</th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
@@ -316,7 +343,21 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm font-medium text-gray-900">{formatCurrency(plan.price)}</div>
-                        <div className="text-sm text-gray-500">per month</div>
+                        <div className="text-sm text-gray-500">
+                          per {getDurationDisplayText(plan.duration_type || 'monthly', plan.duration_value || 1).toLowerCase()}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm font-medium text-gray-900">
+                          {getDurationDisplayText(plan.duration_type || 'monthly', plan.duration_value || 1)}
+                        </div>
+                        <div className="text-sm text-gray-500">
+                          {plan.duration_type === 'daily' ? 'Day pass' : 
+                           plan.duration_type === 'weekly' ? 'Week pass' : 
+                           plan.duration_type === 'monthly' ? 'Month pass' : 
+                           plan.duration_type === 'quarterly' ? 'Quarter pass' : 
+                           plan.duration_type === 'yearly' ? 'Year pass' : 'Subscription'}
+                        </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm font-medium text-gray-900">{plan.daily_mah_limit} mAh</div>
@@ -413,7 +454,15 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Price</label>
-                      <p className="text-sm text-gray-900">{formatCurrency(selectedPlan?.price)}/month</p>
+                      <p className="text-sm text-gray-900">
+                        {formatCurrency(selectedPlan?.price)} per {getDurationDisplayText(selectedPlan?.duration_type || 'monthly', selectedPlan?.duration_value || 1).toLowerCase()}
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">Duration</label>
+                      <p className="text-sm text-gray-900">
+                        {getDurationDisplayText(selectedPlan?.duration_type || 'monthly', selectedPlan?.duration_value || 1)}
+                      </p>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700">Daily Limit</label>
@@ -473,7 +522,7 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                     </div>
                     <div>
                       <label htmlFor="price" className="block text-sm font-medium text-gray-700">
-                        Price (USD) *
+                        Price (PHP) *
                       </label>
                       <input
                         type="number"
@@ -501,6 +550,43 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                       rows="3"
                       className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                     />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label htmlFor="duration_type" className="block text-sm font-medium text-gray-700">
+                        Duration Type *
+                      </label>
+                      <select
+                        id="duration_type"
+                        name="duration_type"
+                        value={formData.duration_type}
+                        onChange={handleInputChange}
+                        className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                        required
+                      >
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="quarterly">Quarterly</option>
+                        <option value="yearly">Yearly</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label htmlFor="duration_value" className="block text-sm font-medium text-gray-700">
+                        Duration Value *
+                      </label>
+                      <input
+                        type="number"
+                        id="duration_value"
+                        name="duration_value"
+                        value={formData.duration_value}
+                        onChange={handleInputChange}
+                        min="1"
+                        className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                        required
+                      />
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">

@@ -1042,15 +1042,46 @@ app.post('/api/admin/users', supabaseAuthMiddleware, requireAdmin, async (req, r
         );
         const userId = newUserResult.rows[0].user_id;
 
-        if (plan_id) {
-            const endDate = new Date();
-            endDate.setMonth(endDate.getMonth() + 1);
-            await client.query(
-                `INSERT INTO user_subscription (user_id, plan_id, start_date, end_date, is_active)
-                 VALUES ($1, $2, NOW(), $3, true)`,
-                [userId, plan_id, endDate]
-            );
-        }
+                    if (plan_id) {
+                // Get plan duration information
+                const planResult = await client.query(
+                    `SELECT duration_type, duration_value FROM subscription_plans WHERE plan_id = $1`,
+                    [plan_id]
+                );
+                
+                if (planResult.rows.length > 0) {
+                    const plan = planResult.rows[0];
+                    const endDate = new Date();
+                    
+                    // Calculate end date based on duration type and value
+                    switch (plan.duration_type) {
+                        case 'daily':
+                            endDate.setDate(endDate.getDate() + plan.duration_value);
+                            break;
+                        case 'weekly':
+                            endDate.setDate(endDate.getDate() + (plan.duration_value * 7));
+                            break;
+                        case 'monthly':
+                            endDate.setMonth(endDate.getMonth() + plan.duration_value);
+                            break;
+                        case 'quarterly':
+                            endDate.setMonth(endDate.getMonth() + (plan.duration_value * 3));
+                            break;
+                        case 'yearly':
+                            endDate.setFullYear(endDate.getFullYear() + plan.duration_value);
+                            break;
+                        default:
+                            // Fallback to monthly
+                            endDate.setMonth(endDate.getMonth() + 1);
+                    }
+                    
+                    await client.query(
+                        `INSERT INTO user_subscription (user_id, plan_id, start_date, end_date, is_active)
+                         VALUES ($1, $2, NOW(), $3, true)`,
+                        [userId, plan_id, endDate]
+                    );
+                }
+            }
 
         await client.query('COMMIT');
         res.status(201).json({ message: 'User created successfully', user_id: userId });
@@ -1103,13 +1134,44 @@ app.put('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, async 
             }
             // Add new subscription if a new plan was selected
             if (newPlanId) {
-                const endDate = new Date();
-                endDate.setMonth(endDate.getMonth() + 1);
-                await client.query(
-                    `INSERT INTO user_subscription (user_id, plan_id, start_date, end_date, is_active)
-                     VALUES ($1, $2, NOW(), $3, true)`,
-                    [userId, newPlanId, endDate]
+                // Get plan duration information
+                const planResult = await client.query(
+                    `SELECT duration_type, duration_value FROM subscription_plans WHERE plan_id = $1`,
+                    [newPlanId]
                 );
+                
+                if (planResult.rows.length > 0) {
+                    const plan = planResult.rows[0];
+                    const endDate = new Date();
+                    
+                    // Calculate end date based on duration type and value
+                    switch (plan.duration_type) {
+                        case 'daily':
+                            endDate.setDate(endDate.getDate() + plan.duration_value);
+                            break;
+                        case 'weekly':
+                            endDate.setDate(endDate.getDate() + (plan.duration_value * 7));
+                            break;
+                        case 'monthly':
+                            endDate.setMonth(endDate.getMonth() + plan.duration_value);
+                            break;
+                        case 'quarterly':
+                            endDate.setMonth(endDate.getMonth() + (plan.duration_value * 3));
+                            break;
+                        case 'yearly':
+                            endDate.setFullYear(endDate.getFullYear() + plan.duration_value);
+                            break;
+                        default:
+                            // Fallback to monthly
+                            endDate.setMonth(endDate.getMonth() + 1);
+                    }
+                    
+                    await client.query(
+                        `INSERT INTO user_subscription (user_id, plan_id, start_date, end_date, is_active)
+                         VALUES ($1, $2, NOW(), $3, true)`,
+                        [userId, newPlanId, endDate]
+                    );
+                }
             }
         }
 
@@ -1888,7 +1950,9 @@ app.get('/api/user/subscription', supabaseAuthMiddleware, async (req, res) => {
                 sp.fast_charging_access,
                 sp.priority_access,
                 sp.cooldown_percentage,
-                sp.cooldown_time_hour
+                sp.cooldown_time_hour,
+                sp.duration_type,
+                sp.duration_value
             FROM
                 user_subscription us
             JOIN
@@ -1933,10 +1997,19 @@ app.get('/api/user/subscription', supabaseAuthMiddleware, async (req, res) => {
             }
             subscription.features = features;
 
+            // Calculate duration display text
+            if (subscription.duration_type && subscription.duration_value) {
+                const durationText = getDurationDisplayText(subscription.duration_type, subscription.duration_value);
+                subscription.duration_display = durationText;
+            }
+
             // Add a simulated 'next_billing_date' if not directly in DB
-            // Assuming monthly billing from start_date
-            const startDate = new Date(subscription.start_date);
-            subscription.next_billing_date = new Date(startDate.setMonth(startDate.getMonth() + 1));
+            // Calculate based on actual duration type and value
+            if (subscription.duration_type && subscription.duration_value) {
+                const startDate = new Date(subscription.start_date);
+                const nextBillingDate = calculateNextBillingDate(startDate, subscription.duration_type, subscription.duration_value);
+                subscription.next_billing_date = nextBillingDate;
+            }
         }
 
 
@@ -2543,6 +2616,51 @@ function validateConsumption(consumption) {
     
     // Return the validated consumption
     return consumption;
+}
+
+// Helper function to get duration display text
+function getDurationDisplayText(durationType, durationValue) {
+    switch (durationType) {
+        case 'daily':
+            return durationValue === 1 ? '1 Day' : `${durationValue} Days`;
+        case 'weekly':
+            return durationValue === 1 ? '1 Week' : `${durationValue} Weeks`;
+        case 'monthly':
+            return durationValue === 1 ? '1 Month' : `${durationValue} Months`;
+        case 'quarterly':
+            return durationValue === 1 ? '3 Months' : `${durationValue * 3} Months`;
+        case 'yearly':
+            return durationValue === 1 ? '1 Year' : `${durationValue} Years`;
+        default:
+            return '1 Month';
+    }
+}
+
+// Helper function to calculate next billing date
+function calculateNextBillingDate(startDate, durationType, durationValue) {
+    const nextDate = new Date(startDate);
+    
+    switch (durationType) {
+        case 'daily':
+            nextDate.setDate(nextDate.getDate() + durationValue);
+            break;
+        case 'weekly':
+            nextDate.setDate(nextDate.getDate() + (durationValue * 7));
+            break;
+        case 'monthly':
+            nextDate.setMonth(nextDate.getMonth() + durationValue);
+            break;
+        case 'quarterly':
+            nextDate.setMonth(nextDate.getMonth() + (durationValue * 3));
+            break;
+        case 'yearly':
+            nextDate.setFullYear(nextDate.getFullYear() + durationValue);
+            break;
+        default:
+            nextDate.setMonth(nextDate.getMonth() + 1);
+    }
+    
+    return nextDate;
 }
 
 
