@@ -1247,8 +1247,8 @@ app.get('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req,
                 created_at,
                 last_maintenance_date,
                 price_per_mah, -- Include price_per_mah
-                (SELECT COUNT(*) FROM charging_port WHERE station_id = s.station_id AND is_premium = false) as num_free_ports,
-                (SELECT COUNT(*) FROM charging_port WHERE station_id = s.station_id AND is_premium = true) as num_premium_ports
+                num_free_ports,
+                num_premium_ports
             FROM 
                 charging_station s
             ORDER BY 
