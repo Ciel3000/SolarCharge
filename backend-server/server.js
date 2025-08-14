@@ -2034,6 +2034,84 @@ app.get('/api/user/usage', supabaseAuthMiddleware, async (req, res) => {
     }
 });
 
+// Get user devices
+app.get('/api/user/devices', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        
+        const result = await pool.query(`
+            SELECT 
+                device_id,
+                device_type,
+                device_name,
+                device_model,
+                battery_capacity_mah,
+                current_battery_level,
+                is_charging,
+                last_updated,
+                created_at
+            FROM user_devices 
+            WHERE user_id = $1
+            ORDER BY last_updated DESC
+        `, [user_id]);
+        
+        res.json(result.rows);
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User devices fetched for ${user_id}`);
+    } catch (err) {
+        console.error('API Error fetching user devices:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching devices for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to fetch device data.' });
+    }
+});
+
+// Update user device information
+app.post('/api/user/devices', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        const { device_type, device_name, device_model, battery_capacity_mah, current_battery_level, is_charging } = req.body;
+        
+        // Check if device already exists for this user
+        const existingDevice = await pool.query(`
+            SELECT device_id FROM user_devices 
+            WHERE user_id = $1 AND device_type = $2 AND device_name = $3
+        `, [user_id, device_type, device_name]);
+        
+        if (existingDevice.rows.length > 0) {
+            // Update existing device
+            const result = await pool.query(`
+                UPDATE user_devices 
+                SET 
+                    device_model = $1,
+                    battery_capacity_mah = $2,
+                    current_battery_level = $3,
+                    is_charging = $4,
+                    last_updated = NOW(),
+                    updated_at = NOW()
+                WHERE device_id = $5
+                RETURNING *
+            `, [device_model, battery_capacity_mah, current_battery_level, is_charging, existingDevice.rows[0].device_id]);
+            
+            res.json(result.rows[0]);
+        } else {
+            // Create new device
+            const result = await pool.query(`
+                INSERT INTO user_devices 
+                (user_id, device_type, device_name, device_model, battery_capacity_mah, current_battery_level, is_charging)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING *
+            `, [user_id, device_type, device_name, device_model, battery_capacity_mah, current_battery_level, is_charging]);
+            
+            res.json(result.rows[0]);
+        }
+        
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User device updated for ${user_id}`);
+    } catch (err) {
+        console.error('API Error updating user device:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error updating device for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to update device data.' });
+    }
+});
+
 // --- /api/me endpoint ---
 app.get('/api/me', supabaseAuthMiddleware, async (req, res) => {
     try {
