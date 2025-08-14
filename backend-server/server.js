@@ -1247,6 +1247,7 @@ app.get('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req,
                 created_at,
                 last_maintenance_date,
                 price_per_mah, -- Include price_per_mah
+                device_mqtt_id,
                 num_free_ports,
                 num_premium_ports
             FROM 
@@ -1277,6 +1278,7 @@ app.post('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req
             longitude,
             solar_panel_wattage,
             battery_capacity_mah,
+            device_mqtt_id,
             num_free_ports,
             num_premium_ports,
             is_active,
@@ -1291,6 +1293,7 @@ app.post('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req
             longitude,
             solar_panel_wattage,
             battery_capacity_mah,
+            device_mqtt_id,
             num_free_ports,
             num_premium_ports,
             is_active,
@@ -1304,17 +1307,17 @@ app.post('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req
             await client.query('BEGIN');
             
             console.log('About to insert station with values:', [station_name, location_description, latitude, longitude, solar_panel_wattage, 
-                 battery_capacity_mah, is_active, current_battery_level, price_per_mah, num_free_ports, num_premium_ports]);
+                 battery_capacity_mah, is_active, current_battery_level, price_per_mah, device_mqtt_id, num_free_ports, num_premium_ports]);
             
             // Insert station
             const stationResult = await client.query(
                 `INSERT INTO charging_station 
                  (station_name, location_description, latitude, longitude, solar_panel_wattage, 
-                  battery_capacity_mah, is_active, current_battery_level, created_at, price_per_mah, num_free_ports, num_premium_ports)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11)
+                  battery_capacity_mah, is_active, current_battery_level, created_at, price_per_mah, device_mqtt_id, num_free_ports, num_premium_ports)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11, $12)
                  RETURNING station_id`,
                 [station_name, location_description, latitude, longitude, solar_panel_wattage, 
-                 battery_capacity_mah, is_active, current_battery_level, price_per_mah, num_free_ports, num_premium_ports]
+                 battery_capacity_mah, is_active, current_battery_level, price_per_mah, device_mqtt_id, num_free_ports, num_premium_ports]
             );
             
             const stationId = stationResult.rows[0].station_id;
@@ -1325,7 +1328,7 @@ app.post('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req
                     `INSERT INTO charging_port 
                      (station_id, port_number_in_device, is_premium, is_occupied, current_status, device_mqtt_id)
                      VALUES ($1, $2, true, false, '${PORT_STATUS.AVAILABLE}', $3)`,
-                    [stationId, i + 1, `ESP32_CHARGER_STATION_${stationId.substring(0, 3)}`]
+                    [stationId, i + 1, device_mqtt_id]
                 );
             }
             
@@ -1359,6 +1362,7 @@ app.put('/api/admin/stations/:stationId', supabaseAuthMiddleware, requireAdmin, 
             longitude,
             solar_panel_wattage,
             battery_capacity_mah,
+            device_mqtt_id,
             num_free_ports,
             num_premium_ports,
             is_active,
@@ -1370,11 +1374,11 @@ app.put('/api/admin/stations/:stationId', supabaseAuthMiddleware, requireAdmin, 
             `UPDATE charging_station
              SET station_name = $1, location_description = $2, latitude = $3, longitude = $4,
                  solar_panel_wattage = $5, battery_capacity_mah = $6, is_active = $7, 
-                 current_battery_level = $8, price_per_mah = $9, num_free_ports = $10, num_premium_ports = $11
-             WHERE station_id = $12
+                 current_battery_level = $8, price_per_mah = $9, device_mqtt_id = $10, num_free_ports = $11, num_premium_ports = $12
+             WHERE station_id = $13
              RETURNING station_id`,
             [station_name, location_description, latitude, longitude, solar_panel_wattage,
-             battery_capacity_mah, is_active, current_battery_level, price_per_mah, num_free_ports, num_premium_ports, stationId]
+             battery_capacity_mah, is_active, current_battery_level, price_per_mah, device_mqtt_id, num_free_ports, num_premium_ports, stationId]
         );
         
         if (result.rows.length === 0) {
