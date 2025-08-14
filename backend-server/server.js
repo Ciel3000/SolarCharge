@@ -2195,7 +2195,130 @@ app.get('/api/user/profile', supabaseAuthMiddleware, async (req, res) => {
     }
 });
 
+// --- Notification endpoints ---
+// Get user notifications
+app.get('/api/user/notifications', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        const { limit = 50, offset = 0 } = req.query;
+        
+        const result = await pool.query(`
+            SELECT 
+                notification_id,
+                notification_type,
+                notification_context,
+                notification_content,
+                is_read,
+                created_at
+            FROM notification 
+            WHERE user_id = $1
+            ORDER BY created_at DESC
+            LIMIT $2 OFFSET $3
+        `, [user_id, parseInt(limit), parseInt(offset)]);
+        
+        res.json(result.rows);
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Notifications fetched for user ${user_id}`);
+    } catch (err) {
+        console.error('API Error fetching notifications:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching notifications for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to fetch notifications.' });
+    }
+});
 
+// Get unread notification count
+app.get('/api/user/notifications/unread-count', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        
+        const result = await pool.query(`
+            SELECT COUNT(*) as unread_count
+            FROM notification 
+            WHERE user_id = $1 AND is_read = false
+        `, [user_id]);
+        
+        res.json({ unreadCount: parseInt(result.rows[0].unread_count) });
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Unread notification count fetched for user ${user_id}`);
+    } catch (err) {
+        console.error('API Error fetching unread count:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching unread count for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to fetch unread count.' });
+    }
+});
+
+// Mark notification as read
+app.put('/api/user/notifications/:notificationId/read', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        const { notificationId } = req.params;
+        
+        const result = await pool.query(`
+            UPDATE notification 
+            SET is_read = true, updated_at = NOW()
+            WHERE notification_id = $1 AND user_id = $2
+            RETURNING *
+        `, [notificationId, user_id]);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Notification not found' });
+        }
+        
+        res.json(result.rows[0]);
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Notification marked as read for user ${user_id}`);
+    } catch (err) {
+        console.error('API Error marking notification as read:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error marking notification as read for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to mark notification as read.' });
+    }
+});
+
+// Mark all notifications as read
+app.put('/api/user/notifications/mark-all-read', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        
+        const result = await pool.query(`
+            UPDATE notification 
+            SET is_read = true, updated_at = NOW()
+            WHERE user_id = $1 AND is_read = false
+            RETURNING notification_id
+        `, [user_id]);
+        
+        res.json({ 
+            message: 'All notifications marked as read',
+            updatedCount: result.rows.length 
+        });
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `All notifications marked as read for user ${user_id}`);
+    } catch (err) {
+        console.error('API Error marking all notifications as read:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error marking all notifications as read for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to mark all notifications as read.' });
+    }
+});
+
+// Delete notification
+app.delete('/api/user/notifications/:notificationId', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        const { notificationId } = req.params;
+        
+        const result = await pool.query(`
+            DELETE FROM notification 
+            WHERE notification_id = $1 AND user_id = $2
+            RETURNING notification_id
+        `, [notificationId, user_id]);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Notification not found' });
+        }
+        
+        res.json({ message: 'Notification deleted successfully' });
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Notification deleted for user ${user_id}`);
+    } catch (err) {
+        console.error('API Error deleting notification:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error deleting notification for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to delete notification.' });
+    }
+});
 
 // Error handling middleware (catches unhandled errors in async routes)
 app.use((err, req, res, next) => {

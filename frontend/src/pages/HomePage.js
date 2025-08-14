@@ -136,31 +136,70 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
     let deviceName = 'Unknown Device';
     let deviceModel = 'Unknown Model';
     
-    // More comprehensive device detection
+    // Enhanced mobile device detection
     if (/Android/i.test(userAgent)) {
       deviceType = 'phone';
       deviceName = 'Android Device';
       
-      // Try to extract specific device model
+      // Try multiple patterns for Android device detection
+      let deviceInfo = '';
+      
+      // Pattern 1: Standard Android build pattern
       const androidMatch = userAgent.match(/Android\s+\d+\.?\d*;\s*(.+?)\s+build/i);
       if (androidMatch) {
-        const deviceInfo = androidMatch[1].trim();
-        if (deviceInfo.includes('SM-') || deviceInfo.includes('Samsung')) {
+        deviceInfo = androidMatch[1].trim();
+      }
+      
+      // Pattern 2: Alternative pattern for some mobile browsers
+      if (!deviceInfo) {
+        const altMatch = userAgent.match(/Linux;\s*Android\s+\d+\.?\d*;\s*(.+?)\s+Build/i);
+        if (altMatch) {
+          deviceInfo = altMatch[1].trim();
+        }
+      }
+      
+      // Pattern 3: Chrome mobile pattern
+      if (!deviceInfo) {
+        const chromeMatch = userAgent.match(/Mobile.*Android\s+\d+\.?\d*;\s*(.+?)\s+AppleWebKit/i);
+        if (chromeMatch) {
+          deviceInfo = chromeMatch[1].trim();
+        }
+      }
+      
+      // Process device info if found
+      if (deviceInfo) {
+        if (deviceInfo.includes('SM-') || deviceInfo.includes('Samsung') || deviceInfo.includes('GT-')) {
           deviceName = 'Samsung Galaxy';
           deviceModel = deviceInfo;
-        } else if (deviceInfo.includes('Pixel')) {
+        } else if (deviceInfo.includes('Pixel') || deviceInfo.includes('G')) {
           deviceName = 'Google Pixel';
           deviceModel = deviceInfo;
-        } else if (deviceInfo.includes('OnePlus')) {
+        } else if (deviceInfo.includes('OnePlus') || deviceInfo.includes('ONEPLUS')) {
           deviceName = 'OnePlus';
           deviceModel = deviceInfo;
-        } else if (deviceInfo.includes('Xiaomi') || deviceInfo.includes('Redmi')) {
+        } else if (deviceInfo.includes('Xiaomi') || deviceInfo.includes('Redmi') || deviceInfo.includes('MI ')) {
           deviceName = 'Xiaomi';
+          deviceModel = deviceInfo;
+        } else if (deviceInfo.includes('HUAWEI') || deviceInfo.includes('Huawei')) {
+          deviceName = 'Huawei';
+          deviceModel = deviceInfo;
+        } else if (deviceInfo.includes('OPPO') || deviceInfo.includes('Oppo')) {
+          deviceName = 'OPPO';
+          deviceModel = deviceInfo;
+        } else if (deviceInfo.includes('vivo') || deviceInfo.includes('Vivo')) {
+          deviceName = 'Vivo';
+          deviceModel = deviceInfo;
+        } else if (deviceInfo.includes('realme') || deviceInfo.includes('Realme')) {
+          deviceName = 'Realme';
           deviceModel = deviceInfo;
         } else {
           deviceModel = deviceInfo;
         }
+      } else {
+        // Fallback for Android without specific device info
+        deviceModel = 'Android Mobile';
       }
+      
     } else if (/iPhone|iPad|iPod/i.test(userAgent)) {
       if (/iPad/i.test(userAgent)) {
         deviceType = 'tablet';
@@ -180,6 +219,7 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
       } else {
         deviceModel = 'iOS Device';
       }
+      
     } else if (/Windows/i.test(userAgent)) {
       deviceType = 'desktop';
       deviceName = 'Windows PC';
@@ -242,9 +282,20 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
 
   // Function to get battery information (if available)
   const getBatteryInfo = async () => {
+    // Check if Battery API is available
     if ('getBattery' in navigator) {
       try {
         const battery = await navigator.getBattery();
+        
+        // Add event listeners for battery changes
+        battery.addEventListener('levelchange', () => {
+          console.log('Battery level changed:', Math.round(battery.level * 100));
+        });
+        
+        battery.addEventListener('chargingchange', () => {
+          console.log('Charging status changed:', battery.charging);
+        });
+        
         return {
           level: Math.round(battery.level * 100),
           charging: battery.charging,
@@ -252,24 +303,49 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
           dischargingTime: battery.dischargingTime
         };
       } catch (error) {
-        console.log('Battery API not available');
+        console.log('Battery API error:', error.message);
         return null;
       }
     }
-    return null;
+    
+    // Fallback: Try to detect if device is likely charging based on other indicators
+    const fallbackCharging = () => {
+      // Some mobile browsers might not support Battery API but we can make educated guesses
+      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+      if (isMobile) {
+        // For mobile devices, we'll assume not charging as default
+        // This is a conservative approach since we can't reliably detect it
+        return false;
+      }
+      return false;
+    };
+    
+    console.log('Battery API not available, using fallback');
+    return {
+      level: null, // We can't determine battery level without the API
+      charging: fallbackCharging(),
+      chargingTime: null,
+      dischargingTime: null
+    };
   };
 
   // Effect to detect and store device information
   useEffect(() => {
     if (subscription && session) {
       const deviceInfo = detectDeviceInfo();
+      console.log('Detected device info:', deviceInfo);
+      
       getBatteryInfo().then(batteryInfo => {
+        console.log('Battery info:', batteryInfo);
+        
         const device = {
           ...deviceInfo,
           batteryLevel: batteryInfo?.level || null,
           isCharging: batteryInfo?.charging || false,
           batteryCapacity: null // We don't have this info from browser APIs
         };
+        
+        console.log('Final device object:', device);
         setUserDevices([device]);
         
         // Save device information to database

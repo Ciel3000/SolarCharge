@@ -4,6 +4,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom'; // IMPORT: React Router
 import { AuthProvider, useAuth } from './contexts/AuthContext'; // IMPORT: Use the AuthContext
+import { NotificationProvider } from './contexts/NotificationContext'; // IMPORT: Use the NotificationContext
 import ErrorBoundary from './components/ErrorBoundary'; // IMPORT: Error Boundary
 import PageVisibilityDebug from './components/PageVisibilityDebug'; // IMPORT: Debug component
 
@@ -474,7 +475,9 @@ function App() {
     <ErrorBoundary>
       <Router>
         <AuthProvider>
-          <AppContent />
+          <NotificationProvider>
+            <AppContent />
+          </NotificationProvider>
         </AuthProvider>
       </Router>
     </ErrorBoundary>

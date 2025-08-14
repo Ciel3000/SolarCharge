@@ -2,6 +2,7 @@
 import React, { useState, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom'; // Import Link, useLocation, useNavigate
 import { useAuth } from '../contexts/AuthContext';
+import NotificationBell from './NotificationBell';
 
 // Remove currentPage from props as we'll use useLocation().pathname
 function Navigation({ navigateTo, handleSignOut }) {
@@ -147,7 +148,7 @@ function Navigation({ navigateTo, handleSignOut }) {
               </div>
             ) : (
               <div className="flex items-center space-x-4">
-                <span className="text-gray-600 text-sm hidden sm:inline">Welcome, {user?.email?.split('@')[0] || 'User'}</span>
+                <NotificationBell />
                 <button
                   onClick={(e) => { 
                     e.preventDefault();
@@ -229,6 +230,9 @@ function Navigation({ navigateTo, handleSignOut }) {
                 <>
                   <div className="px-3 py-2 text-gray-600 text-sm">
                     Welcome, {user?.email?.split('@')[0] || 'User'}
+                  </div>
+                  <div className="px-3 py-2">
+                    <NotificationBell />
                   </div>
                   <button
                     onClick={(e) => { 
