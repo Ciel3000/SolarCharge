@@ -205,7 +205,7 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
                 <div className="w-full mb-6">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-sm text-gray-600 font-medium">Energy Consumed (This Month)</span>
-                    <span className="text-sm text-gray-700 font-bold">{usage.totalEnergyKWH} kWh</span>
+                    <span className="text-sm text-gray-700 font-bold">{usage.totalEnergyKWH} Ah</span>
                   </div>
                   {(() => {
                     const daysSoFar = new Date().getDate();
