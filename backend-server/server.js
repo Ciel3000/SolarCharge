@@ -377,71 +377,64 @@ mqttClient.on('message', async (topic, message) => {
         // --- Handle charger/usage topic (for consumption data and session management) ---
         if (topic.startsWith(MQTT_TOPICS.USAGE)) {
             const { consumption, timestamp, charger_state } = payload;
-            const currentTimestamp = new Date(timestamp); // Convert milliseconds to Date object
+            const currentTimestamp = new Date(timestamp);
 
             console.log(`MQTT: Processing usage message for ${sessionKey}. Charger state: ${charger_state}, Consumption: ${consumption}W, Session ID: ${currentSessionId}`);
 
-            if (charger_state === CHARGER_STATES.ON) { // Only insert consumption if charger is ON
-                if (currentSessionId) { // Only insert if an active session is tracked (created by API)
-                    // Validate consumption value to prevent negative or unreasonable readings
-                    const validatedConsumption = validateConsumption(consumption);
-                    
-                    console.log(`MQTT: Validated consumption for ${sessionKey}: ${validatedConsumption}W (original: ${consumption}W)`);
-                    
-                    if (validatedConsumption > 0) { // Only record if consumption is positive
-                        await pool.query(
-                            'INSERT INTO consumption_data (session_id, device_id, consumption_watts, timestamp, charger_state) VALUES ($1, $2, $3, TO_TIMESTAMP($4 / 1000.0), $5)',
-                            [currentSessionId, deviceId, validatedConsumption, timestamp, charger_state]
+            // ALWAYS store consumption data regardless of session state
+            const validatedConsumption = validateConsumption(consumption);
+            
+            if (validatedConsumption > 0) {
+                // Store consumption data with port_number for easier querying
+                await pool.query(
+                    'INSERT INTO consumption_data (session_id, device_id, port_number, consumption_watts, timestamp, charger_state) VALUES ($1, $2, $3, $4, TO_TIMESTAMP($5 / 1000.0), $6)',
+                    [currentSessionId, deviceId, portNumberInDevice, validatedConsumption, timestamp, charger_state]
+                );
+                console.log(`MQTT: Stored consumption for ${deviceId} Port ${portNumberInDevice}: ${validatedConsumption}W`);
+
+                // If we have an active session, update session totals
+                if (currentSessionId) {
+                    const intervalSeconds = 10; // ESP32 publishes every 10 seconds
+                    const kwhIncrement = (validatedConsumption * intervalSeconds) / (1000 * 3600); // Watts * seconds / (1000W/kW * 3600s/hr)
+
+                    // Calculate mAh Increment (assuming a nominal charging voltage, e.g., 12V for the battery)
+                    const currentAmps = validatedConsumption / NOMINAL_CHARGING_VOLTAGE_DC; // Amps = Watts / Volts
+                    const mAhIncrement = (currentAmps * 1000) * (intervalSeconds / 3600); // mAh = Amps * 1000 * (seconds / 3600)
+
+                    console.log(`MQTT: Energy increment for ${sessionKey}: ${kwhIncrement.toFixed(6)} kWh, ${mAhIncrement.toFixed(2)} mAh`);
+
+                    await pool.query(
+                        'UPDATE charging_session SET energy_consumed_kwh = COALESCE(energy_consumed_kwh, 0) + $1, energy_consumed_mah = COALESCE(energy_consumed_mah, 0) + $2, total_mah_consumed = COALESCE(total_mah_consumed, 0) + $3, last_status_update = $4 WHERE session_id = $5',
+                        [kwhIncrement, mAhIncrement, mAhIncrement, currentTimestamp, currentSessionId]
+                    );
+
+                    // Reset inactivity timer on new consumption data
+                    if (activePortTimers[sessionKey]) {
+                        clearTimeout(activePortTimers[sessionKey].timerId);
+                        activePortTimers[sessionKey].lastConsumptionTime = Date.now();
+                        activePortTimers[sessionKey].timerId = setTimeout(
+                            () => handleInactivityTurnOff(deviceId, portNumberInDevice, actualPortId, currentSessionId),
+                            INACTIVITY_TIMEOUT_SECONDS * 1000
                         );
-                        console.log(`MQTT: Stored consumption for ${deviceId} Port ${portNumberInDevice} in session ${currentSessionId}: ${validatedConsumption}W`);
-                        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.MQTT, `Consumption: ${validatedConsumption}W for session ${currentSessionId}`);
-
-                        const intervalSeconds = 10; // ESP32 publishes every 10 seconds
-                        const kwhIncrement = (validatedConsumption * intervalSeconds) / (1000 * 3600); // Watts * seconds / (1000W/kW * 3600s/hr)
-
-                        // --- Calculate mAh Increment (assuming a nominal charging voltage, e.g., 12V for the battery) ---
-                        const currentAmps = validatedConsumption / NOMINAL_CHARGING_VOLTAGE_DC; // Amps = Watts / Volts
-                        const mAhIncrement = (currentAmps * 1000) * (intervalSeconds / 3600); // mAh = Amps * 1000 * (seconds / 3600)
-
-                        console.log(`MQTT: Energy increment for ${sessionKey}: ${kwhIncrement.toFixed(6)} kWh, ${mAhIncrement.toFixed(2)} mAh`);
-
-                        await pool.query(
-                            'UPDATE charging_session SET energy_consumed_kwh = COALESCE(energy_consumed_kwh, 0) + $1, energy_consumed_mah = COALESCE(energy_consumed_mah, 0) + $2, total_mah_consumed = COALESCE(total_mah_consumed, 0) + $3, last_status_update = $4 WHERE session_id = $5',
-                            [kwhIncrement, mAhIncrement, mAhIncrement, currentTimestamp, currentSessionId]
-                        );
-
-                        // --- Reset inactivity timer on new consumption data ---
-                        if (activePortTimers[sessionKey]) {
-                            clearTimeout(activePortTimers[sessionKey].timerId);
-                            activePortTimers[sessionKey].lastConsumptionTime = Date.now();
-                            activePortTimers[sessionKey].timerId = setTimeout(
+                        console.log(`MQTT: Timer reset for ${sessionKey} due to new consumption. Timer set for ${INACTIVITY_TIMEOUT_SECONDS} seconds.`);
+                    } else {
+                        console.warn(`MQTT: No active timer found for ${sessionKey} when consumption received. This might indicate a session tracking issue.`);
+                        // Try to reinitialize the timer if it's missing but we have a valid session
+                        activePortTimers[sessionKey] = {
+                            timerId: setTimeout(
                                 () => handleInactivityTurnOff(deviceId, portNumberInDevice, actualPortId, currentSessionId),
                                 INACTIVITY_TIMEOUT_SECONDS * 1000
-                            );
-                            console.log(`MQTT: Timer reset for ${sessionKey} due to new consumption. Timer set for ${INACTIVITY_TIMEOUT_SECONDS} seconds.`);
-                        } else {
-                            console.warn(`MQTT: No active timer found for ${sessionKey} when consumption received. This might indicate a session tracking issue.`);
-                            // Try to reinitialize the timer if it's missing but we have a valid session
-                            activePortTimers[sessionKey] = {
-                                timerId: setTimeout(
-                                    () => handleInactivityTurnOff(deviceId, portNumberInDevice, actualPortId, currentSessionId),
-                                    INACTIVITY_TIMEOUT_SECONDS * 1000
-                                ),
-                                lastConsumptionTime: Date.now()
-                            };
-                            console.log(`MQTT: Reinitialized timer for ${sessionKey} due to missing timer.`);
-                        }
-                    } else {
-                        console.warn(`MQTT: Ignoring invalid consumption value (${consumption}W) for ${deviceId} Port ${portNumberInDevice}`);
-                        logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.MQTT, `Invalid consumption value (${consumption}W) for ${sessionKey}`);
+                            ),
+                            lastConsumptionTime: Date.now()
+                        };
+                        console.log(`MQTT: Reinitialized timer for ${sessionKey} due to missing timer.`);
                     }
                 } else {
-                    console.warn(`MQTT: Charger ON for ${deviceId} Port ${portNumberInDevice} but no active session found in memory. Consumption insert skipped.`);
-                    logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.MQTT, `Charger ON for ${sessionKey} but no active session tracked`);
+                    console.log(`MQTT: Consumption stored for ${deviceId} Port ${portNumberInDevice} but no active session. Data preserved for later linking.`);
                 }
-            } else if (charger_state === CHARGER_STATES.OFF) {
-                // No session ending here. Session ending is handled by API POST /control or inactivity timer.
-                console.log(`MQTT: Received OFF state for ${deviceId} Port ${portNumberInDevice}. Consumption not logged for OFF state.`);
+            } else {
+                console.warn(`MQTT: Ignoring invalid consumption value (${consumption}W) for ${deviceId} Port ${portNumberInDevice}`);
+                logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.MQTT, `Invalid consumption value (${consumption}W) for ${sessionKey}`);
             }
         }
 
@@ -597,7 +590,6 @@ app.get('/api/devices/status', async (req, res) => {
                 cp.device_mqtt_id, cp.port_number_in_device
         `, [SESSION_STATUS.ACTIVE]);
         
-        console.log('Backend: Device status data being sent:', result.rows);
         res.json(result.rows);
     } catch (error) {
         console.error('Error fetching device status:', error);
@@ -653,7 +645,6 @@ app.get('/api/devices/consumption', async (req, res) => {
             };
         });
         
-        console.log('Backend: Consumption data being sent:', consumptionData);
         res.json(consumptionData);
     } catch (error) {
         console.error('Error fetching device consumption:', error);
@@ -684,14 +675,13 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
         const actualPortId = portIdResult.rows[0]?.port_id;
         const isPremiumPort = portIdResult.rows[0]?.is_premium;
 
-
         if (!actualPortId) {
             console.warn(`API: Port not found for deviceId ${deviceId} and portNumber ${internalPortNumber}.`);
             logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `Control command for non-existent port: Device ${deviceId}, Port ${internalPortNumber}`);
             return res.status(404).json({ error: `Port ${internalPortNumber} not found for device ${deviceId}.` });
         }
 
-        // Session Management Logic (Moved from MQTT handler to API handler)
+        // Session Management Logic
         const sessionKey = `${deviceId}_${internalPortNumber}`;
         let currentSessionId = activeChargerSessions[sessionKey];
 
@@ -702,7 +692,6 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
         } else { // command === CHARGER_STATES.OFF
             newPortStatusForDb = PORT_STATUS.AVAILABLE;
         }
-
 
         if (command === CHARGER_STATES.ON) {
             if (!user_id || !station_id) {
@@ -720,12 +709,11 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                 // No active session found in DB, create a new one
                 const sessionResult = await pool.query(
                     'INSERT INTO charging_session (user_id, port_id, station_id, start_time, session_status, is_premium, energy_consumed_kwh, total_mah_consumed, last_status_update) VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7, NOW()) RETURNING session_id',
-                    [user_id, actualPortId, station_id, SESSION_STATUS.ACTIVE, isPremiumPort, 0, 0] // Initialize energy and mAh consumed to 0
+                    [user_id, actualPortId, station_id, SESSION_STATUS.ACTIVE, isPremiumPort, 0, 0]
                 );
                 currentSessionId = sessionResult.rows[0].session_id;
                 activeChargerSessions[sessionKey] = currentSessionId;
                 console.log(`API: Started new charging session ${currentSessionId} for port ${actualPortId} (User: ${user_id})`);
-                console.log(`API: Session tracking map updated: ${sessionKey} = ${currentSessionId}`);
                 logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `New charging session ${currentSessionId} started for ${sessionKey} by user ${user_id}`);
             } else {
                 // Session already active
@@ -749,7 +737,7 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                 logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Resuming active session ${currentSessionId} for ${sessionKey} by user ${user_id}`);
             }
 
-            // --- Start/Reset inactivity timer when charger is turned ON via API ---
+            // Start/Reset inactivity timer when charger is turned ON via API
             if (activePortTimers[sessionKey]) {
                 clearTimeout(activePortTimers[sessionKey].timerId);
                 console.log(`API: Cleared existing timer for ${sessionKey}`);
@@ -759,16 +747,16 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                     () => handleInactivityTurnOff(deviceId, internalPortNumber, actualPortId, currentSessionId),
                     INACTIVITY_TIMEOUT_SECONDS * 1000
                 ),
-                lastConsumptionTime: Date.now() // Initialize last consumption time
+                lastConsumptionTime: Date.now()
             };
             console.log(`API: Inactivity timer started for ${sessionKey}. Timer set for ${INACTIVITY_TIMEOUT_SECONDS} seconds. Session ID: ${currentSessionId}`);
 
         } else if (command === CHARGER_STATES.OFF) {
             // Check if the session is currently active by this user
-                    const sessionCheck = await pool.query(
-            "SELECT session_id, user_id, energy_consumed_kwh, energy_consumed_mah FROM charging_session WHERE port_id = $1 AND session_status = $2",
-            [actualPortId, SESSION_STATUS.ACTIVE]
-        );
+            const sessionCheck = await pool.query(
+                "SELECT session_id, user_id, energy_consumed_kwh, energy_consumed_mah FROM charging_session WHERE port_id = $1 AND session_status = $2",
+                [actualPortId, SESSION_STATUS.ACTIVE]
+            );
 
             if (sessionCheck.rows.length > 0) {
                 const dbSession = sessionCheck.rows[0];
@@ -802,7 +790,7 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                 delete activeChargerSessions[sessionKey]; // Remove from tracking map
                 console.log(`API: Removed session ${currentSessionId} from tracking map for ${sessionKey}`);
 
-                // --- Clear inactivity timer when charger is turned OFF via API ---
+                // Clear inactivity timer when charger is turned OFF via API
                 if (activePortTimers[sessionKey]) {
                     clearTimeout(activePortTimers[sessionKey].timerId);
                     delete activePortTimers[sessionKey];
@@ -816,14 +804,12 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
             }
         }
 
-        // --- Update charging_port table for real-time status display in the main schema
-        // This is done after session management, using the `newPortStatusForDb`
+        // Update charging_port table for real-time status display in the main schema
         await pool.query(
             'UPDATE charging_port SET current_status = $1, is_occupied = $2, last_status_update = NOW() WHERE port_id = $3',
             [newPortStatusForDb, (newPortStatusForDb === PORT_STATUS.CHARGING_FREE || newPortStatusForDb === PORT_STATUS.CHARGING_PREMIUM || newPortStatusForDb === PORT_STATUS.OCCUPIED), actualPortId]
         );
         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Port ${actualPortId} status set to '${newPortStatusForDb}' by API command '${command}'.`);
-
 
         // Publish MQTT command (payload remains the same for ESP32)
         const mqttPayload = JSON.stringify({ command: command, port_number: internalPortNumber });
@@ -841,14 +827,14 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                 deviceId, 
                 portNumber: internalPortNumber, 
                 command, 
-                sessionId: currentSessionId // Might be null if OFF command for no active session
+                sessionId: currentSessionId
             });
         });
 
     } catch (error) {
         console.error('Error processing control command:', error);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error processing control command for ${deviceId}/${portNumber}: ${error.message}`);
-        res.status(500).json({ error: `Failed to process control command: ${error.message}` });
+        res.status(500).json({ error: 'Failed to process control command' });
     }
 });
 
@@ -1262,9 +1248,8 @@ app.get('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req,
                 s.device_mqtt_id, cp.device_mqtt_id, s.num_free_ports, s.num_premium_ports
             ORDER BY 
                 s.created_at DESC
-        `);
+        `, [SESSION_STATUS.ACTIVE]);
         
-        console.log('Admin stations query result:', result.rows);
         res.json(result.rows);
         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, 'Admin stations list fetched successfully', req.user.user_id);
     } catch (err) {
@@ -2790,3 +2775,86 @@ function setupStaleSessionChecker() {
 
 // Call this function after the database connection is established
 setupStaleSessionChecker();
+
+// Get active sessions for a specific user
+app.get('/api/sessions/active/user', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        
+        const result = await pool.query(`
+            SELECT 
+                cs.session_id,
+                cs.start_time,
+                cs.total_mah_consumed,
+                cs.energy_consumed_kwh,
+                cp.port_number_in_device,
+                cp.device_mqtt_id,
+                s.station_name,
+                s.station_id
+            FROM charging_session cs
+            JOIN charging_port cp ON cs.port_id = cp.port_id
+            JOIN charging_station s ON cs.station_id = s.station_id
+            WHERE cs.user_id = $1 AND cs.session_status = $2
+            ORDER BY cs.start_time DESC
+        `, [user_id, SESSION_STATUS.ACTIVE]);
+        
+        res.json(result.rows);
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Active sessions fetched for user ${user_id}`);
+    } catch (err) {
+        console.error('Error fetching active user sessions:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching active sessions for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to fetch active sessions' });
+    }
+});
+
+// Get consumption data for a specific station and port
+app.get('/api/stations/:stationId/consumption', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { stationId } = req.params;
+        
+        const result = await pool.query(`
+            SELECT 
+                cp.port_number_in_device,
+                cp.device_mqtt_id,
+                COALESCE(cs.total_mah_consumed, 0) as total_mah,
+                COALESCE(cs.energy_consumed_kwh, 0) as energy_kwh,
+                cs.session_status,
+                cs.last_status_update as timestamp,
+                -- Get real-time current consumption from latest consumption_data
+                (SELECT cd.consumption_watts 
+                 FROM consumption_data cd 
+                 WHERE cd.device_id = cp.device_mqtt_id 
+                 AND cd.port_number = cp.port_number_in_device
+                 ORDER BY cd.timestamp DESC 
+                 LIMIT 1) as current_consumption_watts
+            FROM charging_port cp
+            LEFT JOIN charging_session cs ON cp.port_id = cs.port_id 
+                AND cs.session_status = 'active'
+            WHERE cp.station_id = $1 AND cp.is_premium = true
+            ORDER BY cp.port_number_in_device
+        `, [stationId]);
+        
+        // Transform the data to include current consumption calculation
+        const consumptionData = result.rows.map(row => {
+            const currentWatts = Number(row.current_consumption_watts) || 0;
+            const currentConsumption = currentWatts > 0 ? (currentWatts / NOMINAL_CHARGING_VOLTAGE_DC) * 1000 : 0;
+            
+            return {
+                port_number: row.port_number_in_device,
+                device_id: row.device_mqtt_id,
+                total_mah: Number(row.total_mah) || 0,
+                current_consumption: currentConsumption,
+                energy_kwh: Number(row.energy_kwh) || 0,
+                session_status: row.session_status,
+                timestamp: row.timestamp
+            };
+        });
+        
+        res.json(consumptionData);
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Station consumption data fetched for ${stationId}`);
+    } catch (err) {
+        console.error('Error fetching station consumption:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching consumption for station ${stationId}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to fetch consumption data' });
+    }
+});
