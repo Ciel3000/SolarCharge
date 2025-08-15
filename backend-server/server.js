@@ -2790,3 +2790,53 @@ function setupStaleSessionChecker() {
 
 // Call this function after the database connection is established
 setupStaleSessionChecker();
+
+// Get station details for regular users (no admin required)
+app.get('/api/stations/:stationId', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { stationId } = req.params;
+        
+        const result = await pool.query(`
+            SELECT 
+                s.station_id, 
+                s.station_name, 
+                s.location_description, 
+                s.latitude, 
+                s.longitude,
+                s.solar_panel_wattage,
+                s.battery_capacity_mah,
+                s.current_battery_level,
+                s.is_active,
+                s.created_at,
+                s.last_maintenance_date,
+                s.price_per_mah,
+                COALESCE(s.device_mqtt_id, cp.device_mqtt_id) as device_mqtt_id,
+                s.num_free_ports,
+                s.num_premium_ports,
+                COUNT(cp.port_id) as available_premium_ports
+            FROM 
+                charging_station s
+            LEFT JOIN charging_port cp ON s.station_id = cp.station_id AND cp.is_premium = true
+            WHERE s.station_id = $1
+            GROUP BY 
+                s.station_id, s.station_name, s.location_description, s.latitude, s.longitude,
+                s.solar_panel_wattage, s.battery_capacity_mah, s.current_battery_level,
+                s.is_active, s.created_at, s.last_maintenance_date, s.price_per_mah,
+                s.device_mqtt_id, cp.device_mqtt_id, s.num_free_ports, s.num_premium_ports
+        `, [stationId]);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Station not found' });
+        }
+        
+        console.log('User station query result:', result.rows[0]);
+        res.json(result.rows[0]);
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Station details fetched for ${stationId}`, req.user.user_id);
+    } catch (err) {
+        console.error('User station error:', err.message);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `User station error: ${err.message}`, req.user.user_id);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+//Get all stations
