@@ -525,23 +525,23 @@ app.get('/api/stations', async (req, res) => {
     }
 });
 
-//Get a specific station by stationId (DEPRECATED - use the authenticated version below)
-// app.get('/api/stations/:stationId', async (req, res) => {
-//     const { stationId } = req.params;
-//     try {
-//         const result = await pool.query(
-//             `SELECT * FROM charging_station WHERE station_id = $1`,
-//             [stationId]
-//         );
-//         if (result.rows.length === 0) {
-//             return res.status(404).json({ error: 'Station not found' });
-//         }
-//         res.json(result.rows[0]);
-//     } catch (error) {
-//         console.error(`Error fetching station ${stationId}:`, error.message);
-//         res.status(500).json({ error: 'Failed to fetch station details' });
-//     }
-// });
+//Get a specific station by stationId
+app.get('/api/stations/:stationId', async (req, res) => {
+    const { stationId } = req.params;
+    try {
+        const result = await pool.query(
+            `SELECT * FROM charging_station WHERE station_id = $1`,
+            [stationId]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Station not found' });
+        }
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error(`Error fetching station ${stationId}:`, error.message);
+        res.status(500).json({ error: 'Failed to fetch station details' });
+    }
+});
 
 // Get consumption data for a specific device (station) AND internal port number
 app.get('/api/devices/:deviceId/:portNumber/consumption', async (req, res) => {
@@ -1248,7 +1248,7 @@ app.get('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req,
                 s.created_at,
                 s.last_maintenance_date,
                 s.price_per_mah,
-                COALESCE(s.device_mqtt_id, cp.device_mqtt_id) as device_mqtt_id,
+                COALESCE(s.device_mqtt_id, cp.device_mqtt_id, 'ESP32_CHARGER_STATION_001') as device_mqtt_id,
                 s.num_free_ports,
                 s.num_premium_ports,
                 COUNT(cp.port_id) as available_premium_ports
@@ -2790,82 +2790,3 @@ function setupStaleSessionChecker() {
 
 // Call this function after the database connection is established
 setupStaleSessionChecker();
-
-// Get station details for regular users (no admin required)
-app.get('/api/stations/:stationId', supabaseAuthMiddleware, async (req, res) => {
-    try {
-        const { stationId } = req.params;
-        
-        const result = await pool.query(`
-            SELECT 
-                s.station_id, 
-                s.station_name, 
-                s.location_description, 
-                s.latitude, 
-                s.longitude,
-                s.solar_panel_wattage,
-                s.battery_capacity_mah,
-                s.current_battery_level,
-                s.is_active,
-                s.created_at,
-                s.last_maintenance_date,
-                s.price_per_mah,
-                COALESCE(s.device_mqtt_id, cp.device_mqtt_id) as device_mqtt_id,
-                s.num_free_ports,
-                s.num_premium_ports,
-                COUNT(cp.port_id) as available_premium_ports
-            FROM 
-                charging_station s
-            LEFT JOIN charging_port cp ON s.station_id = cp.station_id AND cp.is_premium = true
-            WHERE s.station_id = $1
-            GROUP BY 
-                s.station_id, s.station_name, s.location_description, s.latitude, s.longitude,
-                s.solar_panel_wattage, s.battery_capacity_mah, s.current_battery_level,
-                s.is_active, s.created_at, s.last_maintenance_date, s.price_per_mah,
-                s.device_mqtt_id, cp.device_mqtt_id, s.num_free_ports, s.num_premium_ports
-        `, [stationId]);
-        
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Station not found' });
-        }
-        
-        console.log('User station query result:', result.rows[0]);
-        res.json(result.rows[0]);
-        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Station details fetched for ${stationId}`, req.user.user_id);
-    } catch (err) {
-        console.error('User station error:', err.message);
-        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `User station error: ${err.message}`, req.user.user_id);
-        res.status(500).json({ error: 'Server error' });
-    }
-});
-
-// Get consumption data for a specific station (simplified for frontend)
-app.get('/api/stations/:stationId/consumption', supabaseAuthMiddleware, async (req, res) => {
-    try {
-        const { stationId } = req.params;
-        
-        // Get consumption data for the station's ports
-        const result = await pool.query(`
-            SELECT 
-                cp.port_number_in_device,
-                cp.device_mqtt_id,
-                COALESCE(cs.total_mah_consumed, 0) as total_mah,
-                COALESCE(cs.energy_consumed_kwh, 0) as energy_kwh,
-                cs.session_status,
-                cs.last_status_update as timestamp
-            FROM charging_port cp
-            LEFT JOIN charging_session cs ON cp.port_id = cs.port_id 
-                AND cs.session_status = 'active'
-            WHERE cp.station_id = $1 AND cp.is_premium = true
-            ORDER BY cp.port_number_in_device
-        `, [stationId]);
-        
-        console.log('Station consumption data:', result.rows);
-        res.json(result.rows);
-        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Station consumption fetched for ${stationId}`, req.user.user_id);
-    } catch (err) {
-        console.error('Station consumption error:', err.message);
-        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Station consumption error: ${err.message}`, req.user.user_id);
-        res.status(500).json({ error: 'Server error' });
-    }
-});
