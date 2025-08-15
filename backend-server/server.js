@@ -1236,27 +1236,35 @@ app.get('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req,
     try {
         const result = await pool.query(`
             SELECT 
-                station_id, 
-                station_name, 
-                location_description, 
-                latitude, 
-                longitude,
-                solar_panel_wattage,
-                battery_capacity_mah,
-                current_battery_level,
-                is_active,
-                created_at,
-                last_maintenance_date,
-                price_per_mah, -- Include price_per_mah
-                device_mqtt_id,
-                num_free_ports,
-                num_premium_ports
+                s.station_id, 
+                s.station_name, 
+                s.location_description, 
+                s.latitude, 
+                s.longitude,
+                s.solar_panel_wattage,
+                s.battery_capacity_mah,
+                s.current_battery_level,
+                s.is_active,
+                s.created_at,
+                s.last_maintenance_date,
+                s.price_per_mah,
+                COALESCE(s.device_mqtt_id, cp.device_mqtt_id) as device_mqtt_id,
+                s.num_free_ports,
+                s.num_premium_ports,
+                COUNT(cp.port_id) as available_premium_ports
             FROM 
                 charging_station s
+            LEFT JOIN charging_port cp ON s.station_id = cp.station_id AND cp.is_premium = true
+            GROUP BY 
+                s.station_id, s.station_name, s.location_description, s.latitude, s.longitude,
+                s.solar_panel_wattage, s.battery_capacity_mah, s.current_battery_level,
+                s.is_active, s.created_at, s.last_maintenance_date, s.price_per_mah,
+                s.device_mqtt_id, cp.device_mqtt_id, s.num_free_ports, s.num_premium_ports
             ORDER BY 
-                created_at DESC
+                s.created_at DESC
         `);
         
+        console.log('Admin stations query result:', result.rows);
         res.json(result.rows);
         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, 'Admin stations list fetched successfully', req.user.user_id);
     } catch (err) {
