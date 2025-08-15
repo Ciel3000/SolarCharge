@@ -575,26 +575,29 @@ app.get('/api/devices/:deviceId/:portNumber/consumption', async (req, res) => {
 // Get all current device/port statuses
 app.get('/api/devices/status', async (req, res) => {
     try {
-        // JOIN current_device_status with charging_port to get port_number_in_device
-        // LEFT JOIN charging_session to get total_mah_consumed for active sessions
+        // Use LEFT JOIN to include all charging ports, even if they don't have status data yet
         const result = await pool.query(`
             SELECT
-                cds.device_id,
-                cds.port_id,
-                cds.status_message,
-                cds.charger_state,
-                cds.last_update,
+                cp.device_mqtt_id as device_id,
+                cp.port_id,
+                COALESCE(cds.status_message, 'online') as status_message,
+                COALESCE(cds.charger_state, 'OFF') as charger_state,
+                COALESCE(cds.last_update, NOW()) as last_update,
                 cp.port_number_in_device,
                 cs.total_mah_consumed,
-                cs.energy_consumed_kwh, -- Include KWH for active sessions
+                cs.energy_consumed_kwh,
                 cs.session_id
             FROM
-                current_device_status cds
-            JOIN
-                charging_port cp ON cds.port_id = cp.port_id
-            LEFT JOIN -- Use LEFT JOIN to include ports even if no active session
-                charging_session cs ON cds.port_id = cs.port_id AND cs.session_status = $1
+                charging_port cp
+            LEFT JOIN
+                current_device_status cds ON cp.port_id = cds.port_id
+            LEFT JOIN
+                charging_session cs ON cp.port_id = cs.port_id AND cs.session_status = $1
+            ORDER BY
+                cp.device_mqtt_id, cp.port_number_in_device
         `, [SESSION_STATUS.ACTIVE]);
+        
+        console.log('Backend: Device status data being sent:', result.rows);
         res.json(result.rows);
     } catch (error) {
         console.error('Error fetching device status:', error);
@@ -609,7 +612,7 @@ app.get('/api/devices/consumption', async (req, res) => {
         // Get consumption data for all devices and ports with current consumption calculation
         const result = await pool.query(`
             SELECT
-                cds.device_id,
+                cp.device_mqtt_id as device_id,
                 cp.port_number_in_device as port_number,
                 COALESCE(cs.total_mah_consumed, 0) as total_mah_consumed,
                 COALESCE(cs.energy_consumed_kwh, 0) as energy_consumed_kwh,
@@ -625,13 +628,11 @@ app.get('/api/devices/consumption', async (req, res) => {
                      LIMIT 6
                  ) sub) as recent_consumption_watts
             FROM
-                current_device_status cds
-            JOIN
-                charging_port cp ON cds.port_id = cp.port_id
+                charging_port cp
             LEFT JOIN
-                charging_session cs ON cds.port_id = cs.port_id AND cs.session_status = $1
+                charging_session cs ON cp.port_id = cs.port_id AND cs.session_status = $1
             ORDER BY
-                cds.device_id, cp.port_number_in_device
+                cp.device_mqtt_id, cp.port_number_in_device
         `, [SESSION_STATUS.ACTIVE]);
         
         // Transform the data to include current consumption calculation
