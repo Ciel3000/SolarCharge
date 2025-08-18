@@ -857,17 +857,22 @@ app.post('/api/devices/:deviceId/:portNumber/control', supabaseAuthMiddleware, a
         );
         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Port ${actualPortId} status set to '${newPortStatusForDb}' by API command '${command}'.`);
 
-        // Commit the database transaction
+        // Commit the database transaction first
         await pool.query('COMMIT');
 
         // Generate unique command ID for acknowledgment tracking
         const commandId = `${deviceId}_${internalPortNumber}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         
         // Store pending command for acknowledgment tracking (session_id can be null for OFF commands)
-        await pool.query(
-            'INSERT INTO pending_commands (command_id, device_id, port_number, command, status, session_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
-            [commandId, deviceId, internalPortNumber, command, 'pending', command === CHARGER_STATES.ON ? currentSessionId : null]
-        );
+        try {
+            await pool.query(
+                'INSERT INTO pending_commands (command_id, device_id, port_number, command, status, session_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
+                [commandId, deviceId, internalPortNumber, command, 'pending', command === CHARGER_STATES.ON ? currentSessionId : null]
+            );
+        } catch (pendingCommandError) {
+            console.warn('Failed to insert pending command, continuing without command tracking:', pendingCommandError.message);
+            // Continue without command tracking if the table doesn't exist or has issues
+        }
 
         // Publish MQTT command with acknowledgment ID
         const mqttPayload = JSON.stringify({ 
@@ -926,7 +931,8 @@ app.post('/api/devices/:deviceId/:portNumber/control', supabaseAuthMiddleware, a
                 command, 
                 sessionId: currentSessionId,
                 commandId: commandId,
-                latency: commandLatency
+                latency: commandLatency,
+                commandTracking: true
             });
         });
 
