@@ -23,7 +23,6 @@ const MAX_REASONABLE_CONSUMPTION = 10000; // 10kW in watts, for consumption vali
 const DEFAULT_PRICE_PER_MAH = 0.25; // Example: $0.25 per mAh
 
 const STALE_SESSION_CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
-const PENDING_COMMANDS_CLEANUP_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
 const MQTT_TOPICS = {
     USAGE: 'charger/usage/',
@@ -375,26 +374,6 @@ mqttClient.on('message', async (topic, message) => {
 
         console.log(`MQTT: Session tracking for ${sessionKey}: Session ID = ${currentSessionId}, Active sessions:`, Object.keys(activeChargerSessions));
 
-        // --- Handle command acknowledgment topic ---
-        if (topic.startsWith('charger/ack/')) {
-            const { command_id, status, error_message } = payload;
-            
-            if (command_id) {
-                try {
-                    await pool.query(
-                        'UPDATE pending_commands SET status = $1, acknowledged_at = NOW(), error_message = $2 WHERE command_id = $3',
-                        [status === 'success' ? 'acknowledged' : 'failed', error_message || null, command_id]
-                    );
-                    
-                    console.log(`MQTT: Command ${command_id} acknowledged with status: ${status}`);
-                    logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.MQTT, `Command ${command_id} acknowledged: ${status}`);
-                } catch (ackError) {
-                    console.error(`MQTT: Error updating command acknowledgment for ${command_id}:`, ackError);
-                }
-            }
-            return; // Exit early for acknowledgment messages
-        }
-
         // --- Handle charger/usage topic (for consumption data and session management) ---
         if (topic.startsWith(MQTT_TOPICS.USAGE)) {
             const { consumption, timestamp, charger_state } = payload;
@@ -675,10 +654,9 @@ app.get('/api/devices/consumption', async (req, res) => {
 });
 
 // Send control command to a specific device (station) AND internal port number
-app.post('/api/devices/:deviceId/:portNumber/control', supabaseAuthMiddleware, async (req, res) => {
+app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
     const { deviceId, portNumber } = req.params;
-    const { command, station_id } = req.body;
-    const user_id = req.user.user_id; // Get user_id from authenticated request
+    const { command, user_id, station_id } = req.body;
 
     if (!command || (command !== CHARGER_STATES.ON && command !== CHARGER_STATES.OFF)) {
         logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `Invalid control command: ${command}`);
@@ -687,25 +665,17 @@ app.post('/api/devices/:deviceId/:portNumber/control', supabaseAuthMiddleware, a
 
     const controlTopic = `${MQTT_TOPICS.CONTROL}${deviceId}`;
     const internalPortNumber = parseInt(portNumber);
-    const commandStartTime = Date.now();
 
     try {
-        // Start database transaction for atomic operations
-        await pool.query('BEGIN');
-
-        // Find the actual port_id (UUID) and is_premium from charging_port table with row-level locking
+        // Find the actual port_id (UUID) and is_premium from charging_port table
         const portIdResult = await pool.query(
-            'SELECT port_id, is_premium, is_occupied, current_status FROM charging_port WHERE device_mqtt_id = $1 AND port_number_in_device = $2 FOR UPDATE',
+            'SELECT port_id, is_premium FROM charging_port WHERE device_mqtt_id = $1 AND port_number_in_device = $2',
             [deviceId, internalPortNumber]
         );
-        
         const actualPortId = portIdResult.rows[0]?.port_id;
         const isPremiumPort = portIdResult.rows[0]?.is_premium;
-        const isCurrentlyOccupied = portIdResult.rows[0]?.is_occupied;
-        const currentStatus = portIdResult.rows[0]?.current_status;
 
         if (!actualPortId) {
-            await pool.query('ROLLBACK');
             console.warn(`API: Port not found for deviceId ${deviceId} and portNumber ${internalPortNumber}.`);
             logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `Control command for non-existent port: Device ${deviceId}, Port ${internalPortNumber}`);
             return res.status(404).json({ error: `Port ${internalPortNumber} not found for device ${deviceId}.` });
@@ -725,23 +695,8 @@ app.post('/api/devices/:deviceId/:portNumber/control', supabaseAuthMiddleware, a
 
         if (command === CHARGER_STATES.ON) {
             if (!user_id || !station_id) {
-                await pool.query('ROLLBACK');
                 logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `Attempt to start session without user_id or station_id for ${sessionKey}`);
                 return res.status(400).json({ error: 'user_id and station_id are required to start a session.' });
-            }
-
-            // Check if port is already occupied by another user
-            if (isCurrentlyOccupied) {
-                const existingActiveSession = await pool.query(
-                    "SELECT session_id, user_id FROM charging_session WHERE port_id = $1 AND session_status = $2",
-                    [actualPortId, SESSION_STATUS.ACTIVE]
-                );
-
-                if (existingActiveSession.rows.length > 0 && existingActiveSession.rows[0].user_id !== user_id) {
-                    await pool.query('ROLLBACK');
-                    logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `User ${user_id} tried to activate occupied port ${sessionKey}. Occupied by ${existingActiveSession.rows[0].user_id}.`);
-                    return res.status(409).json({ error: 'Port is currently occupied by another user.' });
-                }
             }
 
             // Check if there's already an active session in DB for this port
@@ -766,7 +721,6 @@ app.post('/api/devices/:deviceId/:portNumber/control', supabaseAuthMiddleware, a
                 
                 // If the existing session is by a *different* user, it's occupied!
                 if (existingActiveSession.rows[0].user_id !== user_id) {
-                    await pool.query('ROLLBACK');
                     logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `User ${user_id} tried to activate occupied port ${sessionKey}. Occupied by ${existingActiveSession.rows[0].user_id}.`);
                     return res.status(409).json({ error: 'Port is currently occupied by another user.' });
                 }
@@ -857,118 +811,30 @@ app.post('/api/devices/:deviceId/:portNumber/control', supabaseAuthMiddleware, a
         );
         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Port ${actualPortId} status set to '${newPortStatusForDb}' by API command '${command}'.`);
 
-        // Commit the database transaction first
-        await pool.query('COMMIT');
-
-        // Generate unique command ID for acknowledgment tracking
-        const commandId = `${deviceId}_${internalPortNumber}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
-        // Store pending command for acknowledgment tracking (session_id can be null for OFF commands)
-        try {
-            // First check if the table exists
-            const tableExists = await pool.query(`
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_schema = 'public' 
-                    AND table_name = 'pending_commands'
-                );
-            `);
-            
-            if (tableExists.rows[0].exists) {
-                await pool.query(
-                    'INSERT INTO pending_commands (command_id, device_id, port_number, command, status, session_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
-                    [commandId, deviceId, internalPortNumber, command, 'pending', command === CHARGER_STATES.ON ? currentSessionId : null]
-                );
-                console.log(`Command ${commandId} stored in pending_commands table`);
-            } else {
-                console.warn('pending_commands table does not exist, skipping command tracking');
-            }
-        } catch (pendingCommandError) {
-            console.warn('Failed to insert pending command, continuing without command tracking:', pendingCommandError.message);
-            // Continue without command tracking if the table doesn't exist or has issues
-        }
-
-        // Publish MQTT command with acknowledgment ID
-        const mqttPayload = JSON.stringify({ 
-            command: command, 
-            port_number: internalPortNumber,
-            command_id: commandId,
-            timestamp: Date.now()
-        });
+        // Publish MQTT command (payload remains the same for ESP32)
+        const mqttPayload = JSON.stringify({ command: command, port_number: internalPortNumber });
 
         mqttClient.publish(controlTopic, mqttPayload, { qos: 1 }, (err) => {
             if (err) {
                 console.error(`Failed to publish control command to ${controlTopic}:`, err);
                 logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.MQTT, `Failed to publish control command '${command}' to ${controlTopic}: ${err.message}`);
-                
-                // Update command status to failed
-                pool.query(
-                    'UPDATE pending_commands SET status = $1, error_message = $2 WHERE command_id = $3',
-                    ['failed', err.message, commandId]
-                ).catch(updateErr => console.error('Failed to update command status:', updateErr));
-                
                 return res.status(500).json({ error: 'Failed to send control command via MQTT' });
             }
-            
-            console.log(`API: Sent MQTT command '${command}' to ${deviceId} Port ${internalPortNumber} with ID: ${commandId}`);
-            
-            // Set timeout for command acknowledgment (10 seconds)
-            setTimeout(async () => {
-                try {
-                    const pendingCommand = await pool.query(
-                        'SELECT * FROM pending_commands WHERE command_id = $1 AND status = $2',
-                        [commandId, 'pending']
-                    );
-                    
-                    if (pendingCommand.rows.length > 0) {
-                        console.warn(`Command ${commandId} not acknowledged within timeout period`);
-                        await pool.query(
-                            'UPDATE pending_commands SET status = $1, error_message = $2 WHERE command_id = $3',
-                            ['timeout', 'Command not acknowledged by device', commandId]
-                        );
-                        
-                        // Log the timeout for monitoring
-                        logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.MQTT, `Command ${commandId} timeout for ${deviceId} Port ${internalPortNumber}`);
-                    }
-                } catch (timeoutError) {
-                    console.error('Error checking command timeout:', timeoutError);
-                }
-            }, 10000);
-
-            // Calculate command latency
-            const commandLatency = Date.now() - commandStartTime;
+            console.log(`API: Sent MQTT command '${command}' to ${deviceId} Port ${internalPortNumber}.`);
             
             res.json({ 
                 status: 'Command sent', 
                 deviceId, 
                 portNumber: internalPortNumber, 
                 command, 
-                sessionId: currentSessionId,
-                commandId: commandId,
-                latency: commandLatency,
-                commandTracking: true
+                sessionId: currentSessionId
             });
         });
 
     } catch (error) {
         console.error('Error processing control command:', error);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error processing control command for ${deviceId}/${portNumber}: ${error.message}`);
-        
-        // Rollback transaction if it's still active
-        try {
-            await pool.query('ROLLBACK');
-        } catch (rollbackError) {
-            console.error('Error rolling back transaction:', rollbackError);
-        }
-        
-        // Check for specific error types
-        if (error.message.includes('jwt expired')) {
-            res.status(401).json({ error: 'Authentication token expired. Please log in again.' });
-        } else if (error.code === '23503') {
-            res.status(500).json({ error: 'Database constraint error. Please try again.' });
-        } else {
-            res.status(500).json({ error: 'Failed to process control command' });
-        }
+        res.status(500).json({ error: 'Failed to process control command' });
     }
 });
 
@@ -2013,56 +1879,6 @@ app.get('/api/sessions/:sessionId/consumption', async (req, res) => {
     }
 });
 
-// Get command status by command ID
-app.get('/api/commands/:commandId/status', async (req, res) => {
-    try {
-        const { commandId } = req.params;
-        
-        // First check if the table exists
-        const tableExists = await pool.query(`
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_schema = 'public' 
-                AND table_name = 'pending_commands'
-            );
-        `);
-        
-        if (!tableExists.rows[0].exists) {
-            return res.status(404).json({ error: 'Command tracking not available' });
-        }
-        
-        const result = await pool.query(
-            'SELECT command_id, device_id, port_number, command, status, error_message, created_at, acknowledged_at FROM pending_commands WHERE command_id = $1',
-            [commandId]
-        );
-        
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Command not found' });
-        }
-        
-        const command = result.rows[0];
-        res.json({
-            command_id: command.command_id,
-            device_id: command.device_id,
-            port_number: command.port_number,
-            command: command.command,
-            status: command.status,
-            error_message: command.error_message,
-            created_at: command.created_at,
-            acknowledged_at: command.acknowledged_at,
-            latency: command.acknowledged_at ? 
-                new Date(command.acknowledged_at).getTime() - new Date(command.created_at).getTime() : 
-                null
-        });
-        
-        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Command status fetched for ${commandId}`);
-    } catch (error) {
-        console.error('Error fetching command status:', error);
-        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching command status: ${error.message}`);
-        res.status(500).json({ error: 'Failed to fetch command status' });
-    }
-});
-
 // Get all active charging sessions
 app.get('/api/sessions/active', async (req, res) => {
     try {
@@ -2886,8 +2702,8 @@ function setupStaleSessionChecker() {
                     charging_port cp ON cs.port_id = cp.port_id
                 WHERE 
                     cs.session_status = $1
-                    AND cs.last_status_update < NOW() - INTERVAL '${INACTIVITY_TIMEOUT_SECONDS * 2} seconds'`,
-                [SESSION_STATUS.ACTIVE]
+                    AND cs.last_status_update < NOW() - INTERVAL '$$2 seconds'`,
+                [SESSION_STATUS.ACTIVE, INACTIVITY_TIMEOUT_SECONDS * 2]
             );
             
             if (staleSessions.rows.length > 0) {
@@ -2957,54 +2773,8 @@ function setupStaleSessionChecker() {
     console.log(`Stale session checker set up to run every ${STALE_SESSION_CHECK_INTERVAL_MS / 1000 / 60} minutes.`);
 }
 
-// Setup pending commands cleanup
-function setupPendingCommandsCleanup() {
-    async function cleanupPendingCommands() {
-        try {
-            console.log('Cleaning up old pending commands...');
-            logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, 'Running pending commands cleanup');
-            
-            // Clean up commands older than 1 hour that are still pending
-            const result = await pool.query(
-                `UPDATE pending_commands 
-                 SET status = 'timeout', error_message = 'Cleaned up by system after 1 hour'
-                 WHERE status = 'pending' 
-                 AND created_at < NOW() - INTERVAL '1 hour'`
-            );
-            
-            if (result.rowCount > 0) {
-                console.log(`Cleaned up ${result.rowCount} old pending commands`);
-                logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Cleaned up ${result.rowCount} old pending commands`);
-            }
-            
-            // Delete commands older than 24 hours
-            const deleteResult = await pool.query(
-                `DELETE FROM pending_commands 
-                 WHERE created_at < NOW() - INTERVAL '24 hours'`
-            );
-            
-            if (deleteResult.rowCount > 0) {
-                console.log(`Deleted ${deleteResult.rowCount} old command records`);
-                logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Deleted ${deleteResult.rowCount} old command records`);
-            }
-        } catch (error) {
-            console.error('Error cleaning up pending commands:', error);
-            logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.BACKEND, `Error cleaning up pending commands: ${error.message}`);
-        }
-    }
-    
-    // Run the cleanup immediately on startup
-    cleanupPendingCommands();
-    
-    // Then set up the interval
-    setInterval(cleanupPendingCommands, PENDING_COMMANDS_CLEANUP_INTERVAL_MS);
-    
-    console.log(`Pending commands cleanup set up to run every ${PENDING_COMMANDS_CLEANUP_INTERVAL_MS / 1000 / 60} minutes.`);
-}
-
 // Call this function after the database connection is established
 setupStaleSessionChecker();
-setupPendingCommandsCleanup();
 
 // Get active sessions for a specific user
 app.get('/api/sessions/active/user', supabaseAuthMiddleware, async (req, res) => {
