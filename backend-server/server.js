@@ -675,9 +675,10 @@ app.get('/api/devices/consumption', async (req, res) => {
 });
 
 // Send control command to a specific device (station) AND internal port number
-app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
+app.post('/api/devices/:deviceId/:portNumber/control', supabaseAuthMiddleware, async (req, res) => {
     const { deviceId, portNumber } = req.params;
-    const { command, user_id, station_id } = req.body;
+    const { command, station_id } = req.body;
+    const user_id = req.user.user_id; // Get user_id from authenticated request
 
     if (!command || (command !== CHARGER_STATES.ON && command !== CHARGER_STATES.OFF)) {
         logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `Invalid control command: ${command}`);
