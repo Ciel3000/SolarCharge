@@ -865,10 +865,24 @@ app.post('/api/devices/:deviceId/:portNumber/control', supabaseAuthMiddleware, a
         
         // Store pending command for acknowledgment tracking (session_id can be null for OFF commands)
         try {
-            await pool.query(
-                'INSERT INTO pending_commands (command_id, device_id, port_number, command, status, session_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
-                [commandId, deviceId, internalPortNumber, command, 'pending', command === CHARGER_STATES.ON ? currentSessionId : null]
-            );
+            // First check if the table exists
+            const tableExists = await pool.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = 'pending_commands'
+                );
+            `);
+            
+            if (tableExists.rows[0].exists) {
+                await pool.query(
+                    'INSERT INTO pending_commands (command_id, device_id, port_number, command, status, session_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
+                    [commandId, deviceId, internalPortNumber, command, 'pending', command === CHARGER_STATES.ON ? currentSessionId : null]
+                );
+                console.log(`Command ${commandId} stored in pending_commands table`);
+            } else {
+                console.warn('pending_commands table does not exist, skipping command tracking');
+            }
         } catch (pendingCommandError) {
             console.warn('Failed to insert pending command, continuing without command tracking:', pendingCommandError.message);
             // Continue without command tracking if the table doesn't exist or has issues
@@ -2003,6 +2017,19 @@ app.get('/api/sessions/:sessionId/consumption', async (req, res) => {
 app.get('/api/commands/:commandId/status', async (req, res) => {
     try {
         const { commandId } = req.params;
+        
+        // First check if the table exists
+        const tableExists = await pool.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'pending_commands'
+            );
+        `);
+        
+        if (!tableExists.rows[0].exists) {
+            return res.status(404).json({ error: 'Command tracking not available' });
+        }
         
         const result = await pool.query(
             'SELECT command_id, device_id, port_number, command, status, error_message, created_at, acknowledged_at FROM pending_commands WHERE command_id = $1',
