@@ -862,10 +862,10 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
         // Generate unique command ID for acknowledgment tracking
         const commandId = `${deviceId}_${internalPortNumber}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         
-        // Store pending command for acknowledgment tracking
+        // Store pending command for acknowledgment tracking (session_id can be null for OFF commands)
         await pool.query(
             'INSERT INTO pending_commands (command_id, device_id, port_number, command, status, session_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, NOW())',
-            [commandId, deviceId, internalPortNumber, command, 'pending', currentSessionId]
+            [commandId, deviceId, internalPortNumber, command, 'pending', command === CHARGER_STATES.ON ? currentSessionId : null]
         );
 
         // Publish MQTT command with acknowledgment ID
@@ -940,7 +940,14 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
             console.error('Error rolling back transaction:', rollbackError);
         }
         
-        res.status(500).json({ error: 'Failed to process control command' });
+        // Check for specific error types
+        if (error.message.includes('jwt expired')) {
+            res.status(401).json({ error: 'Authentication token expired. Please log in again.' });
+        } else if (error.code === '23503') {
+            res.status(500).json({ error: 'Database constraint error. Please try again.' });
+        } else {
+            res.status(500).json({ error: 'Failed to process control command' });
+        }
     }
 });
 
