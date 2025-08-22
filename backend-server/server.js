@@ -2794,7 +2794,10 @@ function setupBorrowedAmountProcessor() {
             `);
             
             for (const row of rows) {
-                // Apply the penalty by reducing tomorrow's daily limit
+                // Calculate total penalty: borrowed amount + penalty
+                const totalPenalty = row.borrowed_mah_today + row.borrowed_mah_pending;
+                
+                // Apply the penalty by adding to today's consumed amount
                 await pool.query(`
                     UPDATE user_subscription 
                     SET current_daily_mah_consumed = COALESCE(current_daily_mah_consumed, 0) + $1,
@@ -2802,11 +2805,11 @@ function setupBorrowedAmountProcessor() {
                         borrowed_mah_today = 0,
                         updated_at = NOW()
                     WHERE user_subscription_id = $2
-                `, [row.borrowed_mah_pending, row.user_subscription_id]);
+                `, [totalPenalty, row.user_subscription_id]);
                 
-                console.log(`Applied ${row.borrowed_mah_pending} mAh penalty for user ${row.user_id}`);
+                console.log(`Applied ${totalPenalty} mAh penalty (${row.borrowed_mah_today} borrowed + ${row.borrowed_mah_pending} penalty) for user ${row.user_id}`);
                 logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.SUBSCRIPTION, 
-                    `Applied ${row.borrowed_mah_pending} mAh penalty for borrowed amount`, row.user_id);
+                    `Applied ${totalPenalty} mAh penalty for borrowed amount`, row.user_id);
             }
             
             if (rows.length > 0) {
