@@ -3127,7 +3127,10 @@ app.put('/api/admin/quota/pricing', supabaseAuthMiddleware, requireAdmin, async 
 app.post('/api/quota/purchase-extension', supabaseAuthMiddleware, async (req, res) => {
     try {
         const { extensionType, amountMah, paymentMethod } = req.body;
-        const userId = req.user.id;
+        const userId = req.user.user_id; // Fixed: should be user_id, not id
+        
+        console.log('Quota extension request:', { userId, extensionType, amountMah, paymentMethod });
+        console.log('User object:', req.user);
         
         // Get current pricing
         const { rows: pricingRows } = await pool.query(`
@@ -3166,6 +3169,8 @@ app.post('/api/quota/purchase-extension', supabaseAuthMiddleware, async (req, re
             WHERE user_id = $1 AND is_active = true
             ORDER BY created_at DESC LIMIT 1
         `, [userId]);
+        
+        console.log('Subscription query result:', { userId, subscriptionRows });
         
         if (subscriptionRows.length === 0) {
             return res.status(400).json({ error: 'No active subscription found' });
@@ -3225,7 +3230,7 @@ app.post('/api/quota/purchase-extension', supabaseAuthMiddleware, async (req, re
 app.get('/api/quota/extension-status/:extensionId', supabaseAuthMiddleware, async (req, res) => {
     try {
         const { extensionId } = req.params;
-        const userId = req.user.id;
+        const userId = req.user.user_id; // Fixed: should be user_id, not id
         
         const { rows } = await pool.query(`
             SELECT * FROM quota_extensions 
