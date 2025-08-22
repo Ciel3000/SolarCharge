@@ -2777,6 +2777,48 @@ function setupExpiredSubscriptionChecker() {
     }, 60 * 60 * 1000); // Run every hour
 }
 
+// Background job to apply borrowed amounts as penalties the next day
+function setupBorrowedAmountProcessor() {
+    setInterval(async () => {
+        try {
+            console.log('Processing borrowed amounts for next day penalties...');
+            logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, 'Running borrowed amount processor');
+            
+            // Get all users with pending borrowed amounts from yesterday
+            const { rows } = await pool.query(`
+                SELECT user_subscription_id, user_id, borrowed_mah_pending, borrowed_mah_today
+                FROM user_subscription 
+                WHERE borrowed_mah_pending > 0 
+                AND last_borrow_date < CURRENT_DATE
+                AND is_active = true
+            `);
+            
+            for (const row of rows) {
+                // Apply the penalty by reducing tomorrow's daily limit
+                await pool.query(`
+                    UPDATE user_subscription 
+                    SET current_daily_mah_consumed = COALESCE(current_daily_mah_consumed, 0) + $1,
+                        borrowed_mah_pending = 0,
+                        borrowed_mah_today = 0,
+                        updated_at = NOW()
+                    WHERE user_subscription_id = $2
+                `, [row.borrowed_mah_pending, row.user_subscription_id]);
+                
+                console.log(`Applied ${row.borrowed_mah_pending} mAh penalty for user ${row.user_id}`);
+                logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.SUBSCRIPTION, 
+                    `Applied ${row.borrowed_mah_pending} mAh penalty for borrowed amount`, row.user_id);
+            }
+            
+            if (rows.length > 0) {
+                console.log(`Processed ${rows.length} borrowed amount penalties`);
+            }
+        } catch (error) {
+            console.error('Error processing borrowed amounts:', error);
+            logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.BACKEND, `Error processing borrowed amounts: ${error.message}`);
+        }
+    }, 60 * 60 * 1000); // Check every hour
+}
+
 // --- Periodic check for stale sessions ---
 // This function will run every 5 minutes to check for any active sessions
 // that haven't been updated in more than the inactivity timeout period
@@ -2877,6 +2919,7 @@ function setupStaleSessionChecker() {
 // Call these functions after the database connection is established
 setupStaleSessionChecker();
 setupExpiredSubscriptionChecker();
+setupBorrowedAmountProcessor();
 
 // Get active sessions for a specific user
 app.get('/api/sessions/active/user', supabaseAuthMiddleware, async (req, res) => {
@@ -3111,8 +3154,9 @@ app.post('/api/quota/purchase-extension', supabaseAuthMiddleware, async (req, re
         if (extensionType === 'direct_purchase') {
             totalCost = amountMah * parseFloat(pricing.price_per_mah);
         } else if (extensionType === 'borrow_next_day') {
+            // For borrow next day: base fee + penalty percentage on the borrowed amount
             totalCost = parseFloat(pricing.base_fee);
-            penaltyFee = totalCost * (parseFloat(pricing.penalty_percentage) / 100);
+            penaltyFee = amountMah * (parseFloat(pricing.penalty_percentage) / 100);
             totalCost += penaltyFee;
         }
         
@@ -3128,6 +3172,19 @@ app.post('/api/quota/purchase-extension', supabaseAuthMiddleware, async (req, re
         }
         
         const subscriptionId = subscriptionRows[0].user_subscription_id;
+        
+        // Handle borrow next day logic
+        if (extensionType === 'borrow_next_day') {
+            // Update user subscription to track borrowed amount
+            await pool.query(`
+                UPDATE user_subscription 
+                SET borrowed_mah_today = COALESCE(borrowed_mah_today, 0) + $1,
+                    borrowed_mah_pending = COALESCE(borrowed_mah_pending, 0) + $2,
+                    last_borrow_date = CURRENT_DATE,
+                    updated_at = NOW()
+                WHERE user_subscription_id = $3
+            `, [amountMah, penaltyFee, subscriptionId]);
+        }
         
         // Create extension record
         const { rows: extensionRows } = await pool.query(`
@@ -3145,7 +3202,9 @@ app.post('/api/quota/purchase-extension', supabaseAuthMiddleware, async (req, re
         res.json({
             extensionId: extensionRows[0].id,
             totalCost: totalCost,
-            message: 'Extension request created successfully. Please complete payment.'
+            message: extensionType === 'borrow_next_day' 
+                ? `Borrowed ${amountMah} mAh for today. ${penaltyFee} mAh penalty will be applied tomorrow.`
+                : 'Extension request created successfully. Please complete payment.'
         });
         
     } catch (error) {
