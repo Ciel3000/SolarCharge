@@ -2488,11 +2488,6 @@ app.use((err, req, res, next) => {
     res.status(500).json({ error: 'Something went wrong!' });
 });
 
-// 404 handler for unmatched routes
-app.use('*', (req, res) => {
-    res.status(404).json({ error: 'Route not found' });
-});
-
 // Start server
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
@@ -3218,4 +3213,9 @@ app.put('/api/admin/quota/extensions/:extensionId/confirm-payment', supabaseAuth
         console.error('Error confirming payment:', error);
         res.status(500).json({ error: 'Failed to confirm payment' });
     }
+});
+
+// 404 handler for unmatched routes (must be at the end)
+app.use('*', (req, res) => {
+    res.status(404).json({ error: 'Route not found' });
 });
