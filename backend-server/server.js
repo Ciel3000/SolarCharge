@@ -645,6 +645,7 @@ app.get('/api/devices/consumption', async (req, res) => {
             };
         });
         
+        console.log('API: Device consumption data:', consumptionData);
         res.json(consumptionData);
     } catch (error) {
         console.error('Error fetching device consumption:', error);
@@ -2086,6 +2087,7 @@ app.get('/api/user/usage', supabaseAuthMiddleware, async (req, res) => {
                 COUNT(session_id) as total_sessions,
                 COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(end_time, NOW()) - start_time))/60), 0) as total_duration_minutes,
                 COALESCE(SUM(energy_consumed_kwh), 0) as total_energy_kwh,
+                COALESCE(SUM(energy_consumed_mah), 0) as total_energy_mah,
                 COALESCE(SUM(cost), 0) as total_cost
             FROM
                 charging_session
@@ -2105,12 +2107,16 @@ app.get('/api/user/usage', supabaseAuthMiddleware, async (req, res) => {
 
         const usageData = usageResult.rows[0];
 
-        res.json({
+        const responseData = {
             totalSessions: parseInt(usageData.total_sessions || 0),
             totalDuration: parseFloat(usageData.total_duration_minutes || 0).toFixed(0), // Round to nearest minute
             totalEnergyKWH: parseFloat(usageData.total_energy_kwh || 0).toFixed(2), // 2 decimal places
+            totalEnergyMAH: parseFloat(usageData.total_energy_mah || 0).toFixed(2), // 2 decimal places
             totalCost: parseFloat(usageData.total_cost || 0).toFixed(2) // 2 decimal places
-        });
+        };
+
+        console.log(`API: User ${user_id} usage data:`, responseData);
+        res.json(responseData);
         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User ${user_id} fetched usage data.`);
     } catch (err) {
         console.error('API Error fetching user usage data:', err);
