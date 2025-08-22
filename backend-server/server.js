@@ -3173,7 +3173,7 @@ app.post('/api/quota/purchase-extension', supabaseAuthMiddleware, async (req, re
         
         const subscriptionId = subscriptionRows[0].user_subscription_id;
         
-        // Handle borrow next day logic
+        // Handle extension logic based on type
         if (extensionType === 'borrow_next_day') {
             // Update user subscription to track borrowed amount
             await pool.query(`
@@ -3184,6 +3184,14 @@ app.post('/api/quota/purchase-extension', supabaseAuthMiddleware, async (req, re
                     updated_at = NOW()
                 WHERE user_subscription_id = $3
             `, [amountMah, penaltyFee, subscriptionId]);
+        } else if (extensionType === 'direct_purchase') {
+            // For direct purchase, reduce the consumed amount to give more available quota
+            await pool.query(`
+                UPDATE user_subscription 
+                SET current_daily_mah_consumed = GREATEST(0, COALESCE(current_daily_mah_consumed, 0) - $1),
+                    updated_at = NOW()
+                WHERE user_subscription_id = $2
+            `, [amountMah, subscriptionId]);
         }
         
         // Create extension record
@@ -3204,7 +3212,7 @@ app.post('/api/quota/purchase-extension', supabaseAuthMiddleware, async (req, re
             totalCost: totalCost,
             message: extensionType === 'borrow_next_day' 
                 ? `Borrowed ${amountMah} mAh for today. ${penaltyFee} mAh penalty will be applied tomorrow.`
-                : 'Extension request created successfully. Please complete payment.'
+                : `Successfully purchased ${amountMah} mAh extension. Your daily quota has been increased.`
         });
         
     } catch (error) {
