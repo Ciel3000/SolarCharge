@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
 const mqtt = require('mqtt');
+const { v4: uuidv4 } = require('uuid');
 require('dotenv').config(); // Load environment variables from .env file
 const jwt = require('jsonwebtoken'); // For JWT decode/verify
 
@@ -3158,7 +3159,11 @@ app.post('/api/quota/purchase-extension', supabaseAuthMiddleware, async (req, re
         let penaltyFee = 0;
         
         if (extensionType === 'direct_purchase') {
-            totalCost = amountMah * parseFloat(pricing.price_per_mah);
+            // Fixed pricing: ₱10 for 1000 mAh
+            if (amountMah !== 1000) {
+                return res.status(400).json({ error: 'Direct purchase is fixed at 1000 mAh for ₱10' });
+            }
+            totalCost = 10; // Fixed ₱10
         } else if (extensionType === 'borrow_next_day') {
             // For borrow next day: base fee + penalty percentage on the borrowed amount
             totalCost = parseFloat(pricing.base_fee);
@@ -3193,13 +3198,43 @@ app.post('/api/quota/purchase-extension', supabaseAuthMiddleware, async (req, re
                 WHERE user_subscription_id = $3
             `, [amountMah, penaltyFee, subscriptionId]);
         } else if (extensionType === 'direct_purchase') {
-            // For direct purchase, reduce the consumed amount to give more available quota
-            await pool.query(`
-                UPDATE user_subscription 
-                SET current_daily_mah_consumed = GREATEST(0, COALESCE(current_daily_mah_consumed, 0) - $1),
-                    updated_at = NOW()
-                WHERE user_subscription_id = $2
-            `, [amountMah, subscriptionId]);
+            // For direct purchase, create pending extension that requires PayPal payment
+            const extensionId = uuidv4();
+            
+            // Get the PayPal link from pricing configuration
+            const { rows: pricingRows } = await pool.query(`
+                SELECT paypal_link FROM quota_extension_pricing 
+                WHERE extension_type = 'direct_purchase' AND is_active = true
+                ORDER BY created_at DESC LIMIT 1
+            `);
+            
+            const paypalLink = pricingRows.length > 0 ? pricingRows[0].paypal_link : null;
+            
+            if (!paypalLink) {
+                return res.status(400).json({ error: 'PayPal link not configured for direct purchase' });
+            }
+            
+            // Create extension record with pending status
+            const { rows: extensionRows } = await pool.query(`
+                INSERT INTO quota_extensions 
+                (extension_id, user_id, subscription_id, extension_type, purchased_amount_mah, 
+                 price_per_mah, base_fee, penalty_fee, total_cost, payment_status, payment_reference)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                RETURNING id
+            `, [
+                extensionId, userId, subscriptionId, extensionType, amountMah,
+                pricing.price_per_mah, pricing.base_fee, 0, totalCost,
+                'pending', 'paypal'
+            ]);
+            
+            res.json({
+                extensionId: extensionRows[0].id,
+                totalCost: totalCost,
+                paypalLink: paypalLink,
+                requiresPayment: true,
+                message: 'Extension request created. Please complete PayPal payment to activate your quota extension.'
+            });
+            return;
         }
         
         // Create extension record
@@ -3276,14 +3311,38 @@ app.put('/api/admin/quota/extensions/:extensionId/confirm-payment', supabaseAuth
         const { extensionId } = req.params;
         const { paymentReference } = req.body;
         
-        // Update extension status
+        // Get extension details first
+        const { rows: extensionRows } = await pool.query(`
+            SELECT * FROM quota_extensions WHERE id = $1
+        `, [extensionId]);
+        
+        if (extensionRows.length === 0) {
+            return res.status(404).json({ error: 'Extension not found' });
+        }
+        
+        const extension = extensionRows[0];
+        
+        // Update extension status to completed
         await pool.query(`
             UPDATE quota_extensions 
-            SET payment_status = 'paid', payment_reference = $1, expires_at = NOW() + INTERVAL '24 hours'
+            SET payment_status = 'completed', payment_reference = $1, updated_at = NOW()
             WHERE id = $2
         `, [paymentReference, extensionId]);
         
-        res.json({ message: 'Payment confirmed successfully' });
+        // Apply the extension to user's subscription for direct purchase
+        if (extension.extension_type === 'direct_purchase') {
+            await pool.query(`
+                UPDATE user_subscription 
+                SET current_daily_mah_consumed = GREATEST(0, COALESCE(current_daily_mah_consumed, 0) - $1),
+                    updated_at = NOW()
+                WHERE user_subscription_id = $2
+            `, [extension.purchased_amount_mah, extension.subscription_id]);
+        }
+        
+        res.json({ 
+            success: true, 
+            message: 'Payment confirmed and extension applied successfully' 
+        });
     } catch (error) {
         console.error('Error confirming payment:', error);
         res.status(500).json({ error: 'Failed to confirm payment' });
