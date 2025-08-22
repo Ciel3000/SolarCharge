@@ -1946,7 +1946,7 @@ app.get('/api/user/subscription', supabaseAuthMiddleware, async (req, res) => {
     try {
         const { user_id } = req.user; // Get user_id from the authenticated request
 
-        // Fetch current active subscription for the user
+        // Fetch current active subscription for the user (check both is_active and end_date)
         const subscriptionResult = await pool.query(`
             SELECT
                 us.user_subscription_id,
@@ -1973,6 +1973,7 @@ app.get('/api/user/subscription', supabaseAuthMiddleware, async (req, res) => {
             WHERE
                 us.user_id = $1
                 AND us.is_active = TRUE
+                AND us.end_date > NOW()
             ORDER BY us.start_date DESC
             LIMIT 1;
         `, [user_id]);
@@ -2187,6 +2188,40 @@ app.get('/api/user/devices', supabaseAuthMiddleware, async (req, res) => {
         console.error('API Error fetching user devices:', err);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching devices for user ${req.user?.user_id}: ${err.message}`);
         res.status(500).json({ error: 'Failed to fetch device data.' });
+    }
+});
+
+// Manual endpoint to check and fix expired subscriptions (for testing)
+app.post('/api/admin/fix-expired-subscriptions', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+    try {
+        console.log('Manual check for expired subscriptions...');
+        
+        // Find and deactivate expired subscriptions
+        const expiredSubscriptions = await pool.query(
+            `UPDATE user_subscription 
+             SET is_active = false 
+             WHERE is_active = true 
+             AND end_date <= NOW()
+             RETURNING user_subscription_id, user_id, end_date, start_date`
+        );
+        
+        if (expiredSubscriptions.rows.length > 0) {
+            console.log(`Deactivated ${expiredSubscriptions.rows.length} expired subscriptions:`, expiredSubscriptions.rows);
+            res.json({ 
+                message: `Deactivated ${expiredSubscriptions.rows.length} expired subscriptions`,
+                deactivated: expiredSubscriptions.rows 
+            });
+        } else {
+            res.json({ 
+                message: 'No expired subscriptions found',
+                deactivated: []
+            });
+        }
+        
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Admin manually checked expired subscriptions`);
+    } catch (error) {
+        console.error('Error checking expired subscriptions:', error);
+        res.status(500).json({ error: 'Failed to check expired subscriptions' });
     }
 });
 
@@ -2717,6 +2752,36 @@ function calculateNextBillingDate(startDate, durationType, durationValue) {
 }
 
 
+// --- Periodic check for expired subscriptions ---
+// This function will run every hour to check for expired subscriptions and deactivate them
+function setupExpiredSubscriptionChecker() {
+    setInterval(async () => {
+        try {
+            console.log('Checking for expired subscriptions...');
+            logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, 'Running expired subscription checker');
+            
+            // Find and deactivate expired subscriptions
+            const expiredSubscriptions = await pool.query(
+                `UPDATE user_subscription 
+                 SET is_active = false 
+                 WHERE is_active = true 
+                 AND end_date <= NOW()
+                 RETURNING user_subscription_id, user_id, end_date`
+            );
+            
+            if (expiredSubscriptions.rows.length > 0) {
+                console.log(`Deactivated ${expiredSubscriptions.rows.length} expired subscriptions:`, expiredSubscriptions.rows);
+                logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Deactivated ${expiredSubscriptions.rows.length} expired subscriptions`);
+            } else {
+                console.log('No expired subscriptions found');
+            }
+        } catch (error) {
+            console.error('Error checking expired subscriptions:', error);
+            logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.BACKEND, `Error checking expired subscriptions: ${error.message}`);
+        }
+    }, 60 * 60 * 1000); // Run every hour
+}
+
 // --- Periodic check for stale sessions ---
 // This function will run every 5 minutes to check for any active sessions
 // that haven't been updated in more than the inactivity timeout period
@@ -2814,8 +2879,9 @@ function setupStaleSessionChecker() {
     console.log(`Stale session checker set up to run every ${STALE_SESSION_CHECK_INTERVAL_MS / 1000 / 60} minutes.`);
 }
 
-// Call this function after the database connection is established
+// Call these functions after the database connection is established
 setupStaleSessionChecker();
+setupExpiredSubscriptionChecker();
 
 // Get active sessions for a specific user
 app.get('/api/sessions/active/user', supabaseAuthMiddleware, async (req, res) => {
