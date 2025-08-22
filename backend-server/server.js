@@ -2116,12 +2116,47 @@ app.get('/api/user/usage', supabaseAuthMiddleware, async (req, res) => {
         };
 
         console.log(`API: User ${user_id} usage data:`, responseData);
+        console.log(`API: Raw database data:`, usageData);
         res.json(responseData);
         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User ${user_id} fetched usage data.`);
     } catch (err) {
         console.error('API Error fetching user usage data:', err);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching usage for user ${req.user?.user_id}: ${err.message}`);
         res.status(500).json({ error: 'Failed to fetch usage data.' });
+    }
+});
+
+// Debug endpoint to check raw charging session data
+app.get('/api/user/usage/debug', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        
+        // Get all charging sessions for this user
+        const debugResult = await pool.query(`
+            SELECT 
+                session_id,
+                start_time,
+                end_time,
+                session_status,
+                energy_consumed_kwh,
+                energy_consumed_mah,
+                total_mah_consumed,
+                cost
+            FROM charging_session
+            WHERE user_id = $1
+            ORDER BY start_time DESC
+            LIMIT 10
+        `, [user_id]);
+        
+        console.log(`Debug: Raw charging sessions for user ${user_id}:`, debugResult.rows);
+        res.json({
+            user_id,
+            total_sessions: debugResult.rows.length,
+            sessions: debugResult.rows
+        });
+    } catch (err) {
+        console.error('Debug API Error:', err);
+        res.status(500).json({ error: 'Failed to fetch debug data.' });
     }
 });
 
