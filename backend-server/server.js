@@ -2999,12 +2999,16 @@ app.get('/api/quota/pricing', async (req, res) => {
 // Admin: Get quota pricing configuration
 app.get('/api/admin/quota/pricing', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     try {
+        console.log('Admin quota pricing request from user:', req.user.user_id);
+        
         const { rows } = await pool.query(`
             SELECT extension_type, price_per_mah, base_fee, penalty_percentage, 
                    min_purchase_mah, max_purchase_mah, is_active
             FROM quota_extension_pricing 
             ORDER BY extension_type
         `);
+        
+        console.log('Database query result:', rows);
         
         const pricing = {};
         rows.forEach(row => {
@@ -3018,6 +3022,7 @@ app.get('/api/admin/quota/pricing', supabaseAuthMiddleware, requireAdmin, async 
             };
         });
         
+        console.log('Sending pricing response:', pricing);
         res.json(pricing);
     } catch (error) {
         console.error('Error fetching admin quota pricing:', error);
