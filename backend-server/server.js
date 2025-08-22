@@ -2965,3 +2965,252 @@ app.get('/api/stations/:stationId/consumption', supabaseAuthMiddleware, async (r
         res.status(500).json({ error: 'Failed to fetch consumption data' });
     }
 });
+
+// Quota Extension Pricing Management
+app.get('/api/quota/pricing', async (req, res) => {
+    try {
+        const { rows } = await pool.query(`
+            SELECT extension_type, price_per_mah, base_fee, penalty_percentage, 
+                   min_purchase_mah, max_purchase_mah, is_active
+            FROM quota_extension_pricing 
+            WHERE is_active = true
+            ORDER BY extension_type
+        `);
+        
+        const pricing = {};
+        rows.forEach(row => {
+            pricing[row.extension_type] = {
+                price_per_mah: parseFloat(row.price_per_mah),
+                base_fee: parseFloat(row.base_fee),
+                penalty_percentage: parseFloat(row.penalty_percentage),
+                min_purchase_mah: parseFloat(row.min_purchase_mah),
+                max_purchase_mah: parseFloat(row.max_purchase_mah),
+                is_active: row.is_active
+            };
+        });
+        
+        res.json(pricing);
+    } catch (error) {
+        console.error('Error fetching quota pricing:', error);
+        res.status(500).json({ error: 'Failed to fetch pricing configuration' });
+    }
+});
+
+// Admin: Get quota pricing configuration
+app.get('/api/admin/quota/pricing', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+    try {
+        const { rows } = await pool.query(`
+            SELECT extension_type, price_per_mah, base_fee, penalty_percentage, 
+                   min_purchase_mah, max_purchase_mah, is_active
+            FROM quota_extension_pricing 
+            ORDER BY extension_type
+        `);
+        
+        const pricing = {};
+        rows.forEach(row => {
+            pricing[row.extension_type] = {
+                price_per_mah: parseFloat(row.price_per_mah),
+                base_fee: parseFloat(row.base_fee),
+                penalty_percentage: parseFloat(row.penalty_percentage),
+                min_purchase_mah: parseFloat(row.min_purchase_mah),
+                max_purchase_mah: parseFloat(row.max_purchase_mah),
+                is_active: row.is_active
+            };
+        });
+        
+        res.json(pricing);
+    } catch (error) {
+        console.error('Error fetching admin quota pricing:', error);
+        res.status(500).json({ error: 'Failed to fetch pricing configuration' });
+    }
+});
+
+// Admin: Update quota pricing configuration
+app.put('/api/admin/quota/pricing', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+    try {
+        const { direct_purchase, borrow_next_day } = req.body;
+        const adminUserId = req.user.id;
+        
+        // Update direct purchase pricing
+        if (direct_purchase) {
+            await pool.query(`
+                UPDATE quota_extension_pricing 
+                SET price_per_mah = $1, min_purchase_mah = $2, max_purchase_mah = $3, is_active = $4, updated_at = NOW()
+                WHERE extension_type = 'direct_purchase'
+            `, [
+                direct_purchase.price_per_mah,
+                direct_purchase.min_purchase_mah,
+                direct_purchase.max_purchase_mah,
+                direct_purchase.is_active
+            ]);
+        }
+        
+        // Update borrow next day pricing
+        if (borrow_next_day) {
+            await pool.query(`
+                UPDATE quota_extension_pricing 
+                SET base_fee = $1, penalty_percentage = $2, min_purchase_mah = $3, max_purchase_mah = $4, is_active = $5, updated_at = NOW()
+                WHERE extension_type = 'borrow_next_day'
+            `, [
+                borrow_next_day.base_fee,
+                borrow_next_day.penalty_percentage,
+                borrow_next_day.min_purchase_mah,
+                borrow_next_day.max_purchase_mah,
+                borrow_next_day.is_active
+            ]);
+        }
+        
+        // Log pricing change
+        await pool.query(`
+            INSERT INTO quota_pricing_history 
+            (admin_user_id, extension_type, old_price_per_mah, new_price_per_mah, 
+             old_base_fee, new_base_fee, old_penalty_percentage, new_penalty_percentage,
+             old_min_purchase_mah, new_min_purchase_mah, old_max_purchase_mah, new_max_purchase_mah)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        `, [
+            adminUserId,
+            'pricing_update',
+            null, null, null, null, null, null, null, null, null, null
+        ]);
+        
+        res.json({ message: 'Pricing updated successfully' });
+    } catch (error) {
+        console.error('Error updating quota pricing:', error);
+        res.status(500).json({ error: 'Failed to update pricing configuration' });
+    }
+});
+
+// User: Purchase quota extension
+app.post('/api/quota/purchase-extension', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { extensionType, amountMah, paymentMethod } = req.body;
+        const userId = req.user.id;
+        
+        // Get current pricing
+        const { rows: pricingRows } = await pool.query(`
+            SELECT * FROM quota_extension_pricing WHERE extension_type = $1 AND is_active = true
+        `, [extensionType]);
+        
+        if (pricingRows.length === 0) {
+            return res.status(400).json({ error: 'Extension type not available' });
+        }
+        
+        const pricing = pricingRows[0];
+        
+        // Validate amount
+        if (amountMah < pricing.min_purchase_mah || amountMah > pricing.max_purchase_mah) {
+            return res.status(400).json({ 
+                error: `Amount must be between ${pricing.min_purchase_mah} and ${pricing.max_purchase_mah} mAh` 
+            });
+        }
+        
+        // Calculate cost
+        let totalCost = 0;
+        let penaltyFee = 0;
+        
+        if (extensionType === 'direct_purchase') {
+            totalCost = amountMah * parseFloat(pricing.price_per_mah);
+        } else if (extensionType === 'borrow_next_day') {
+            totalCost = parseFloat(pricing.base_fee);
+            penaltyFee = totalCost * (parseFloat(pricing.penalty_percentage) / 100);
+            totalCost += penaltyFee;
+        }
+        
+        // Get user's active subscription
+        const { rows: subscriptionRows } = await pool.query(`
+            SELECT user_subscription_id FROM user_subscription 
+            WHERE user_id = $1 AND is_active = true
+            ORDER BY created_at DESC LIMIT 1
+        `, [userId]);
+        
+        if (subscriptionRows.length === 0) {
+            return res.status(400).json({ error: 'No active subscription found' });
+        }
+        
+        const subscriptionId = subscriptionRows[0].user_subscription_id;
+        
+        // Create extension record
+        const { rows: extensionRows } = await pool.query(`
+            INSERT INTO quota_extensions 
+            (user_id, subscription_id, extension_type, purchased_amount_mah, 
+             price_per_mah, base_fee, penalty_fee, total_cost, payment_status, payment_reference)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            RETURNING id
+        `, [
+            userId, subscriptionId, extensionType, amountMah,
+            pricing.price_per_mah, pricing.base_fee, penaltyFee, totalCost,
+            'pending', paymentMethod
+        ]);
+        
+        res.json({
+            extensionId: extensionRows[0].id,
+            totalCost: totalCost,
+            message: 'Extension request created successfully. Please complete payment.'
+        });
+        
+    } catch (error) {
+        console.error('Error creating quota extension:', error);
+        res.status(500).json({ error: 'Failed to create extension request' });
+    }
+});
+
+// User: Check extension status
+app.get('/api/quota/extension-status/:extensionId', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { extensionId } = req.params;
+        const userId = req.user.id;
+        
+        const { rows } = await pool.query(`
+            SELECT * FROM quota_extensions 
+            WHERE id = $1 AND user_id = $2
+        `, [extensionId, userId]);
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Extension not found' });
+        }
+        
+        res.json(rows[0]);
+    } catch (error) {
+        console.error('Error fetching extension status:', error);
+        res.status(500).json({ error: 'Failed to fetch extension status' });
+    }
+});
+
+// Admin: Get all extension requests
+app.get('/api/admin/quota/extensions', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+    try {
+        const { rows } = await pool.query(`
+            SELECT qe.*, up.email as user_email, sp.plan_name
+            FROM quota_extensions qe
+            LEFT JOIN user_profiles up ON qe.user_id = up.user_id
+            LEFT JOIN user_subscription us ON qe.subscription_id = us.user_subscription_id
+            LEFT JOIN subscription_plans sp ON us.plan_id = sp.plan_id
+            ORDER BY qe.created_at DESC
+        `);
+        
+        res.json(rows);
+    } catch (error) {
+        console.error('Error fetching admin extensions:', error);
+        res.status(500).json({ error: 'Failed to fetch extensions' });
+    }
+});
+
+// Admin: Confirm payment for extension
+app.put('/api/admin/quota/extensions/:extensionId/confirm-payment', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+    try {
+        const { extensionId } = req.params;
+        const { paymentReference } = req.body;
+        
+        // Update extension status
+        await pool.query(`
+            UPDATE quota_extensions 
+            SET payment_status = 'paid', payment_reference = $1, expires_at = NOW() + INTERVAL '24 hours'
+            WHERE id = $2
+        `, [paymentReference, extensionId]);
+        
+        res.json({ message: 'Payment confirmed successfully' });
+    } catch (error) {
+        console.error('Error confirming payment:', error);
+        res.status(500).json({ error: 'Failed to confirm payment' });
+    }
+});
