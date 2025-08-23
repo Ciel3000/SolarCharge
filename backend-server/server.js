@@ -3191,7 +3191,7 @@ app.post('/api/quota/purchase-extension', supabaseAuthMiddleware, async (req, re
         
         // Handle extension logic based on type
         if (extensionType === 'borrow_next_day') {
-            // Update user subscription to track borrowed amount
+            // Update user subscription to track borrowed amount (penalty only stored for tomorrow)
             await pool.query(`
                 UPDATE user_subscription 
                 SET borrowed_mah_today = COALESCE(borrowed_mah_today, 0) + $1,
