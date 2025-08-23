@@ -654,6 +654,65 @@ app.get('/api/devices/consumption', async (req, res) => {
     }
 });
 
+// --- Quota Validation Function ---
+async function checkUserQuota(user_id) {
+    try {
+        // Get user's active subscription and current usage
+        const { rows } = await pool.query(`
+            SELECT 
+                us.current_daily_mah_consumed,
+                us.borrowed_mah_today,
+                sp.daily_mah_limit
+            FROM user_subscription us
+            JOIN subscription_plans sp ON us.plan_id = sp.plan_id
+            WHERE us.user_id = $1 AND us.is_active = true
+            ORDER BY us.created_at DESC LIMIT 1
+        `, [user_id]);
+
+        if (rows.length === 0) {
+            return { 
+                canCharge: false, 
+                reason: 'No active subscription found',
+                availableQuota: 0,
+                totalUsed: 0,
+                dailyLimit: 0,
+                borrowedToday: 0
+            };
+        }
+
+        const subscription = rows[0];
+        const dailyLimit = subscription.daily_mah_limit || 0;
+        const consumed = subscription.current_daily_mah_consumed || 0;
+        const borrowedToday = subscription.borrowed_mah_today || 0;
+
+        // Calculate available quota
+        const totalUsed = consumed;
+        const availableQuota = Math.max(0, dailyLimit - totalUsed + borrowedToday);
+
+        // User can charge if they have available quota
+        const canCharge = availableQuota > 0;
+
+        return {
+            canCharge,
+            reason: canCharge ? 'Quota available' : 'Daily quota reached. Please purchase an extension.',
+            availableQuota,
+            totalUsed,
+            dailyLimit,
+            borrowedToday
+        };
+    } catch (error) {
+        console.error('Error checking user quota:', error);
+        return { 
+            canCharge: false, 
+            reason: 'Error checking quota',
+            availableQuota: 0,
+            totalUsed: 0,
+            dailyLimit: 0,
+            borrowedToday: 0
+        };
+    }
+}
+
 // Send control command to a specific device (station) AND internal port number
 app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
     const { deviceId, portNumber } = req.params;
@@ -698,6 +757,21 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
             if (!user_id || !station_id) {
                 logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `Attempt to start session without user_id or station_id for ${sessionKey}`);
                 return res.status(400).json({ error: 'user_id and station_id are required to start a session.' });
+            }
+
+            // Check user quota before allowing charging
+            const quotaCheck = await checkUserQuota(user_id);
+            if (!quotaCheck.canCharge) {
+                logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `User ${user_id} attempted to charge without available quota. Reason: ${quotaCheck.reason}`);
+                return res.status(403).json({ 
+                    error: quotaCheck.reason,
+                    quotaInfo: {
+                        availableQuota: quotaCheck.availableQuota,
+                        totalUsed: quotaCheck.totalUsed,
+                        dailyLimit: quotaCheck.dailyLimit,
+                        borrowedToday: quotaCheck.borrowedToday
+                    }
+                });
             }
 
             // Check if there's already an active session in DB for this port
@@ -3263,6 +3337,28 @@ app.post('/api/quota/purchase-extension', supabaseAuthMiddleware, async (req, re
     } catch (error) {
         console.error('Error creating quota extension:', error);
         res.status(500).json({ error: 'Failed to create extension request' });
+    }
+});
+
+// User: Check current quota status
+app.get('/api/user/quota-status', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const userId = req.user.user_id;
+        const quotaCheck = await checkUserQuota(userId);
+        
+        res.json({
+            canCharge: quotaCheck.canCharge,
+            reason: quotaCheck.reason,
+            quotaInfo: {
+                availableQuota: quotaCheck.availableQuota,
+                totalUsed: quotaCheck.totalUsed,
+                dailyLimit: quotaCheck.dailyLimit,
+                borrowedToday: quotaCheck.borrowedToday
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching quota status:', error);
+        res.status(500).json({ error: 'Failed to fetch quota status' });
     }
 });
 
