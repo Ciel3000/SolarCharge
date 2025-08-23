@@ -3159,11 +3159,16 @@ app.post('/api/quota/purchase-extension', supabaseAuthMiddleware, async (req, re
         let penaltyFee = 0;
         
         if (extensionType === 'direct_purchase') {
-            // Fixed pricing: ₱10 for 1000 mAh
-            if (amountMah !== 1000) {
-                return res.status(400).json({ error: 'Direct purchase is fixed at 1000 mAh for ₱10' });
+            // Dynamic pricing based on admin configuration
+            const configuredAmount = pricing.extension_amount_mah || 1000;
+            const configuredPrice = pricing.price_per_transaction || 10;
+            
+            if (amountMah !== configuredAmount) {
+                return res.status(400).json({ 
+                    error: `Direct purchase is fixed at ${configuredAmount} mAh for ₱${configuredPrice}` 
+                });
             }
-            totalCost = 10; // Fixed ₱10
+            totalCost = configuredPrice;
         } else if (extensionType === 'borrow_next_day') {
             // For borrow next day: base fee + penalty percentage on the borrowed amount
             totalCost = parseFloat(pricing.base_fee);
@@ -3223,7 +3228,7 @@ app.post('/api/quota/purchase-extension', supabaseAuthMiddleware, async (req, re
                 RETURNING id
             `, [
                 extensionId, userId, subscriptionId, extensionType, amountMah,
-                pricing.price_per_mah, pricing.base_fee, 0, totalCost,
+                0, 0, 0, totalCost, // No price_per_mah, base_fee, penalty_fee for direct purchase
                 'pending', 'paypal'
             ]);
             
