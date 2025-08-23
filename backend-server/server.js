@@ -3338,7 +3338,7 @@ app.put('/api/admin/quota/extensions/:extensionId/confirm-payment', supabaseAuth
         if (extension.extension_type === 'direct_purchase') {
             await pool.query(`
                 UPDATE user_subscription 
-                SET current_daily_mah_consumed = GREATEST(0, COALESCE(current_daily_mah_consumed, 0) - $1),
+                SET borrowed_mah_today = COALESCE(borrowed_mah_today, 0) + $1,
                     updated_at = NOW()
                 WHERE user_subscription_id = $2
             `, [extension.purchased_amount_mah, extension.subscription_id]);
