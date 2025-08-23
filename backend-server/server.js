@@ -2797,11 +2797,10 @@ function setupBorrowedAmountProcessor() {
                 // Calculate total penalty: borrowed amount + penalty
                 const totalPenalty = row.borrowed_mah_today + row.borrowed_mah_pending;
                 
-                // Apply the penalty by adding to today's consumed amount
+                // Apply the penalty by reducing the daily limit (stored as borrowed_mah_pending for next day)
                 await pool.query(`
                     UPDATE user_subscription 
-                    SET current_daily_mah_consumed = COALESCE(current_daily_mah_consumed, 0) + $1,
-                        borrowed_mah_pending = 0,
+                    SET borrowed_mah_pending = $1,
                         borrowed_mah_today = 0,
                         updated_at = NOW()
                     WHERE user_subscription_id = $2
