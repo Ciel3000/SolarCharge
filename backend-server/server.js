@@ -2,7 +2,6 @@ const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
 const mqtt = require('mqtt');
-const { v4: uuidv4 } = require('uuid');
 require('dotenv').config(); // Load environment variables from .env file
 const jwt = require('jsonwebtoken'); // For JWT decode/verify
 
@@ -3204,7 +3203,6 @@ app.post('/api/quota/purchase-extension', supabaseAuthMiddleware, async (req, re
             `, [amountMah, penaltyFee, subscriptionId]);
         } else if (extensionType === 'direct_purchase') {
             // For direct purchase, create pending extension that requires PayPal payment
-            const extensionId = uuidv4();
             
             // Get the PayPal link from pricing configuration
             const { rows: pricingRows } = await pool.query(`
@@ -3219,15 +3217,15 @@ app.post('/api/quota/purchase-extension', supabaseAuthMiddleware, async (req, re
                 return res.status(400).json({ error: 'PayPal link not configured for direct purchase' });
             }
             
-            // Create extension record with pending status
+            // Create extension record with pending status (using database auto-generated id)
             const { rows: extensionRows } = await pool.query(`
                 INSERT INTO quota_extensions 
-                (extension_id, user_id, subscription_id, extension_type, purchased_amount_mah, 
+                (user_id, subscription_id, extension_type, purchased_amount_mah, 
                  price_per_mah, base_fee, penalty_fee, total_cost, payment_status, payment_reference)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                 RETURNING id
             `, [
-                extensionId, userId, subscriptionId, extensionType, amountMah,
+                userId, subscriptionId, extensionType, amountMah,
                 0, 0, 0, totalCost, // No price_per_mah, base_fee, penalty_fee for direct purchase
                 'pending', 'paypal'
             ]);
