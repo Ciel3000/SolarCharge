@@ -662,6 +662,7 @@ async function checkUserQuota(user_id) {
             SELECT 
                 us.current_daily_mah_consumed,
                 us.borrowed_mah_today,
+                us.last_quota_reset,
                 sp.daily_mah_limit
             FROM user_subscription us
             JOIN subscription_plans sp ON us.plan_id = sp.plan_id
@@ -684,10 +685,51 @@ async function checkUserQuota(user_id) {
         const dailyLimit = subscription.daily_mah_limit || 0;
         const consumed = subscription.current_daily_mah_consumed || 0;
         const borrowedToday = subscription.borrowed_mah_today || 0;
+        const lastQuotaReset = subscription.last_quota_reset;
 
-        // Calculate available quota
-        const totalUsed = consumed;
-        const availableQuota = Math.max(0, dailyLimit - totalUsed + borrowedToday);
+        // Check if we need to reset daily consumption (new day)
+        const now = new Date();
+        const lastResetDate = lastQuotaReset ? new Date(lastQuotaReset) : null;
+        const isNewDay = !lastResetDate || 
+            lastResetDate.getDate() !== now.getDate() || 
+            lastResetDate.getMonth() !== now.getMonth() || 
+            lastResetDate.getFullYear() !== now.getFullYear();
+
+        // Reset daily consumption if it's a new day
+        if (isNewDay && consumed > 0) {
+            await pool.query(`
+                UPDATE user_subscription 
+                SET current_daily_mah_consumed = 0, 
+                    last_quota_reset = NOW(),
+                    borrowed_mah_today = 0
+                WHERE user_id = $1 AND is_active = true
+            `, [user_id]);
+            
+            console.log(`Daily quota reset for user ${user_id}. Previous consumption: ${consumed} mAh`);
+            logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.SUBSCRIPTION, `Daily quota reset for user ${user_id}`, user_id);
+            
+            // Update consumed to 0 for this calculation
+            const updatedConsumed = 0;
+            
+            // Calculate available quota with proper logic
+            const dailyQuotaRemaining = Math.max(0, dailyLimit - updatedConsumed);
+            const borrowedQuotaAvailable = updatedConsumed >= dailyLimit ? borrowedToday : 0;
+            const availableQuota = dailyQuotaRemaining + borrowedQuotaAvailable;
+
+            return {
+                canCharge: availableQuota > 0,
+                reason: availableQuota > 0 ? 'Quota available' : 'Daily quota reached. Please purchase an extension.',
+                availableQuota,
+                totalUsed: updatedConsumed,
+                dailyLimit,
+                borrowedToday
+            };
+        }
+
+        // Calculate available quota with proper logic
+        const dailyQuotaRemaining = Math.max(0, dailyLimit - consumed);
+        const borrowedQuotaAvailable = consumed >= dailyLimit ? borrowedToday : 0;
+        const availableQuota = dailyQuotaRemaining + borrowedQuotaAvailable;
 
         // User can charge if they have available quota
         const canCharge = availableQuota > 0;
@@ -696,7 +738,7 @@ async function checkUserQuota(user_id) {
             canCharge,
             reason: canCharge ? 'Quota available' : 'Daily quota reached. Please purchase an extension.',
             availableQuota,
-            totalUsed,
+            totalUsed: consumed,
             dailyLimit,
             borrowedToday
         };
@@ -2996,6 +3038,7 @@ function setupStaleSessionChecker() {
 setupStaleSessionChecker();
 setupExpiredSubscriptionChecker();
 setupBorrowedAmountProcessor();
+setupDailyQuotaReset();
 
 // Get active sessions for a specific user
 app.get('/api/sessions/active/user', supabaseAuthMiddleware, async (req, res) => {
@@ -3451,3 +3494,45 @@ app.put('/api/admin/quota/extensions/:extensionId/confirm-payment', supabaseAuth
 app.use('*', (req, res) => {
     res.status(404).json({ error: 'Route not found' });
 });
+
+// Background job to reset daily consumption for all users at midnight
+function setupDailyQuotaReset() {
+    setInterval(async () => {
+        try {
+            const now = new Date();
+            // Only run at midnight (00:00)
+            if (now.getHours() === 0 && now.getMinutes() === 0) {
+                console.log('Running daily quota reset for all users...');
+                logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, 'Running daily quota reset');
+                
+                // Reset daily consumption for all active users
+                const { rows } = await pool.query(`
+                    UPDATE user_subscription 
+                    SET current_daily_mah_consumed = 0, 
+                        last_quota_reset = NOW(),
+                        borrowed_mah_today = 0
+                    WHERE is_active = true 
+                    AND (current_daily_mah_consumed > 0 OR borrowed_mah_today > 0)
+                    RETURNING user_subscription_id, user_id, current_daily_mah_consumed, borrowed_mah_today
+                `);
+                
+                if (rows.length > 0) {
+                    console.log(`Reset daily quota for ${rows.length} users`);
+                    logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Reset daily quota for ${rows.length} users`);
+                    
+                    // Log individual resets for debugging
+                    rows.forEach(row => {
+                        console.log(`Reset user ${row.user_id}: consumed=${row.current_daily_mah_consumed} mAh, borrowed=${row.borrowed_mah_today} mAh`);
+                    });
+                } else {
+                    console.log('No users needed daily quota reset');
+                }
+            }
+        } catch (error) {
+            console.error('Error during daily quota reset:', error);
+            logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.BACKEND, `Error during daily quota reset: ${error.message}`);
+        }
+    }, 60 * 1000); // Check every minute
+}
+
+// --- Periodic check for expired subscriptions ---
