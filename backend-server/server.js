@@ -2214,6 +2214,79 @@ app.get('/api/user/subscription', supabaseAuthMiddleware, async (req, res) => {
     }
 });
 
+// Get all user subscriptions including discontinued/expired ones
+app.get('/api/user/subscription-history', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user; // Get user_id from the authenticated request
+
+        // Fetch ALL subscriptions for the user (active and inactive)
+        const subscriptionHistoryResult = await pool.query(`
+            SELECT
+                us.user_subscription_id,
+                us.start_date,
+                us.end_date,
+                us.is_active,
+                us.current_daily_mah_consumed,
+                us.created_at,
+                us.updated_at,
+                sp.plan_id,
+                sp.plan_name,
+                sp.description,
+                sp.price,
+                sp.daily_mah_limit,
+                sp.max_session_duration_hours,
+                sp.fast_charging_access,
+                sp.priority_access,
+                sp.cooldown_percentage,
+                sp.cooldown_time_hour,
+                sp.duration_type,
+                sp.duration_value,
+                CASE 
+                    WHEN us.is_active = false THEN 'Discontinued'
+                    WHEN us.end_date <= NOW() THEN 'Expired'
+                    WHEN us.is_active = true AND us.end_date > NOW() THEN 'Active'
+                    ELSE 'Unknown'
+                END as subscription_status
+            FROM
+                user_subscription us
+            JOIN
+                subscription_plans sp ON us.plan_id = sp.plan_id
+            WHERE
+                us.user_id = $1
+            ORDER BY us.start_date DESC;
+        `, [user_id]);
+
+        const subscriptionHistory = subscriptionHistoryResult.rows || [];
+
+        // Add duration display for each subscription
+        subscriptionHistory.forEach(subscription => {
+            if (subscription.duration_type && subscription.duration_value) {
+                let durationText = '';
+                if (subscription.duration_value === 1) {
+                    durationText = subscription.duration_type.slice(0, -2); // Remove 'ly' from 'monthly'
+                } else {
+                    durationText = `${subscription.duration_value} ${subscription.duration_type}`;
+                }
+                subscription.duration_display = durationText;
+            }
+        });
+
+        res.json({ 
+            subscription_history: subscriptionHistory,
+            total_subscriptions: subscriptionHistory.length,
+            active_subscriptions: subscriptionHistory.filter(sub => sub.subscription_status === 'Active').length,
+            discontinued_subscriptions: subscriptionHistory.filter(sub => sub.subscription_status === 'Discontinued').length,
+            expired_subscriptions: subscriptionHistory.filter(sub => sub.subscription_status === 'Expired').length
+        });
+        
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User ${user_id} fetched subscription history.`);
+    } catch (err) {
+        console.error('API Error fetching user subscription history:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching subscription history for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to fetch subscription history.' });
+    }
+});
+
 // Allows a user to cancel their own subscription
 app.post('/api/subscription/cancel', supabaseAuthMiddleware, async (req, res) => {
     const { user_id } = req.user; // Get user_id from the verified JWT
