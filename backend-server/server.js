@@ -700,9 +700,9 @@ async function checkUserQuota(user_id) {
         }
 
         const subscription = rows[0];
-        const dailyLimit = subscription.daily_mah_limit || 0;
-        const consumed = subscription.current_daily_mah_consumed || 0;
-        const borrowedToday = subscription.borrowed_mah_today || 0;
+        const dailyLimit = Number(subscription.daily_mah_limit) || 0;
+        const consumed = Number(subscription.current_daily_mah_consumed) || 0;
+        const borrowedToday = Number(subscription.borrowed_mah_today) || 0;
         const lastQuotaReset = subscription.last_quota_reset;
         
         // DEBUG: Log quota values for troubleshooting
@@ -740,7 +740,7 @@ async function checkUserQuota(user_id) {
             // Calculate available quota with proper logic
             const dailyQuotaRemaining = Math.max(0, dailyLimit - updatedConsumed);
             const borrowedQuotaAvailable = updatedConsumed >= dailyLimit ? borrowedToday : 0;
-            const availableQuota = dailyQuotaRemaining + borrowedQuotaAvailable;
+            const availableQuota = Number(dailyQuotaRemaining) + Number(borrowedQuotaAvailable);
             
             // DEBUG: Log reset calculation
             console.log(`🔍 DEBUG - After reset calculation for user ${user_id}:`, {
@@ -763,7 +763,7 @@ async function checkUserQuota(user_id) {
         // Calculate available quota with proper logic
         const dailyQuotaRemaining = Math.max(0, dailyLimit - consumed);
         const borrowedQuotaAvailable = consumed >= dailyLimit ? borrowedToday : 0;
-        const availableQuota = dailyQuotaRemaining + borrowedQuotaAvailable;
+        const availableQuota = Number(dailyQuotaRemaining) + Number(borrowedQuotaAvailable);
 
         // DEBUG: Log calculation details
         console.log(`🔍 DEBUG - Quota calculation for user ${user_id}:`, {
