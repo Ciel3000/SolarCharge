@@ -37,6 +37,28 @@ const INACTIVITY_TIMEOUT_SECONDS = 300; // 5 minutes for inactivity timeout
 const NOMINAL_CHARGING_VOLTAGE_DC = 12; // Volts DC. Adjust this based on your battery system.
 const MAX_REASONABLE_CONSUMPTION = 10000; // 10kW in watts, for consumption validation
 
+// Premium user slot limits - easily configurable
+// To change the slot limit, simply modify the value below:
+// - 1 = Users can only have 1 active session at a time (current setting)
+// - 2 = Users can have up to 2 active sessions at a time
+// - 3 = Users can have up to 3 active sessions at a time
+// - etc.
+const PREMIUM_USER_MAX_ACTIVE_SLOTS = 1; // Maximum number of active charging slots per premium user
+
+// --- Helper function to check user's active session count ---
+async function checkUserActiveSessions(user_id) {
+    try {
+        const result = await pool.query(
+            'SELECT COUNT(*) as active_count FROM charging_session WHERE user_id = $1 AND session_status = $2',
+            [user_id, SESSION_STATUS.ACTIVE]
+        );
+        return parseInt(result.rows[0].active_count) || 0;
+    } catch (error) {
+        console.error('Error checking user active sessions:', error);
+        return 0; // Return 0 on error to be safe
+    }
+}
+
 // Default price per mAh if not found in station data (e.g., for ad-hoc sessions)
 const DEFAULT_PRICE_PER_MAH = 0.25; // Example: $0.25 per mAh
 
@@ -869,6 +891,21 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                         totalUsed: quotaCheck.totalUsed,
                         dailyLimit: quotaCheck.dailyLimit,
                         borrowedToday: quotaCheck.borrowedToday
+                    }
+                });
+            }
+
+            // Check user's active session count (slot limit)
+            const activeSessionCount = await checkUserActiveSessions(user_id);
+            if (activeSessionCount >= PREMIUM_USER_MAX_ACTIVE_SLOTS) {
+                const errorMessage = `You can only have ${PREMIUM_USER_MAX_ACTIVE_SLOTS} active charging session${PREMIUM_USER_MAX_ACTIVE_SLOTS > 1 ? 's' : ''} at a time. Please stop your current session before starting a new one.`;
+                logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `User ${user_id} attempted to start session but already has ${activeSessionCount} active sessions (limit: ${PREMIUM_USER_MAX_ACTIVE_SLOTS})`);
+                return res.status(409).json({ 
+                    error: errorMessage,
+                    slotInfo: {
+                        activeSessions: activeSessionCount,
+                        maxSlots: PREMIUM_USER_MAX_ACTIVE_SLOTS,
+                        limitReached: true
                     }
                 });
             }
@@ -2055,6 +2092,18 @@ app.get('/api/sessions/:sessionId/consumption', async (req, res) => {
         console.error('Error fetching session consumption data:', error);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching session consumption data for ${sessionId}: ${error.message}`);
         res.status(500).json({ error: 'Failed to fetch session consumption data' });
+    }
+});
+
+// Get slot limit configuration for frontend
+app.get('/api/config/slot-limits', async (req, res) => {
+    try {
+        res.json({
+            premiumUserMaxActiveSlots: PREMIUM_USER_MAX_ACTIVE_SLOTS
+        });
+    } catch (error) {
+        console.error('Error getting slot limits config:', error);
+        res.status(500).json({ error: 'Failed to get slot limits configuration' });
     }
 });
 
