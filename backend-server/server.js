@@ -14,6 +14,24 @@ const activeChargerSessions = {};
 // activePortTimers: Maps `${deviceId}_${portNumberInDevice}` -> { timerId: setTimeout_ID, lastConsumptionTime: Date.now() }
 const activePortTimers = {};
 
+// --- Session locking mechanism to prevent race conditions ---
+const sessionLocks = new Map(); // Maps sessionKey -> lock status
+
+// Helper function to acquire lock
+async function acquireSessionLock(sessionKey, timeoutMs = 5000) {
+  const startTime = Date.now();
+  
+  while (sessionLocks.has(sessionKey)) {
+    if (Date.now() - startTime > timeoutMs) {
+      throw new Error('Session lock timeout - port is busy');
+    }
+    await new Promise(resolve => setTimeout(resolve, 100)); // Wait 100ms
+  }
+  
+  sessionLocks.set(sessionKey, true);
+  return () => sessionLocks.delete(sessionKey); // Return unlock function
+}
+
 // --- Constants ---
 const INACTIVITY_TIMEOUT_SECONDS = 300; // 5 minutes for inactivity timeout
 const NOMINAL_CHARGING_VOLTAGE_DC = 12; // Volts DC. Adjust this based on your battery system.
@@ -686,6 +704,14 @@ async function checkUserQuota(user_id) {
         const consumed = subscription.current_daily_mah_consumed || 0;
         const borrowedToday = subscription.borrowed_mah_today || 0;
         const lastQuotaReset = subscription.last_quota_reset;
+        
+        // DEBUG: Log quota values for troubleshooting
+        console.log(`🔍 DEBUG - Quota check for user ${user_id}:`, {
+            dailyLimit,
+            consumed,
+            borrowedToday,
+            lastQuotaReset: lastQuotaReset?.toISOString?.() || 'null'
+        });
 
         // Check if we need to reset daily consumption (new day)
         const now = new Date();
@@ -715,6 +741,14 @@ async function checkUserQuota(user_id) {
             const dailyQuotaRemaining = Math.max(0, dailyLimit - updatedConsumed);
             const borrowedQuotaAvailable = updatedConsumed >= dailyLimit ? borrowedToday : 0;
             const availableQuota = dailyQuotaRemaining + borrowedQuotaAvailable;
+            
+            // DEBUG: Log reset calculation
+            console.log(`🔍 DEBUG - After reset calculation for user ${user_id}:`, {
+                dailyQuotaRemaining,
+                borrowedQuotaAvailable,
+                availableQuota,
+                updatedConsumed
+            });
 
             return {
                 canCharge: availableQuota > 0,
@@ -730,6 +764,14 @@ async function checkUserQuota(user_id) {
         const dailyQuotaRemaining = Math.max(0, dailyLimit - consumed);
         const borrowedQuotaAvailable = consumed >= dailyLimit ? borrowedToday : 0;
         const availableQuota = dailyQuotaRemaining + borrowedQuotaAvailable;
+
+        // DEBUG: Log calculation details
+        console.log(`🔍 DEBUG - Quota calculation for user ${user_id}:`, {
+            dailyQuotaRemaining,
+            borrowedQuotaAvailable,
+            availableQuota,
+            calculation: `${dailyLimit} - ${consumed} = ${dailyQuotaRemaining}, borrowed: ${borrowedQuotaAvailable}`
+        });
 
         // User can charge if they have available quota
         const canCharge = availableQuota > 0;
@@ -783,19 +825,34 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
             return res.status(404).json({ error: `Port ${internalPortNumber} not found for device ${deviceId}.` });
         }
 
-        // Session Management Logic
+        // Session Management Logic with locking
         const sessionKey = `${deviceId}_${internalPortNumber}`;
-        let currentSessionId = activeChargerSessions[sessionKey];
-
-        // Determine the port status to set in the DB
-        let newPortStatusForDb;
-        if (command === CHARGER_STATES.ON) {
-            newPortStatusForDb = isPremiumPort ? PORT_STATUS.CHARGING_PREMIUM : PORT_STATUS.CHARGING_FREE;
-        } else { // command === CHARGER_STATES.OFF
-            newPortStatusForDb = PORT_STATUS.AVAILABLE;
+        
+        // Acquire lock before processing session management
+        let unlock;
+        try {
+            unlock = await acquireSessionLock(sessionKey);
+        } catch (lockError) {
+            console.error(`Failed to acquire session lock for ${sessionKey}:`, lockError);
+            logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Session lock timeout for ${sessionKey}: ${lockError.message}`);
+            return res.status(409).json({ 
+                error: 'Port is currently busy. Please try again in a moment.',
+                details: lockError.message 
+            });
         }
+        
+        try {
+            let currentSessionId = activeChargerSessions[sessionKey];
 
-        if (command === CHARGER_STATES.ON) {
+            // Determine the port status to set in the DB
+            let newPortStatusForDb;
+            if (command === CHARGER_STATES.ON) {
+                newPortStatusForDb = isPremiumPort ? PORT_STATUS.CHARGING_PREMIUM : PORT_STATUS.CHARGING_FREE;
+            } else { // command === CHARGER_STATES.OFF
+                newPortStatusForDb = PORT_STATUS.AVAILABLE;
+            }
+
+            if (command === CHARGER_STATES.ON) {
             if (!user_id || !station_id) {
                 logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `Attempt to start session without user_id or station_id for ${sessionKey}`);
                 return res.status(400).json({ error: 'user_id and station_id are required to start a session.' });
@@ -947,6 +1004,11 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                 sessionId: currentSessionId
             });
         });
+
+        } finally {
+            // Always release the lock
+            unlock();
+        }
 
     } catch (error) {
         console.error('Error processing control command:', error);
