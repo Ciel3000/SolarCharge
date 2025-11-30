@@ -438,14 +438,26 @@ function StationPage({ station, navigateTo }) {
   // Show error if no station data
   if (!stationData) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="bg-white p-8 rounded-xl shadow-2xl text-center">
-          <h2 className="text-2xl font-bold mb-4">No Station Selected</h2>
-          <p className="text-gray-600 mb-4">
+      <div className="min-h-screen flex items-center justify-center relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+        {/* Animated Background Orbs */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-float-slow" style={{ background: 'radial-gradient(circle, rgba(249, 210, 23, 0.25) 0%, rgba(249, 210, 23, 0.1) 50%, transparent 100%)' }}></div>
+          <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-float-slow-delay" style={{ background: 'radial-gradient(circle, rgba(56, 182, 255, 0.25) 0%, rgba(56, 182, 255, 0.1) 50%, transparent 100%)' }}></div>
+        </div>
+        <div className="relative z-10 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/30 text-center" style={{
+          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+          boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+        }}>
+          <h2 className="text-2xl font-bold mb-4" style={{ color: '#000b3d' }}>No Station Selected</h2>
+          <p className="mb-4" style={{ color: '#000b3d', opacity: 0.7 }}>
             {location.state?.error || 'Please select a station from the home page.'}
           </p>
           <button
-            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded-lg"
+            className="font-bold py-2 px-6 rounded-xl text-white transition-all duration-300 hover:scale-105"
+            style={{
+              background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
+              boxShadow: '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+            }}
             onClick={() => navigate(fromRoute)}
           >
             ← Back to {fromRoute === '/home' ? 'Home' : 'Previous Page'}
@@ -456,78 +468,112 @@ function StationPage({ station, navigateTo }) {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-100 to-green-100 p-4">
-      <div className="max-w-3xl mx-auto bg-white rounded-xl shadow-2xl p-8 mt-8">
-        <button
-          className="mb-6 bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg"
-          onClick={() => navigate(fromRoute)}
-        >
-          ← Back to Home
-        </button>
+    <div className="min-h-screen flex flex-col items-center p-4 text-gray-800 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+      {/* Animated Background Orbs */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-float-slow" style={{ background: 'radial-gradient(circle, rgba(249, 210, 23, 0.25) 0%, rgba(249, 210, 23, 0.1) 50%, transparent 100%)' }}></div>
+        <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-float-slow-delay" style={{ background: 'radial-gradient(circle, rgba(56, 182, 255, 0.25) 0%, rgba(56, 182, 255, 0.1) 50%, transparent 100%)' }}></div>
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full blur-3xl animate-pulse-slow" style={{ background: 'radial-gradient(circle, rgba(0, 11, 61, 0.15) 0%, rgba(0, 11, 61, 0.05) 50%, transparent 100%)' }}></div>
+      </div>
 
-        <h1 className="text-3xl font-bold text-blue-800 mb-4">{stationData.station_name}</h1>
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4">
-          <div className="flex-1">
-            <p className="text-gray-700 mb-2"><strong>Location:</strong> {stationData.location_description}</p>
-            {/* <p className="text-gray-700 mb-2"><strong>Device ID:</strong> {stationData.device_mqtt_id || 'Not configured'}</p> */}
-          </div>
-          <div className="mt-2 sm:mt-0 sm:ml-4">
+      {/* Main Content */}
+      <div className="w-full pt-24 pb-8">
+        <div className="w-full max-w-4xl mx-auto relative z-10 animate-fade-in px-4 sm:px-6 lg:px-8">
+          {/* Glass card effect */}
+          <div className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-8 sm:py-12 px-6 sm:px-8 lg:px-12" style={{ 
+            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+            boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+          }}>
             <button
-              onClick={() => {
-                openGoogleMaps(stationData.location_description, stationData.latitude, stationData.longitude);
-                setMapMessage(`📍 Opening ${stationData.station_name} location in Google Maps`);
-                // Clear any existing timeout
-                if (mapMessageTimeoutRef.current) {
-                  clearTimeout(mapMessageTimeoutRef.current);
-                }
-                // Clear message after 3 seconds
-                mapMessageTimeoutRef.current = setTimeout(() => setMapMessage(''), 3000);
+              className="mb-6 font-bold py-2 px-4 rounded-xl text-white transition-all duration-300 hover:scale-105"
+              style={{
+                background: 'linear-gradient(135deg, rgba(0, 11, 61, 0.8) 0%, rgba(0, 11, 61, 0.6) 100%)',
+                backdropFilter: 'blur(10px)',
+                border: '1px solid rgba(255, 255, 255, 0.2)',
+                boxShadow: '0 4px 16px rgba(0, 11, 61, 0.3)'
               }}
-              className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg transition-colors flex items-center gap-2 shadow-md hover:shadow-lg"
+              onClick={() => navigate(fromRoute)}
             >
-              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd"></path>
-              </svg>
-              View on Map
+              ← Back to Home
             </button>
-          </div>
-        </div>
 
-        {/* Map Message */}
-        {mapMessage && (
-          <div className="mb-4 p-3 bg-blue-100 border border-blue-400 text-blue-700 rounded-lg text-center">
-            {mapMessage}
-          </div>
-        )}
+            <h1 className="text-3xl sm:text-4xl font-bold mb-4" style={{ color: '#000b3d' }}>{stationData.station_name}</h1>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4">
+              <div className="flex-1">
+                <p className="mb-2" style={{ color: '#000b3d', opacity: 0.8 }}><strong>Location:</strong> {stationData.location_description}</p>
+              </div>
+              <div className="mt-2 sm:mt-0 sm:ml-4">
+                <button
+                  onClick={() => {
+                    openGoogleMaps(stationData.location_description, stationData.latitude, stationData.longitude);
+                    setMapMessage(`📍 Opening ${stationData.station_name} location in Google Maps`);
+                    // Clear any existing timeout
+                    if (mapMessageTimeoutRef.current) {
+                      clearTimeout(mapMessageTimeoutRef.current);
+                    }
+                    // Clear message after 3 seconds
+                    mapMessageTimeoutRef.current = setTimeout(() => setMapMessage(''), 3000);
+                  }}
+                  className="font-bold py-2 px-4 rounded-xl text-white transition-all duration-300 hover:scale-105 flex items-center gap-2"
+                  style={{
+                    background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
+                    boxShadow: '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                  }}
+                >
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd"></path>
+                  </svg>
+                  View on Map
+                </button>
+              </div>
+            </div>
 
-        {/* Slot Status Indicator */}
-        <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <svg className="w-5 h-5 text-blue-600" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm0 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V8zm0 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1v-2z" clipRule="evenodd"></path>
-              </svg>
-              <span className="font-semibold text-gray-700">Active Sessions:</span>
+            {/* Map Message */}
+            {mapMessage && (
+              <div className="mb-4 p-3 rounded-lg text-center backdrop-blur-md" style={{
+                background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.1) 100%)',
+                border: '1px solid rgba(56, 182, 255, 0.3)',
+                color: '#000b3d'
+              }}>
+                {mapMessage}
+              </div>
+            )}
+
+            {/* Slot Status Indicator */}
+            <div className="mb-4 p-4 rounded-xl backdrop-blur-md" style={{
+              background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.15) 100%)',
+              border: '1px solid rgba(255, 255, 255, 0.3)'
+            }}>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <svg className="w-5 h-5" style={{ color: '#38b6ff' }} fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm0 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V8zm0 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1v-2z" clipRule="evenodd"></path>
+                  </svg>
+                  <span className="font-semibold" style={{ color: '#000b3d' }}>Active Sessions:</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                    userActiveSessions >= maxActiveSlots 
+                      ? 'bg-red-100 text-red-800' 
+                      : 'bg-green-100 text-green-800'
+                  }`}>
+                    {userActiveSessions}/{maxActiveSlots}
+                  </span>
+                  <span className="text-sm" style={{ color: '#000b3d', opacity: 0.7 }}>
+                    {userActiveSessions >= maxActiveSlots ? 'Limit reached' : 'Available'}
+                  </span>
+                </div>
+              </div>
+              {userActiveSessions >= maxActiveSlots && (
+                <div className="mt-2 text-sm p-2 rounded backdrop-blur-md" style={{
+                  background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.1) 100%)',
+                  border: '1px solid rgba(249, 210, 23, 0.3)',
+                  color: '#000b3d'
+                }}>
+                  ⚠️ You can only have {maxActiveSlots} active charging session{maxActiveSlots > 1 ? 's' : ''} at a time. Stop your current session{maxActiveSlots > 1 ? 's' : ''} to start a new one.
+                </div>
+              )}
             </div>
-            <div className="flex items-center gap-2">
-              <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                userActiveSessions >= maxActiveSlots 
-                  ? 'bg-red-100 text-red-800' 
-                  : 'bg-green-100 text-green-800'
-              }`}>
-                {userActiveSessions}/{maxActiveSlots}
-              </span>
-              <span className="text-sm text-gray-600">
-                {userActiveSessions >= maxActiveSlots ? 'Limit reached' : 'Available'}
-              </span>
-            </div>
-          </div>
-          {userActiveSessions >= maxActiveSlots && (
-            <div className="mt-2 text-sm text-amber-700 bg-amber-50 p-2 rounded border border-amber-200">
-              ⚠️ You can only have {maxActiveSlots} active charging session{maxActiveSlots > 1 ? 's' : ''} at a time. Stop your current session{maxActiveSlots > 1 ? 's' : ''} to start a new one.
-            </div>
-          )}
-        </div>
 
         {/* Debug Information - Commented out for production */}
         {/* {process.env.NODE_ENV === 'development' && (
@@ -543,109 +589,145 @@ function StationPage({ station, navigateTo }) {
           </div>
         )} */}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-          <div className="bg-blue-50 p-4 rounded-lg">
-            <span className="text-gray-600">Free Ports</span>
-            <div className="text-2xl font-bold text-blue-600">
-              {stationData.num_free_ports}
-            </div>
-          </div>
-          <div className="bg-purple-50 p-4 rounded-lg">
-            <span className="text-gray-600">Premium Ports</span>
-            <div className="text-2xl font-bold text-purple-600">
-              {stationData.available_premium_ports} / {stationData.num_premium_ports}
-            </div>
-          </div>
-        </div>
-
-        {stationData.last_maintenance_message && (
-          <div className="mt-6 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
-            <span className="text-gray-700 text-sm">🛠️ Last Maintenance: {stationData.last_maintenance_message}</span>
-          </div>
-        )}
-
-        {session && user?.id && (
-          <div className="mt-8">
-            <div className="flex justify-between items-center mb-4">
-              <h2 className="text-xl font-bold text-gray-800">Control Charger Ports</h2>
-              <button
-                onClick={() => {
-                  fetchChargerDeviceStatus();
-                  fetchActiveUserSessions();
-                  fetchPortConsumption();
-                }}
-                className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg"
-              >
-                Refresh Status
-              </button>
-            </div>
-            {feedback && (
-              <div className="mb-4 text-center text-green-700 font-semibold">{feedback}</div>
-            )}
-            
-            {stationData.num_premium_ports > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {premiumPorts.map(([frontendPortNumber, mappedPortDetails]) => {
-                  const currentStatus = getPortDisplayStatus(mappedPortDetails.internalPortNumber);
-                  
-                  return (
-                    <div key={frontendPortNumber} className="bg-gray-50 rounded-lg p-6 flex flex-col items-center shadow">
-                      <div className="text-lg font-semibold mb-2">{mappedPortDetails.label}</div>
-                      <div className={`mb-2 text-sm font-bold ${
-                        currentStatus.displayStatus.includes('Offline') ? 'text-red-600' : 
-                        currentStatus.displayStatus.includes('Your Session') ? 'text-green-600' : 
-                        currentStatus.displayStatus.includes('Occupied') ? 'text-orange-600' : 
-                        'text-gray-500'
-                      }`}>
-                        {currentStatus.displayStatus}
-                      </div>
-                      
-                      <div className="text-center mb-4">
-                        <div className="text-xs text-gray-600 mb-1">Current Consumption</div>
-                        <div className="text-lg font-bold text-blue-600">
-                          {currentStatus.consumption.toFixed(2)} mA
-                        </div>
-                        <div className="text-xs text-gray-600 mt-1">Total: {currentStatus.totalMah.toFixed(2)} mAh</div>
-                      </div>
-
-                      {currentStatus.displayStatus === 'Offline' ? (
-                        <button
-                          className="bg-gray-400 text-white font-bold py-2 px-6 rounded-lg cursor-not-allowed"
-                          disabled
-                        >
-                          Offline
-                        </button>
-                      ) : (
-                        <button
-                          className={`font-bold py-2 px-6 rounded-lg transition-colors ${
-                            currentStatus.buttonDisabled 
-                              ? 'bg-gray-400 text-white cursor-not-allowed' 
-                              : currentStatus.isUserSession
-                                ? 'bg-red-500 hover:bg-red-600 text-white'
-                                : 'bg-green-500 hover:bg-green-600 text-white'
-                          }`}
-                          onClick={() => handleControlCommand(mappedPortDetails.internalPortNumber, currentStatus.isUserSession ? 'OFF' : 'ON')}
-                          disabled={currentStatus.buttonDisabled || loadingPort === mappedPortDetails.internalPortNumber}
-                        >
-                          {loadingPort === mappedPortDetails.internalPortNumber ? 'Processing...' : currentStatus.buttonText}
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="text-center py-8">
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
-                  <div className="text-yellow-800 text-lg font-semibold mb-2">⚠️ Premium Ports Not Available</div>
-                  <div className="text-yellow-700">
-                    This station does not have any premium charging ports configured.
-                  </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
+              <div className="p-4 rounded-xl backdrop-blur-md" style={{
+                background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.1) 100%)',
+                border: '1px solid rgba(56, 182, 255, 0.3)'
+              }}>
+                <span style={{ color: '#000b3d', opacity: 0.8 }}>Free Ports</span>
+                <div className="text-2xl font-bold" style={{ color: '#38b6ff' }}>
+                  {stationData.num_free_ports}
                 </div>
               </div>
+              <div className="p-4 rounded-xl backdrop-blur-md" style={{
+                background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.1) 100%)',
+                border: '1px solid rgba(249, 210, 23, 0.3)'
+              }}>
+                <span style={{ color: '#000b3d', opacity: 0.8 }}>Premium Ports</span>
+                <div className="text-2xl font-bold" style={{ color: '#f9d217' }}>
+                  {stationData.available_premium_ports} / {stationData.num_premium_ports}
+                </div>
+              </div>
+            </div>
+
+            {stationData.last_maintenance_message && (
+              <div className="mt-6 p-4 rounded-xl backdrop-blur-md" style={{
+                background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.1) 100%)',
+                border: '1px solid rgba(249, 210, 23, 0.3)'
+              }}>
+                <span className="text-sm" style={{ color: '#000b3d', opacity: 0.8 }}>🛠️ Last Maintenance: {stationData.last_maintenance_message}</span>
+              </div>
+            )}
+
+            {session && user?.id && (
+              <div className="mt-8">
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-xl font-bold" style={{ color: '#000b3d' }}>Control Charger Ports</h2>
+                  <button
+                    onClick={() => {
+                      fetchChargerDeviceStatus();
+                      fetchActiveUserSessions();
+                      fetchPortConsumption();
+                    }}
+                    className="font-bold py-2 px-4 rounded-xl text-white transition-all duration-300 hover:scale-105"
+                    style={{
+                      background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
+                      boxShadow: '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                    }}
+                  >
+                    Refresh Status
+                  </button>
+                </div>
+                {feedback && (
+                  <div className="mb-4 text-center font-semibold backdrop-blur-md p-3 rounded-lg" style={{
+                    background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(16, 185, 129, 0.1) 100%)',
+                    border: '1px solid rgba(16, 185, 129, 0.3)',
+                    color: '#000b3d'
+                  }}>{feedback}</div>
+                )}
+                
+                {stationData.num_premium_ports > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {premiumPorts.map(([frontendPortNumber, mappedPortDetails]) => {
+                      const currentStatus = getPortDisplayStatus(mappedPortDetails.internalPortNumber);
+                      
+                      return (
+                        <div key={frontendPortNumber} className="group relative backdrop-blur-xl rounded-2xl p-6 flex flex-col items-center transform transition-all duration-500 hover:scale-105 hover:-translate-y-2" style={{
+                          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.15) 100%)',
+                          border: '1px solid rgba(255, 255, 255, 0.3)',
+                          boxShadow: '0 8px 32px 0 rgba(56, 182, 255, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+                        }}>
+                          <div className="text-lg font-semibold mb-2" style={{ color: '#000b3d' }}>{mappedPortDetails.label}</div>
+                          <div className={`mb-2 text-sm font-bold ${
+                            currentStatus.displayStatus.includes('Offline') ? 'text-red-600' : 
+                            currentStatus.displayStatus.includes('Your Session') ? 'text-green-600' : 
+                            currentStatus.displayStatus.includes('Occupied') ? 'text-orange-600' : 
+                            ''
+                          }`} style={!currentStatus.displayStatus.includes('Offline') && !currentStatus.displayStatus.includes('Your Session') && !currentStatus.displayStatus.includes('Occupied') ? { color: '#000b3d', opacity: 0.7 } : {}}>
+                            {currentStatus.displayStatus}
+                          </div>
+                          
+                          <div className="text-center mb-4">
+                            <div className="text-xs mb-1" style={{ color: '#000b3d', opacity: 0.7 }}>Current Consumption</div>
+                            <div className="text-lg font-bold" style={{ color: '#38b6ff' }}>
+                              {currentStatus.consumption.toFixed(2)} mA
+                            </div>
+                            <div className="text-xs mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>Total: {currentStatus.totalMah.toFixed(2)} mAh</div>
+                          </div>
+
+                          {currentStatus.displayStatus === 'Offline' ? (
+                            <button
+                              className="font-bold py-2 px-6 rounded-xl text-white cursor-not-allowed"
+                              style={{
+                                background: 'linear-gradient(135deg, rgba(107, 114, 128, 0.6) 0%, rgba(75, 85, 99, 0.6) 100%)',
+                                boxShadow: '0 4px 12px rgba(107, 114, 128, 0.3)'
+                              }}
+                              disabled
+                            >
+                              Offline
+                            </button>
+                          ) : (
+                            <button
+                              className={`font-bold py-2 px-6 rounded-xl text-white transition-all duration-300 hover:scale-105 ${
+                                currentStatus.buttonDisabled ? 'cursor-not-allowed' : ''
+                              }`}
+                              style={currentStatus.buttonDisabled ? {
+                                background: 'linear-gradient(135deg, rgba(107, 114, 128, 0.6) 0%, rgba(75, 85, 99, 0.6) 100%)',
+                                boxShadow: '0 4px 12px rgba(107, 114, 128, 0.3)'
+                              } : currentStatus.isUserSession ? {
+                                background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+                                boxShadow: '0 8px 24px rgba(239, 68, 68, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                              } : {
+                                background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                                boxShadow: '0 8px 24px rgba(16, 185, 129, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                              }}
+                              onClick={() => handleControlCommand(mappedPortDetails.internalPortNumber, currentStatus.isUserSession ? 'OFF' : 'ON')}
+                              disabled={currentStatus.buttonDisabled || loadingPort === mappedPortDetails.internalPortNumber}
+                            >
+                              {loadingPort === mappedPortDetails.internalPortNumber ? 'Processing...' : currentStatus.buttonText}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <div className="backdrop-blur-xl rounded-2xl p-6" style={{
+                      background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.1) 100%)',
+                      border: '1px solid rgba(249, 210, 23, 0.3)'
+                    }}>
+                      <div className="text-lg font-semibold mb-2" style={{ color: '#000b3d' }}>⚠️ Premium Ports Not Available</div>
+                      <div style={{ color: '#000b3d', opacity: 0.8 }}>
+                        This station does not have any premium charging ports configured.
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
