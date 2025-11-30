@@ -24,6 +24,7 @@ function AdminStations({ navigateTo, handleSignOut }) {
      battery_capacity_kwh: '',
      current_battery_level: '',
      price_per_kwh: '',
+     device_mqtt_id: '',
      num_free_ports: 2,
      num_premium_ports: 2,
      is_active: true
@@ -116,6 +117,7 @@ function AdminStations({ navigateTo, handleSignOut }) {
              battery_capacity_kwh: station.battery_capacity_mah ? (station.battery_capacity_mah / 1000).toFixed(2) : '', // Convert mAh to kWh
        current_battery_level: station.current_battery_level,
        price_per_kwh: station.price_per_mah ? (station.price_per_mah * 1000).toFixed(2) : 0.25, // Convert price per mAh to price per kWh
+       device_mqtt_id: station.device_mqtt_id || '',
        num_free_ports: station.num_free_ports,
        num_premium_ports: station.num_premium_ports,
        is_active: station.is_active
@@ -144,6 +146,7 @@ function AdminStations({ navigateTo, handleSignOut }) {
        battery_capacity_kwh: '',
        current_battery_level: 100,
        price_per_kwh: 0.25,
+       device_mqtt_id: '',
        num_free_ports: 2,
        num_premium_ports: 2,
        is_active: true
@@ -167,7 +170,7 @@ function AdminStations({ navigateTo, handleSignOut }) {
                               // Validate required fields
          if (!formData.station_name || !formData.location_description || !formData.latitude || 
              !formData.longitude || !formData.solar_panel_wattage || !formData.battery_capacity_kwh || 
-             !formData.current_battery_level || !formData.price_per_kwh || !formData.num_free_ports || !formData.num_premium_ports) {
+             !formData.current_battery_level || !formData.price_per_kwh || !formData.device_mqtt_id || !formData.num_free_ports || !formData.num_premium_ports) {
            throw new Error('All fields are required');
          }
        
@@ -181,6 +184,7 @@ function AdminStations({ navigateTo, handleSignOut }) {
          battery_capacity_mah: (parseFloat(formData.battery_capacity_kwh) || 0) * 1000, // Convert kWh to mAh
          current_battery_level: parseFloat(formData.current_battery_level) || 0,
          price_per_mah: (parseFloat(formData.price_per_kwh) || 0.25) / 1000, // Convert price per kWh to price per mAh
+         device_mqtt_id: formData.device_mqtt_id.trim(),
          num_free_ports: parseInt(formData.num_free_ports) || 0,
          num_premium_ports: parseInt(formData.num_premium_ports) || 0,
          is_active: formData.is_active
@@ -419,20 +423,35 @@ function AdminStations({ navigateTo, handleSignOut }) {
                   />
                 </div>
                 
-                <div>
-                                     <label className="block text-gray-700 text-sm font-bold mb-2">
+                                 <div>
+                   <label className="block text-gray-700 text-sm font-bold mb-2">
                      Price per kWh (₱)
                    </label>
-                  <input
-                    type="number"
-                    name="price_per_kwh"
-                    value={formData.price_per_kwh}
-                    onChange={handleInputChange}
-                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-                    step="0.01"
-                    required
-                  />
-                </div>
+                   <input
+                     type="number"
+                     name="price_per_kwh"
+                     value={formData.price_per_kwh}
+                     onChange={handleInputChange}
+                     className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                     step="0.01"
+                     required
+                   />
+                 </div>
+                 
+                 <div>
+                   <label className="block text-gray-700 text-sm font-bold mb-2">
+                     Device MQTT ID
+                   </label>
+                   <input
+                     type="text"
+                     name="device_mqtt_id"
+                     value={formData.device_mqtt_id}
+                     onChange={handleInputChange}
+                     placeholder="e.g., ESP32_CHARGER_STATION_001"
+                     className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                     required
+                   />
+                 </div>
                 
                                  <div>
                    <label className="block text-gray-700 text-sm font-bold mb-2">
@@ -520,9 +539,10 @@ function AdminStations({ navigateTo, handleSignOut }) {
                     </span>
                   </div>
                   
-                  <p className="text-gray-600 mt-2">{station.location_description}</p>
-                  
-                                     <div className="mt-4 grid grid-cols-2 gap-2">
+                                     <p className="text-gray-600 mt-2">{station.location_description}</p>
+                   <p className="text-gray-600 text-sm mt-1"><strong>Device ID:</strong> {station.device_mqtt_id || 'Not set'}</p>
+                   
+                   <div className="mt-4 grid grid-cols-2 gap-2">
                      <div>
                        <p className="text-gray-600 text-sm">Free Ports</p>
                        <p className="font-bold">{station.num_free_ports}</p>

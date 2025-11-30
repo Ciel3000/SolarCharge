@@ -3,7 +3,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../supabaseClient';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://solar-charger-backend.onrender.com';
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
 function AdminPlans({ navigateTo, handleSignOut }) {
   const { session, user, isAdmin, isLoading } = useAuth();

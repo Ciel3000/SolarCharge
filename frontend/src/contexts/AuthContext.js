@@ -12,7 +12,36 @@ export const AuthProvider = ({ children }) => {
   const [subscription, setSubscription] = useState(null);
   const [plans, setPlans] = useState([]);
   const [error, setError] = useState(null);
-  const [initialized, setInitialized] = useState(false); // Track if auth has been initialized
+  const [initialized, setInitialized] = useState(false);
+  const [isRecovering, setIsRecovering] = useState(false); // Add recovery state
+  const [sessionTimeout, setSessionTimeout] = useState(null); // Track session timeout
+
+  // --- Session timeout handler ---
+  const handleSessionTimeout = useCallback(() => {
+    console.log("AuthContext: Session timeout detected");
+    setSession(null);
+    setUser(null);
+    setIsAdmin(false);
+    setSubscription(null);
+    setPlans([]);
+    setError("Session expired. Please log in again.");
+    setInitialized(false);
+  }, []);
+
+  // --- Check if session is expired ---
+  const isSessionExpired = useCallback((currentSession) => {
+    if (!currentSession?.access_token) return true;
+    
+    try {
+      // Decode JWT token to check expiration
+      const payload = JSON.parse(atob(currentSession.access_token.split('.')[1]));
+      const currentTime = Math.floor(Date.now() / 1000);
+      return payload.exp < currentTime;
+    } catch (error) {
+      console.error("AuthContext: Error checking session expiration:", error);
+      return true; // Assume expired if we can't decode
+    }
+  }, []);
 
   // --- Helper to check admin status by calling backend API ---
   const checkAdminStatus = useCallback(async (currentSession) => {
@@ -28,6 +57,9 @@ export const AuthProvider = ({ children }) => {
       if (res.ok) {
         const userData = await res.json();
         setIsAdmin(userData.is_admin);
+      } else if (res.status === 401) {
+        console.error("AuthContext: Unauthorized - session may be expired");
+        handleSessionTimeout();
       } else {
         console.error("AuthContext: Failed to fetch /api/me status:", res.status, await res.text());
         setIsAdmin(false);
@@ -36,7 +68,7 @@ export const AuthProvider = ({ children }) => {
       console.error("AuthContext: Error checking admin status:", err);
       setIsAdmin(false);
     }
-  }, []);
+  }, [handleSessionTimeout]);
 
   // --- Helper to fetch user subscription and all plans ---
   const fetchSubscriptionAndPlans = useCallback(async (currentSession) => {
@@ -57,29 +89,29 @@ export const AuthProvider = ({ children }) => {
         setPlans(plansData || []);
       }
 
-             // Then fetch user's active subscription (this might not exist)
-       try {
-         const { data: subData, error: subError } = await supabase
-           .from('user_subscription')
-           .select(`
-             *,
-             subscription_plans (*)
-           `)
-           .eq('user_id', currentSession.user.id)
-           .eq('is_active', true)
-           .limit(1); // Use limit instead of maybeSingle to handle multiple or no results
+      // Then fetch user's active subscription (this might not exist)
+      try {
+        const { data: subData, error: subError } = await supabase
+          .from('user_subscription')
+          .select(`
+            *,
+            subscription_plans (*)
+          `)
+          .eq('user_id', currentSession.user.id)
+          .eq('is_active', true)
+          .limit(1);
 
-         if (subError) {
-           console.error("AuthContext: Error fetching subscription:", subError);
-           setSubscription(null);
-         } else {
-           // Take the first result if any, or null if empty array
-           setSubscription(subData && subData.length > 0 ? subData[0] : null);
-         }
-       } catch (subscriptionError) {
-         console.error("AuthContext: Subscription fetch failed:", subscriptionError);
-         setSubscription(null);
-       }
+        if (subError) {
+          console.error("AuthContext: Error fetching subscription:", subError);
+          setSubscription(null);
+        } else {
+          // Take the first result if any, or null if empty array
+          setSubscription(subData && subData.length > 0 ? subData[0] : null);
+        }
+      } catch (subscriptionError) {
+        console.error("AuthContext: Subscription fetch failed:", subscriptionError);
+        setSubscription(null);
+      }
 
     } catch (error) {
       console.error("AuthContext: Error fetching subscription or plans:", error.message);
@@ -90,14 +122,17 @@ export const AuthProvider = ({ children }) => {
 
   // --- Session recovery function ---
   const recoverSession = useCallback(async () => {
+    if (isRecovering) return; // Prevent multiple simultaneous recoveries
+    
     try {
       console.log("AuthContext: Attempting session recovery...");
+      setIsRecovering(true);
       setLoading(true);
       setError(null);
       
       // Add timeout to prevent hanging
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Session recovery timeout')), 10000)
+        setTimeout(() => reject(new Error('Session recovery timeout')), 15000) // Increased timeout
       );
       
       const sessionPromise = supabase.auth.getSession();
@@ -116,11 +151,9 @@ export const AuthProvider = ({ children }) => {
         setSession(recoveredSession);
         setUser(recoveredSession.user);
         
-        // Run these in parallel to speed up recovery
-        await Promise.allSettled([
-          checkAdminStatus(recoveredSession),
-          fetchSubscriptionAndPlans(recoveredSession)
-        ]);
+        // Run these sequentially to avoid race conditions
+        await checkAdminStatus(recoveredSession);
+        await fetchSubscriptionAndPlans(recoveredSession);
       } else {
         console.log("AuthContext: No session to recover");
         setSession(null);
@@ -140,11 +173,12 @@ export const AuthProvider = ({ children }) => {
       setPlans([]);
     } finally {
       setLoading(false);
+      setIsRecovering(false);
     }
-  }, [checkAdminStatus, fetchSubscriptionAndPlans]); // Include dependencies
+  }, [checkAdminStatus, fetchSubscriptionAndPlans, isRecovering]);
 
   useEffect(() => {
-    let mounted = true; // Flag to prevent state updates if component unmounted
+    let mounted = true;
     let authSubscription = null;
 
     const initializeAuth = async () => {
@@ -161,18 +195,19 @@ export const AuthProvider = ({ children }) => {
           setUser(initialSession?.user || null);
           
           if (initialSession) {
+            // Run these sequentially to avoid race conditions
             await checkAdminStatus(initialSession);
             await fetchSubscriptionAndPlans(initialSession);
           }
           
           setLoading(false);
-          setInitialized(true); // Mark as initialized
+          setInitialized(true);
         }
 
         // 2. Listen for real-time authentication state changes
         const { data: { subscription: sub } } = supabase.auth.onAuthStateChange(
           async (event, currentSession) => {
-            if (!mounted) return; // Don't process if component unmounted
+            if (!mounted) return;
 
             console.log("AuthContext: onAuthStateChange event:", event, "Session:", currentSession);
 
@@ -180,13 +215,13 @@ export const AuthProvider = ({ children }) => {
             switch (event) {
               case 'SIGNED_IN':
                 console.log("AuthContext: User signed in");
-                // Only show loading if this is a fresh sign-in, not a tab switch
                 if (!initialized || !session) {
                   setLoading(true);
                 }
                 setError(null);
                 setSession(currentSession);
                 setUser(currentSession?.user || null);
+                // Run these sequentially
                 await checkAdminStatus(currentSession);
                 await fetchSubscriptionAndPlans(currentSession);
                 setLoading(false);
@@ -209,8 +244,6 @@ export const AuthProvider = ({ children }) => {
                 if (currentSession) {
                   setSession(currentSession);
                   setUser(currentSession.user);
-                  // Don't re-fetch admin status and subscription on token refresh
-                  // to avoid unnecessary API calls
                 }
                 break;
                 
@@ -243,13 +276,65 @@ export const AuthProvider = ({ children }) => {
       if (authSubscription) {
         authSubscription.unsubscribe();
       }
+      if (sessionTimeout) {
+        clearTimeout(sessionTimeout);
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Empty dependency array ensures this effect runs once on mount
+  }, []);
 
+  // --- Session monitoring effect ---
+  useEffect(() => {
+    if (!session) {
+      if (sessionTimeout) {
+        clearTimeout(sessionTimeout);
+        setSessionTimeout(null);
+      }
+      return;
+    }
 
+    // Check if session is already expired
+    if (isSessionExpired(session)) {
+      handleSessionTimeout();
+      return;
+    }
 
+    // Calculate time until session expires
+    try {
+      const payload = JSON.parse(atob(session.access_token.split('.')[1]));
+      const currentTime = Math.floor(Date.now() / 1000);
+      const timeUntilExpiry = (payload.exp - currentTime) * 1000; // Convert to milliseconds
+      
+      // Set timeout to handle session expiration
+      if (sessionTimeout) {
+        clearTimeout(sessionTimeout);
+      }
+      
+      const timeoutId = setTimeout(() => {
+        handleSessionTimeout();
+      }, timeUntilExpiry);
+      
+      setSessionTimeout(timeoutId);
+      
+      console.log(`AuthContext: Session will expire in ${Math.floor(timeUntilExpiry / 1000)} seconds`);
+    } catch (error) {
+      console.error("AuthContext: Error setting session timeout:", error);
+    }
+  }, [session, isSessionExpired, handleSessionTimeout]);
 
+  // --- Page visibility change handler ---
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (!document.hidden && session && isSessionExpired(session)) {
+        console.log("AuthContext: Page became visible and session is expired");
+        handleSessionTimeout();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [session, isSessionExpired, handleSessionTimeout]);
 
   // Error recovery function
   const clearError = () => setError(null);
@@ -265,6 +350,9 @@ export const AuthProvider = ({ children }) => {
     error,
     clearError,
     recoverSession,
+    isRecovering,
+    handleSessionTimeout,
+    isSessionExpired,
     // Authentication methods
     signIn: (email, password) => supabase.auth.signInWithPassword({ email, password }),
     signOut: () => supabase.auth.signOut(),
@@ -272,7 +360,6 @@ export const AuthProvider = ({ children }) => {
 
   return (
     <AuthContext.Provider value={value}>
-      {/* Always render children, let individual components handle loading/error states */}
       {children}
     </AuthContext.Provider>
   );

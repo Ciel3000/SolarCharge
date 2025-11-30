@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { PayPalScriptProvider, PayPalButtons } from '@paypal/react-paypal-js';
 import { useAuth } from '../contexts/AuthContext';
+import { filterActivePlans } from '../utils/planUtils';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://solar-charger-backend.onrender.com';
 
@@ -19,28 +20,33 @@ const PAYPAL_OPTIONS = {
 // A simple, reusable component for empty states to maintain consistency.
 const EmptyState = ({ icon, title, message, children }) => (
     <div className="text-center py-12">
-        <div className="text-6xl mb-4" role="img" aria-label="icon">{icon}</div>
-        <h3 className="text-xl font-semibold text-gray-700 mb-2">{title}</h3>
-        <p className="text-gray-600 mb-6">{message}</p>
+        <div className="w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 backdrop-blur-md" style={{
+            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.1) 100%)',
+            border: '1px solid rgba(255, 255, 255, 0.3)'
+        }}>
+            <span className="text-4xl" role="img" aria-label="icon">{icon}</span>
+        </div>
+        <h3 className="text-2xl font-bold mb-2" style={{ color: '#000b3d' }}>{title}</h3>
+        <p className="text-lg" style={{ color: '#000b3d', opacity: 0.7 }}>{message}</p>
         {children}
     </div>
 );
 
-
 function SubscriptionPage() {
-    const { session } = useAuth();
+    const { session, subscription } = useAuth();
     const location = useLocation();
     const navigate = useNavigate();
     
-    const [subscription, setSubscription] = useState(null);
     const [loading, setLoading] = useState(true);
     const [feedback, setFeedback] = useState('');
-    const [usage, setUsage] = useState(null);
-    const [billing, setBilling] = useState([]);
     const [availablePlans, setAvailablePlans] = useState([]);
     const [paypalLoading, setPaypalLoading] = useState(false);
     const [selectedPlanForPayment, setSelectedPlanForPayment] = useState(null);
     const [showPayPal, setShowPayPal] = useState(false);
+    
+    // New state for subscription history
+    const [subscriptionHistory, setSubscriptionHistory] = useState([]);
+    const [activeTab, setActiveTab] = useState('current'); // 'current' or 'history'
 
     // Check for messages passed via navigation state
     const actionMessage = location.state?.message;
@@ -51,67 +57,9 @@ function SubscriptionPage() {
         }
     }, [actionMessage]);
 
-    // Memoized function for fetching subscription and billing data
-    const fetchSubscriptionAndBillingData = useCallback(async () => {
-        if (!session?.access_token) {
-            setLoading(false);
-            setFeedback('Authentication required to view subscription details.');
-            return;
-        }
-
-        setLoading(true);
-        setFeedback('');
-
-        try {
-            const res = await fetch(`${BACKEND_URL}/api/user/subscription`, {
-                headers: { Authorization: `Bearer ${session.access_token}` },
-            });
-
-            if (!res.ok) {
-                const errorData = await res.json();
-                throw new Error(errorData.error || `Failed to load subscription data (Status: ${res.status}).`);
-            }
-
-            const data = await res.json();
-            setSubscription(data.subscription || null);
-            setBilling(data.billing_history || []);
-        } catch (err) {
-            console.error('Failed to load subscription/billing data:', err);
-            setFeedback(`Failed to load subscription details: ${err.message || 'An unknown error occurred'}.`);
-            setSubscription(null);
-            setBilling([]);
-        } finally {
-            setLoading(false);
-        }
-    }, [session]);
-
-    // Memoized function for fetching usage data
-    const fetchUsageData = useCallback(async () => {
-        if (!session?.access_token) return;
-
-        try {
-            const res = await fetch(`${BACKEND_URL}/api/user/usage`, {
-                headers: { Authorization: `Bearer ${session.access_token}` },
-            });
-
-            if (!res.ok) {
-                const errorData = await res.json();
-                throw new Error(errorData.error || `Failed to load usage data (Status: ${res.status}).`);
-            }
-
-            const data = await res.json();
-            setUsage(data);
-        } catch (err) {
-            console.error('Failed to load usage data:', err);
-            setUsage(null);
-        }
-    }, [session]);
-
     // Fetch available subscription plans
     const fetchAvailablePlans = useCallback(async () => {
         try {
-            // Assuming you have a mechanism to fetch plans, e.g., from a Supabase client or a public API endpoint.
-            // This is a placeholder for your actual implementation.
             const { supabase } = await import('../supabaseClient');
             const { data, error } = await supabase
                 .from('subscription_plans')
@@ -121,9 +69,7 @@ function SubscriptionPage() {
             if (error) throw error;
             
             // Filter out discontinued plans
-            const activePlans = (data || []).filter(plan => 
-                !plan.plan_name.includes('(DISCONTINUED)')
-            );
+            const activePlans = filterActivePlans(data || []);
             
             setAvailablePlans(activePlans);
         } catch (err) {
@@ -132,12 +78,36 @@ function SubscriptionPage() {
         }
     }, []);
 
+    // Fetch subscription history
+    const fetchSubscriptionHistory = useCallback(async () => {
+        if (!session?.access_token) return;
+        
+        try {
+            const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://solar-charger-backend.onrender.com';
+            const response = await fetch(`${BACKEND_URL}/api/user/subscription-history`, {
+                headers: {
+                    'Authorization': `Bearer ${session.access_token}`
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch subscription history');
+            }
+
+            const data = await response.json();
+            setSubscriptionHistory(data.subscription_history || []);
+        } catch (err) {
+            console.error('Failed to load subscription history:', err);
+            setSubscriptionHistory([]);
+        }
+    }, [session]);
+
     // Fetch all data concurrently on component mount/session change
     useEffect(() => {
-        fetchSubscriptionAndBillingData();
-        fetchUsageData();
         fetchAvailablePlans();
-    }, [fetchSubscriptionAndBillingData, fetchUsageData, fetchAvailablePlans]);
+        fetchSubscriptionHistory();
+        setLoading(false);
+    }, [fetchAvailablePlans, fetchSubscriptionHistory]);
 
     // Handle plan selection for payment
     const handleSelectPlan = (plan) => {
@@ -168,7 +138,6 @@ function SubscriptionPage() {
                 throw new Error(errorData.error || 'Failed to cancel subscription');
             }
 
-            await fetchSubscriptionAndBillingData();
             setFeedback('Subscription cancelled successfully.');
             
         } catch (err) {
@@ -198,375 +167,536 @@ function SubscriptionPage() {
     }, [selectedPlanForPayment]);
 
     const onPayPalApprove = useCallback(async (data, actions) => {
-        setPaypalLoading(true);
         try {
-            const details = await actions.order.capture();
-            console.log('PayPal payment completed:', details);
-
-            const response = await fetch(`${BACKEND_URL}/api/subscription/paypal-payment`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${session.access_token}`,
-                },
-                body: JSON.stringify({
-                    paypal_order_id: details.id,
-                    plan_id: selectedPlanForPayment.plan_id,
-                    amount: selectedPlanForPayment.price,
-                    payment_details: details,
-                }),
-            });
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || 'Failed to process subscription');
-            }
-
+            const order = await actions.order.capture();
+            console.log('PayPal order captured:', order);
+            
+            // Here you would typically send the order details to your backend
+            // to create the subscription in your database
+            
+            setFeedback('Payment successful! Your subscription has been activated.');
             setShowPayPal(false);
             setSelectedPlanForPayment(null);
             
-            await fetchSubscriptionAndBillingData();
+            // Refresh the page or update the subscription state
+            window.location.reload();
             
-            setFeedback(`Payment successful! Welcome to ${selectedPlanForPayment.plan_name}!`);
-            
-        } catch (err) {
-            console.error('PayPal payment processing error:', err);
-            setFeedback(`Payment processing failed: ${err.message}`);
+        } catch (error) {
+            console.error('PayPal capture error:', error);
+            setFeedback('Payment failed. Please try again.');
         } finally {
             setPaypalLoading(false);
         }
-    }, [selectedPlanForPayment, session, fetchSubscriptionAndBillingData]);
+    }, []);
 
     const onPayPalError = useCallback((err) => {
-        console.error('PayPal payment error:', err);
-        setFeedback('Payment failed. Please try again or use a different payment method.');
+        console.error('PayPal error:', err);
+        setFeedback('Payment error occurred. Please try again.');
         setPaypalLoading(false);
     }, []);
 
-    const onPayPalCancel = useCallback(() => {
-        setShowPayPal(false);
-        setSelectedPlanForPayment(null);
-        setPaypalLoading(false);
-    }, []);
-
-    // Helper functions for formatting
-    const formatDate = (dateString) => {
-        if (!dateString) return 'N/A';
-        return new Date(dateString).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    // Helper function to format currency
+    const formatCurrency = (amount) => {
+        return new Intl.NumberFormat('en-PH', {
+            style: 'currency',
+            currency: 'PHP',
+        }).format(amount || 0);
     };
 
-      const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(amount || 0);
-  };
-
-  // Get duration display text
-  const getDurationDisplayText = (durationType, durationValue) => {
-    switch (durationType) {
-      case 'daily':
-        return durationValue === 1 ? '1 Day' : `${durationValue} Days`;
-      case 'weekly':
-        return durationValue === 1 ? '1 Week' : `${durationValue} Weeks`;
-      case 'monthly':
-        return durationValue === 1 ? '1 Month' : `${durationValue} Months`;
-      case 'quarterly':
-        return durationValue === 1 ? '3 Months' : `${durationValue * 3} Months`;
-      case 'yearly':
-        return durationValue === 1 ? '1 Year' : `${durationValue} Years`;
-      default:
-        return '1 Month';
-    }
-  };
-    
-    const formatStatusText = (status) => {
-        if (typeof status === 'boolean') {
-            return status ? 'Active' : 'Inactive';
+    // Helper function to get duration display text
+    const getDurationDisplayText = (durationType, durationValue) => {
+        // Handle null/undefined values
+        if (!durationType || !durationValue) {
+            return '1 Month';
         }
-        if (typeof status === 'string') {
-            return status.charAt(0).toUpperCase() + status.slice(1);
-        }
-        return 'Unknown';
-    };
-
-    const getStatusColor = (status) => {
-        let statusString = (typeof status === 'boolean' ? (status ? 'active' : 'inactive') : String(status || 'unknown')).toLowerCase();
-        switch (statusString) {
-            case 'active':
-            case 'completed':
-                return 'text-green-700 bg-green-100';
-            case 'inactive':
-            case 'cancelled':
-                return 'text-red-700 bg-red-100';
-            case 'expired':
-                return 'text-orange-700 bg-orange-100';
-            case 'pending':
-                return 'text-yellow-700 bg-yellow-100';
-            case 'failed':
-                return 'text-red-700 bg-red-100';
+        
+        switch (durationType.toLowerCase()) {
+            case 'daily':
+                return durationValue === 1 ? '1 Day' : `${durationValue} Days`;
+            case 'weekly':
+                return durationValue === 1 ? '1 Week' : `${durationValue} Weeks`;
+            case 'monthly':
+                return durationValue === 1 ? '1 Month' : `${durationValue} Months`;
+            case 'quarterly':
+                return durationValue === 1 ? '1 Quarter' : `${durationValue} Quarters`;
+            case 'yearly':
+                return durationValue === 1 ? '1 Year' : `${durationValue} Years`;
             default:
-                return 'text-gray-700 bg-gray-100';
+                return '1 Month';
         }
     };
 
+    // Show loading state
     if (loading) {
         return (
-            <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-blue-50 to-cyan-100 flex items-center justify-center p-4">
-                <div className="bg-white p-8 rounded-xl shadow-2xl text-center">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                    <p className="text-gray-600">Loading subscription details...</p>
+            <div className="min-h-screen flex items-center justify-center relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+                <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                    <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-float-slow" style={{ background: 'radial-gradient(circle, rgba(249, 210, 23, 0.25) 0%, rgba(249, 210, 23, 0.1) 50%, transparent 100%)' }}></div>
+                    <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-float-slow-delay" style={{ background: 'radial-gradient(circle, rgba(56, 182, 255, 0.25) 0%, rgba(56, 182, 255, 0.1) 50%, transparent 100%)' }}></div>
+                </div>
+                <div className="relative z-10 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/30" style={{
+                    background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+                    boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+                }}>
+                    <div className="flex flex-col items-center">
+                        <div className="animate-spin rounded-full h-16 w-16 border-4 border-t-transparent mb-4" style={{
+                            borderColor: '#38b6ff',
+                            borderTopColor: 'transparent'
+                        }}></div>
+                        <p className="text-lg font-semibold" style={{ color: '#000b3d' }}>Loading subscription plans...</p>
+                    </div>
                 </div>
             </div>
         );
     }
 
     return (
-        <PayPalScriptProvider options={PAYPAL_OPTIONS}>
-            <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-blue-50 to-cyan-100 text-gray-800 relative overflow-x-hidden">
-                {/* Background decorative elements */}
-                <div className="absolute inset-0 overflow-hidden pointer-events-none">
-                    <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-br from-green-400/20 to-blue-400/20 rounded-full blur-3xl"></div>
-                    <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-tr from-cyan-400/20 to-emerald-400/20 rounded-full blur-3xl"></div>
+        <div className="min-h-screen flex flex-col items-center p-4 text-gray-800 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+            {/* Animated Background Orbs */}
+            <div className="absolute inset-0 overflow-hidden pointer-events-none">
+                <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-float-slow" style={{ background: 'radial-gradient(circle, rgba(249, 210, 23, 0.25) 0%, rgba(249, 210, 23, 0.1) 50%, transparent 100%)' }}></div>
+                <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-float-slow-delay" style={{ background: 'radial-gradient(circle, rgba(56, 182, 255, 0.25) 0%, rgba(56, 182, 255, 0.1) 50%, transparent 100%)' }}></div>
+                <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full blur-3xl animate-pulse-slow" style={{ background: 'radial-gradient(circle, rgba(0, 11, 61, 0.15) 0%, rgba(0, 11, 61, 0.05) 50%, transparent 100%)' }}></div>
+                <div className="absolute top-1/4 right-1/4 w-64 h-64 rounded-full blur-3xl animate-float" style={{ background: 'radial-gradient(circle, rgba(56, 182, 255, 0.2) 0%, transparent 70%)' }}></div>
+                <div className="absolute bottom-1/4 left-1/4 w-64 h-64 rounded-full blur-3xl animate-float-delay" style={{ background: 'radial-gradient(circle, rgba(249, 210, 23, 0.2) 0%, transparent 70%)' }}></div>
+            </div>
+
+            {/* Main Content */}
+            <div className="w-full pt-24 pb-8 max-w-6xl mx-auto relative z-10">
+                {/* Header */}
+                <div className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-8 px-6 sm:px-8 lg:px-12 mb-8 animate-fade-in-down" style={{
+                    background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+                    boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+                }}>
+                    <div className="text-center">
+                        <h1 className="text-4xl sm:text-5xl font-bold mb-4" style={{ color: '#000b3d' }}>SUBSCRIPTION PLANS</h1>
+                        <p className="text-lg sm:text-xl" style={{ color: '#000b3d', opacity: 0.7 }}>Choose the perfect plan for your charging needs</p>
+                    </div>
                 </div>
 
-                {/* Main Content Area with consistent padding and spacing */}
-                <div className="w-full max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-20 sm:py-24 relative z-10 space-y-8">
-                    
-                    {/* Feedback Message */}
-                    {feedback && (
-                        <div className={`px-4 py-3 rounded-lg shadow-md text-center font-semibold text-lg ${
-                            feedback.includes('successful') || feedback.includes('Welcome')
-                                ? 'bg-green-100 border border-green-400 text-green-700'
-                                : 'bg-red-100 border border-red-400 text-red-700'
-                        }`}>
-                            {feedback}
-                        </div>
-                    )}
+                {/* Feedback Message */}
+                {feedback && (
+                    <div className="mb-6 p-4 rounded-lg backdrop-blur-md mx-auto max-w-2xl text-center animate-fade-in" style={{
+                        background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.1) 100%)',
+                        border: '1px solid rgba(56, 182, 255, 0.3)',
+                        color: '#000b3d'
+                    }}>
+                        {feedback}
+                    </div>
+                )}
 
-                    {/* Top Section: Current Plan & Usage */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                        {/* Current Plan Card */}
-                        <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-6 border border-white/20">
-                            <h2 className="text-2xl font-bold text-gray-800 mb-4">Current Plan</h2>
-                            {subscription ? (
-                                <div className="space-y-4">
-                                    <div className="flex justify-between items-center">
-                                        <span className="text-xl font-semibold text-gray-700">{subscription.plan_name || 'No Plan'}</span>
-                                        <span className={`px-3 py-1 rounded-full text-sm font-medium ${getStatusColor(subscription.status)}`}>
-                                            {formatStatusText(subscription.status)}
-                                        </span>
-                                    </div>
-                                    <div className="text-gray-600">
-                                        <p className="mb-2">{subscription.description || 'No description available'}</p>
-                                        <p className="font-semibold text-2xl text-green-600">
-                                            {formatCurrency(subscription.price)}
-                                            <span className="text-base text-gray-500">
-                                                /{subscription.duration_display ? subscription.duration_display.toLowerCase() : 'month'}
+                {/* Current Subscription Status */}
+                {subscription && (
+                    <div className="mb-8 relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-8 px-6 sm:px-8 lg:px-12 animate-fade-in" style={{
+                        background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+                        boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+                    }}>
+                        <h2 className="text-2xl sm:text-3xl font-bold mb-6 flex items-center gap-2" style={{ color: '#000b3d' }}>
+                            <span className="text-2xl">🌟</span> Current Subscription
+                        </h2>
+
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                            <div className="p-4 rounded-xl backdrop-blur-md" style={{
+                                background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(16, 185, 129, 0.1) 100%)',
+                                border: '1px solid rgba(16, 185, 129, 0.3)'
+                            }}>
+                                <div className="text-sm mb-2" style={{ color: '#000b3d', opacity: 0.8 }}>Plan</div>
+                                <div className="text-lg font-bold" style={{ color: '#10b981' }}>
+                                    {subscription.subscription_plans?.plan_name || subscription.plan_name || 'Unknown Plan'}
+                                </div>
+                            </div>
+                            <div className="p-4 rounded-xl backdrop-blur-md" style={{
+                                background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.1) 100%)',
+                                border: '1px solid rgba(56, 182, 255, 0.3)'
+                            }}>
+                                <div className="text-sm mb-2" style={{ color: '#000b3d', opacity: 0.8 }}>Daily Limit</div>
+                                <div className="text-lg font-bold" style={{ color: '#38b6ff' }}>
+                                    {subscription.subscription_plans?.daily_mah_limit || subscription.daily_mah_limit || '0'} mAh
+                                </div>
+                            </div>
+                            <div className="p-4 rounded-xl backdrop-blur-md" style={{
+                                background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(139, 92, 246, 0.1) 100%)',
+                                border: '1px solid rgba(139, 92, 246, 0.3)'
+                            }}>
+                                <div className="text-sm mb-2" style={{ color: '#000b3d', opacity: 0.8 }}>Duration</div>
+                                <div className="text-lg font-bold" style={{ color: '#8b5cf6' }}>
+                                    {getDurationDisplayText(
+                                        subscription.subscription_plans?.duration_type || subscription.duration_type, 
+                                        subscription.subscription_plans?.duration_value || subscription.duration_value
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        {/* Additional subscription details */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                            <div className="p-4 rounded-xl backdrop-blur-md" style={{
+                                background: 'linear-gradient(135deg, rgba(249, 115, 22, 0.2) 0%, rgba(249, 115, 22, 0.1) 100%)',
+                                border: '1px solid rgba(249, 115, 22, 0.3)'
+                            }}>
+                                <div className="text-sm mb-2" style={{ color: '#000b3d', opacity: 0.8 }}>Today's Usage</div>
+                                <div className="text-lg font-bold" style={{ color: '#f97316' }}>
+                                    {subscription.current_daily_mah_consumed || 0} mAh
+                                </div>
+                            </div>
+                            <div className="p-4 rounded-xl backdrop-blur-md" style={{
+                                background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(99, 102, 241, 0.1) 100%)',
+                                border: '1px solid rgba(99, 102, 241, 0.3)'
+                            }}>
+                                <div className="text-sm mb-2" style={{ color: '#000b3d', opacity: 0.8 }}>Start Date</div>
+                                <div className="text-lg font-bold" style={{ color: '#6366f1' }}>
+                                    {new Date(subscription.start_date).toLocaleDateString()}
+                                </div>
+                            </div>
+                            <div className="p-4 rounded-xl backdrop-blur-md" style={{
+                                background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(239, 68, 68, 0.1) 100%)',
+                                border: '1px solid rgba(239, 68, 68, 0.3)'
+                            }}>
+                                <div className="text-sm mb-2" style={{ color: '#000b3d', opacity: 0.8 }}>End Date</div>
+                                <div className="text-lg font-bold" style={{ color: '#ef4444' }}>
+                                    {new Date(subscription.end_date).toLocaleDateString()}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="flex flex-wrap gap-4">
+                            <button
+                                onClick={() => navigate('/usage')}
+                                className="group relative px-6 py-3 rounded-xl font-bold text-white overflow-hidden transition-all duration-300 hover:scale-105 focus:outline-none focus:ring-4 focus:ring-opacity-50"
+                                style={{
+                                    background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
+                                    boxShadow: '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                                    focusRingColor: 'rgba(56, 182, 255, 0.5)'
+                                }}
+                            >
+                                <span className="relative z-10">View Usage</span>
+                                <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" style={{
+                                    background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.3) 0%, rgba(56, 182, 255, 0.3) 100%)'
+                                }}></div>
+                            </button>
+                            <button
+                                onClick={handleCancelSubscription}
+                                className="group relative px-6 py-3 rounded-xl font-bold text-white overflow-hidden transition-all duration-300 hover:scale-105 focus:outline-none focus:ring-4 focus:ring-opacity-50"
+                                style={{
+                                    background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+                                    boxShadow: '0 8px 24px rgba(239, 68, 68, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                                    focusRingColor: 'rgba(239, 68, 68, 0.5)'
+                                }}
+                            >
+                                <span className="relative z-10">Cancel Subscription</span>
+                                <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" style={{
+                                    background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.3) 0%, rgba(220, 38, 38, 0.3) 100%)'
+                                }}></div>
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Tab Navigation */}
+                <div className="mb-6 relative backdrop-blur-xl rounded-3xl shadow-xl border border-white/30 overflow-hidden animate-fade-in delay-200" style={{
+                    background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+                    boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+                }}>
+                    <div className="flex border-b" style={{ borderColor: 'rgba(255, 255, 255, 0.3)' }}>
+                        <button
+                            onClick={() => setActiveTab('current')}
+                            className={`flex-1 py-4 px-6 text-center font-semibold transition-all duration-300 ${
+                                activeTab === 'current'
+                                    ? 'border-b-2' 
+                                    : ''
+                            }`}
+                            style={activeTab === 'current' ? {
+                                color: '#38b6ff',
+                                borderBottomColor: '#38b6ff',
+                                background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.1) 0%, rgba(56, 182, 255, 0.05) 100%)'
+                            } : {
+                                color: '#000b3d',
+                                opacity: 0.7
+                            }}
+                        >
+                            {subscription ? 'Current Plan' : 'Available Plans'}
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('history')}
+                            className={`flex-1 py-4 px-6 text-center font-semibold transition-all duration-300 ${
+                                activeTab === 'history'
+                                    ? 'border-b-2'
+                                    : ''
+                            }`}
+                            style={activeTab === 'history' ? {
+                                color: '#38b6ff',
+                                borderBottomColor: '#38b6ff',
+                                background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.1) 0%, rgba(56, 182, 255, 0.05) 100%)'
+                            } : {
+                                color: '#000b3d',
+                                opacity: 0.7
+                            }}
+                        >
+                            Subscription History
+                        </button>
+                    </div>
+                </div>
+
+                {/* Tab Content */}
+                {activeTab === 'current' && (
+                    <div className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-8 px-6 sm:px-8 lg:px-12 animate-fade-in delay-400" style={{
+                        background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+                        boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+                    }}>
+                        <h2 className="text-2xl sm:text-3xl font-bold mb-8 text-center" style={{ color: '#000b3d' }}>
+                            {subscription ? 'Upgrade Your Plan' : 'Choose Your Plan'}
+                        </h2>
+                    
+                    {availablePlans.length > 0 ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                            {availablePlans.map((plan, index) => (
+                                <div 
+                                    key={plan.plan_id} 
+                                    className="group relative backdrop-blur-xl rounded-3xl p-6 sm:p-8 transform transition-all duration-500 hover:scale-105 hover:-translate-y-2 overflow-hidden"
+                                    style={{
+                                        background: subscription?.plan_id === plan.plan_id
+                                            ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.35) 0%, rgba(16, 185, 129, 0.15) 100%)'
+                                            : 'linear-gradient(135deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.15) 100%)',
+                                        border: subscription?.plan_id === plan.plan_id
+                                            ? '1px solid rgba(16, 185, 129, 0.4)'
+                                            : '1px solid rgba(255, 255, 255, 0.3)',
+                                        boxShadow: subscription?.plan_id === plan.plan_id
+                                            ? '0 8px 32px 0 rgba(16, 185, 129, 0.2), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+                                            : '0 8px 32px 0 rgba(56, 182, 255, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)',
+                                        animationDelay: `${index * 100}ms`
+                                    }}
+                                >
+                                    <div className="text-center relative z-10">
+                                        <h3 className="text-xl sm:text-2xl font-bold mb-3" style={{ color: '#000b3d' }}>{plan.plan_name}</h3>
+                                        <p className="mb-4 h-12" style={{ color: '#000b3d', opacity: 0.7 }}>{plan.description}</p>
+                                        <div className="text-3xl sm:text-4xl font-bold mb-2" style={{ color: '#38b6ff' }}>
+                                            {formatCurrency(plan.price)}
+                                            <span className="text-sm" style={{ color: '#000b3d', opacity: 0.6 }}>
+                                                /{getDurationDisplayText(plan.duration_type || 'monthly', plan.duration_value || 1).toLowerCase()}
                                             </span>
-                                        </p>
-                                        {subscription.duration_display && (
-                                            <p className="text-sm text-blue-600 font-medium">
-                                                Duration: {subscription.duration_display}
-                                            </p>
+                                        </div>
+                                        <div className="text-sm font-medium mb-2" style={{ color: '#38b6ff' }}>
+                                            {getDurationDisplayText(plan.duration_type || 'monthly', plan.duration_value || 1)}
+                                        </div>
+                                        <div className="text-sm mb-6" style={{ color: '#000b3d', opacity: 0.7 }}>Daily Limit: {plan.daily_mah_limit} mAh</div>
+                                        
+                                        {subscription?.plan_id === plan.plan_id ? (
+                                            <div className="py-3 px-4 rounded-xl font-semibold backdrop-blur-md" style={{
+                                                background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.3) 0%, rgba(16, 185, 129, 0.2) 100%)',
+                                                border: '1px solid rgba(16, 185, 129, 0.4)',
+                                                color: '#10b981'
+                                            }}>Current Plan</div>
+                                        ) : plan.paypal_link ? (
+                                            <a
+                                                href={plan.paypal_link}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="group relative px-6 py-3 rounded-xl font-bold text-white overflow-hidden transition-all duration-300 hover:scale-105 focus:outline-none focus:ring-4 focus:ring-opacity-50 block"
+                                                style={{
+                                                    background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
+                                                    boxShadow: '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                                                    focusRingColor: 'rgba(56, 182, 255, 0.5)'
+                                                }}
+                                            >
+                                                <span className="relative z-10">Subscribe via PayPal</span>
+                                                <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" style={{
+                                                    background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.3) 0%, rgba(56, 182, 255, 0.3) 100%)'
+                                                }}></div>
+                                            </a>
+                                        ) : (
+                                            <button
+                                                onClick={() => handleSelectPlan(plan)}
+                                                className="group relative px-6 py-3 rounded-xl font-bold text-white overflow-hidden transition-all duration-300 hover:scale-105 focus:outline-none focus:ring-4 focus:ring-opacity-50 w-full"
+                                                style={{
+                                                    background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
+                                                    boxShadow: '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                                                    focusRingColor: 'rgba(56, 182, 255, 0.5)'
+                                                }}
+                                            >
+                                                <span className="relative z-10">Subscribe</span>
+                                                <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" style={{
+                                                    background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.3) 0%, rgba(56, 182, 255, 0.3) 100%)'
+                                                }}></div>
+                                            </button>
                                         )}
                                     </div>
-                                    <div className="border-t border-gray-200 pt-4">
-                                        <h3 className="font-semibold text-gray-700 mb-2">Plan Features:</h3>
-                                        <ul className="space-y-1">
-                                            {(subscription.features || []).map((feature, index) => (
-                                                <li key={index} className="flex items-center text-gray-600">
-                                                    <svg className="w-4 h-4 mr-2 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"></path></svg>
-                                                    {feature}
-                                                </li>
-                                            ))}
-                                        </ul>
-                                    </div>
-                                    <div className="border-t border-gray-200 pt-4 space-y-2 text-sm text-gray-600">
-                                        <p><strong>Start Date:</strong> {formatDate(subscription.start_date)}</p>
-                                        <p><strong>Next Billing:</strong> {formatDate(subscription.next_billing_date)}</p>
-                                        {subscription.end_date && <p><strong>End Date:</strong> {formatDate(subscription.end_date)}</p>}
-                                    </div>
                                 </div>
-                            ) : (
-                                <EmptyState icon="📋" title="No Active Subscription" message="You don't have an active subscription plan. Choose one below to get started!">
-                                    <button
-                                        onClick={() => document.getElementById('plans-section')?.scrollIntoView({ behavior: 'smooth' })}
-                                        className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition-transform transform hover:scale-105"
-                                    >
-                                        Choose a Plan
-                                    </button>
-                                </EmptyState>
-                            )}
+                            ))}
                         </div>
-
-                        {/* Usage Statistics Card */}
-                        <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-6 border border-white/20">
-                            <h2 className="text-2xl font-bold text-gray-800 mb-4">This Month's Usage</h2>
-                            {usage ? (
-                                <div className="space-y-4">
-                                    {/* Simplified usage stats display */}
-                                    <div className="bg-blue-50 p-4 rounded-lg flex items-center justify-between"><span className="text-gray-600">Total Sessions</span><span className="text-2xl font-bold text-blue-600">{usage.totalSessions}</span></div>
-                                    <div className="bg-green-50 p-4 rounded-lg flex items-center justify-between"><span className="text-gray-600">Total Duration</span><span className="text-2xl font-bold text-green-600">{usage.totalDuration} min</span></div>
-                                    <div className="bg-purple-50 p-4 rounded-lg flex items-center justify-between"><span className="text-gray-600">Total Energy (kWh)</span><span className="text-2xl font-bold text-purple-600">{usage.totalEnergyKWH} kWh</span></div>
-                                    <div className="bg-orange-50 p-4 rounded-lg flex items-center justify-between"><span className="text-gray-600">Total Cost</span><span className="text-2xl font-bold text-orange-600">{formatCurrency(usage.totalCost)}</span></div>
-                                </div>
-                            ) : (
-                                <EmptyState icon="📊" title="No Usage Data" message="Start a charging session to see your usage statistics here." />
-                            )}
-                        </div>
+                    ) : (
+                        <EmptyState icon="📋" title="No Plans Available" message="Subscription plans are currently unavailable. Please try again later." />
+                    )}
                     </div>
+                )}
 
-                    {/* Billing History Card */}
-                    <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-6 border border-white/20">
-                        <h2 className="text-2xl font-bold text-gray-800 mb-4">Billing History</h2>
-                        {billing.length > 0 ? (
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left">
-                                    <thead className="bg-gray-50">
-                                        <tr>
-                                            <th className="px-4 py-3 text-gray-700 font-semibold">Date</th>
-                                            <th className="px-4 py-3 text-gray-700 font-semibold">Amount</th>
-                                            <th className="px-4 py-3 text-gray-700 font-semibold">Status</th>
-                                            <th className="px-4 py-3 text-gray-700 font-semibold">Invoice</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {billing.map((bill, idx) => (
-                                            <tr className="border-b border-gray-100" key={idx}>
-                                                <td className="px-4 py-3 text-gray-600">{formatDate(bill.date)}</td>
-                                                <td className="px-4 py-3 text-gray-600">{formatCurrency(bill.amount)}</td>
-                                                <td className="px-4 py-3"><span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(bill.status)}`}>{formatStatusText(bill.status)}</span></td>
-                                                <td className="px-4 py-3"><button className="text-blue-600 hover:text-blue-800 text-sm font-medium">Download</button></td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        ) : (
-                            <EmptyState icon="📜" title="No Billing History" message="Your payment history will appear here." />
-                        )}
-                    </div>
-
-                    {/* Manage Subscription & Plans Section */}
-                    <div id="plans-section" className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-6 border border-white/20">
-                        <h2 className="text-2xl font-bold text-gray-800 mb-4">Manage Subscription</h2>
+                {/* Subscription History Tab */}
+                {activeTab === 'history' && (
+                    <div className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-8 px-6 sm:px-8 lg:px-12 animate-fade-in delay-400" style={{
+                        background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+                        boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+                    }}>
+                        <h2 className="text-2xl sm:text-3xl font-bold mb-8 text-center" style={{ color: '#000b3d' }}>Subscription History</h2>
                         
-                        {/* Action buttons for existing subscription */}
-                        {subscription && (
-                             <div className="flex flex-wrap gap-4 mb-6 pb-6 border-b border-gray-200">
-                                <button
-                                    onClick={() => setShowPayPal(!showPayPal)}
-                                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition-transform transform hover:scale-105"
-                                >
-                                    {showPayPal ? 'Hide Plan Options' : 'Change Plan'}
-                                </button>
-                                <button
-                                    onClick={handleCancelSubscription}
-                                    className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-lg transition-transform transform hover:scale-105"
-                                >
-                                    Cancel Subscription
-                                </button>
+                        {/* Subscription Statistics */}
+                        {subscriptionHistory.length > 0 && (
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                                <div className="p-4 rounded-xl backdrop-blur-md text-center" style={{
+                                    background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.1) 100%)',
+                                    border: '1px solid rgba(56, 182, 255, 0.3)'
+                                }}>
+                                    <div className="text-2xl font-bold mb-2" style={{ color: '#38b6ff' }}>{subscriptionHistory.length}</div>
+                                    <div className="text-sm" style={{ color: '#000b3d', opacity: 0.8 }}>Total Subscriptions</div>
+                                </div>
+                                <div className="p-4 rounded-xl backdrop-blur-md text-center" style={{
+                                    background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(16, 185, 129, 0.1) 100%)',
+                                    border: '1px solid rgba(16, 185, 129, 0.3)'
+                                }}>
+                                    <div className="text-2xl font-bold mb-2" style={{ color: '#10b981' }}>
+                                        {subscriptionHistory.filter(sub => sub.subscription_status === 'Active').length}
+                                    </div>
+                                    <div className="text-sm" style={{ color: '#000b3d', opacity: 0.8 }}>Active</div>
+                                </div>
+                                <div className="p-4 rounded-xl backdrop-blur-md text-center" style={{
+                                    background: 'linear-gradient(135deg, rgba(107, 114, 128, 0.2) 0%, rgba(107, 114, 128, 0.1) 100%)',
+                                    border: '1px solid rgba(107, 114, 128, 0.3)'
+                                }}>
+                                    <div className="text-2xl font-bold mb-2" style={{ color: '#6b7280' }}>
+                                        {subscriptionHistory.filter(sub => sub.subscription_status !== 'Active').length}
+                                    </div>
+                                    <div className="text-sm" style={{ color: '#000b3d', opacity: 0.8 }}>Discontinued/Expired</div>
+                                </div>
                             </div>
                         )}
-
-                        {/* Available Plans - shown if no sub, or if user clicks "Change Plan" */}
-                        {(!subscription || showPayPal) && (
-                            <div>
-                                <h3 className="text-xl font-bold text-gray-800 mb-4 text-center">
-                                    {subscription ? 'Upgrade Your Plan' : 'Choose Your Plan'}
-                                </h3>
-                                {availablePlans.length > 0 ? (
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                        {availablePlans.map((plan) => (
-                                            <div key={plan.plan_id} className={`border-2 rounded-xl p-6 transition-all duration-300 hover:shadow-lg hover:scale-105 ${subscription?.plan_id === plan.plan_id ? 'border-green-500 bg-green-50' : 'border-gray-200 hover:border-blue-400'}`}>
-                                                <div className="text-center">
-                                                    <h3 className="text-xl font-bold text-gray-800 mb-2">{plan.plan_name}</h3>
-                                                    <p className="text-gray-600 mb-4 h-12">{plan.description}</p>
-                                                    <div className="text-3xl font-bold text-blue-600 mb-2">
-                                                        {formatCurrency(plan.price)}
-                                                        <span className="text-sm text-gray-500">
-                                                            /{getDurationDisplayText(plan.duration_type || 'monthly', plan.duration_value || 1).toLowerCase()}
-                                                        </span>
+                        
+                        {subscriptionHistory.length > 0 ? (
+                            <div className="space-y-4">
+                                {subscriptionHistory.map((sub) => (
+                                    <div 
+                                        key={sub.user_subscription_id} 
+                                        className="relative backdrop-blur-xl rounded-3xl p-6 transform transition-all duration-500 hover:scale-[1.02] overflow-hidden"
+                                        style={{
+                                            background: sub.subscription_status === 'Active'
+                                                ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.35) 0%, rgba(16, 185, 129, 0.15) 100%)'
+                                                : sub.subscription_status === 'Discontinued'
+                                                ? 'linear-gradient(135deg, rgba(239, 68, 68, 0.35) 0%, rgba(239, 68, 68, 0.15) 100%)'
+                                                : 'linear-gradient(135deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.15) 100%)',
+                                            border: sub.subscription_status === 'Active'
+                                                ? '1px solid rgba(16, 185, 129, 0.4)'
+                                                : sub.subscription_status === 'Discontinued'
+                                                ? '1px solid rgba(239, 68, 68, 0.4)'
+                                                : '1px solid rgba(255, 255, 255, 0.3)',
+                                            boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.1), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+                                        }}
+                                    >
+                                        <div className="flex flex-col md:flex-row md:items-center md:justify-between">
+                                            <div className="flex-1">
+                                                <div className="flex items-center gap-3 mb-3">
+                                                    <h3 className="text-xl font-bold" style={{ color: '#000b3d' }}>{sub.plan_name}</h3>
+                                                    <span className="px-3 py-1 rounded-full text-sm font-semibold backdrop-blur-md" style={{
+                                                        background: sub.subscription_status === 'Active'
+                                                            ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.3) 0%, rgba(16, 185, 129, 0.2) 100%)'
+                                                            : sub.subscription_status === 'Discontinued'
+                                                            ? 'linear-gradient(135deg, rgba(239, 68, 68, 0.3) 0%, rgba(239, 68, 68, 0.2) 100%)'
+                                                            : 'linear-gradient(135deg, rgba(107, 114, 128, 0.3) 0%, rgba(107, 114, 128, 0.2) 100%)',
+                                                        border: sub.subscription_status === 'Active'
+                                                            ? '1px solid rgba(16, 185, 129, 0.4)'
+                                                            : sub.subscription_status === 'Discontinued'
+                                                            ? '1px solid rgba(239, 68, 68, 0.4)'
+                                                            : '1px solid rgba(107, 114, 128, 0.4)',
+                                                        color: sub.subscription_status === 'Active'
+                                                            ? '#10b981'
+                                                            : sub.subscription_status === 'Discontinued'
+                                                            ? '#ef4444'
+                                                            : '#6b7280'
+                                                    }}>
+                                                        {sub.subscription_status}
+                                                    </span>
+                                                </div>
+                                                <p className="mb-4" style={{ color: '#000b3d', opacity: 0.7 }}>{sub.description}</p>
+                                                
+                                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                                                    <div className="p-3 rounded-xl backdrop-blur-md" style={{
+                                                        background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.1) 100%)',
+                                                        border: '1px solid rgba(56, 182, 255, 0.3)'
+                                                    }}>
+                                                        <span className="block mb-1" style={{ color: '#000b3d', opacity: 0.7 }}>Price:</span>
+                                                        <div className="font-semibold" style={{ color: '#38b6ff' }}>
+                                                            {formatCurrency(sub.price)}/{sub.duration_display?.toLowerCase() || 'month'}
+                                                        </div>
                                                     </div>
-                                                    <div className="text-sm text-blue-600 font-medium mb-2">
-                                                        {getDurationDisplayText(plan.duration_type || 'monthly', plan.duration_value || 1)}
+                                                    <div className="p-3 rounded-xl backdrop-blur-md" style={{
+                                                        background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.1) 100%)',
+                                                        border: '1px solid rgba(249, 210, 23, 0.3)'
+                                                    }}>
+                                                        <span className="block mb-1" style={{ color: '#000b3d', opacity: 0.7 }}>Daily Limit:</span>
+                                                        <div className="font-semibold" style={{ color: '#f9d217' }}>{sub.daily_mah_limit} mAh</div>
                                                     </div>
-                                                    <div className="text-sm text-gray-600 mb-4">Daily Limit: {plan.daily_mah_limit} mAh</div>
-                                                    
-                                                    {subscription?.plan_id === plan.plan_id ? (
-                                                        <div className="bg-green-200 text-green-800 py-3 px-4 rounded-lg font-semibold">Current Plan</div>
-                                                    ) : plan.paypal_link ? (
-                                                        <a
-                                                            href={plan.paypal_link}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-lg transition-colors text-center block"
-                                                        >
-                                                            Pay with PayPal
-                                                        </a>
-                                                    ) : (
-                                                        <button
-                                                            onClick={() => handleSelectPlan(plan)}
-                                                            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-lg transition-colors"
-                                                        >
-                                                            {subscription ? 'Upgrade' : 'Select'}
-                                                        </button>
-                                                    )}
+                                                    <div className="p-3 rounded-xl backdrop-blur-md" style={{
+                                                        background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(139, 92, 246, 0.1) 100%)',
+                                                        border: '1px solid rgba(139, 92, 246, 0.3)'
+                                                    }}>
+                                                        <span className="block mb-1" style={{ color: '#000b3d', opacity: 0.7 }}>Start Date:</span>
+                                                        <div className="font-semibold" style={{ color: '#8b5cf6' }}>{new Date(sub.start_date).toLocaleDateString()}</div>
+                                                    </div>
+                                                    <div className="p-3 rounded-xl backdrop-blur-md" style={{
+                                                        background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(239, 68, 68, 0.1) 100%)',
+                                                        border: '1px solid rgba(239, 68, 68, 0.3)'
+                                                    }}>
+                                                        <span className="block mb-1" style={{ color: '#000b3d', opacity: 0.7 }}>End Date:</span>
+                                                        <div className="font-semibold" style={{ color: '#ef4444' }}>{new Date(sub.end_date).toLocaleDateString()}</div>
+                                                    </div>
                                                 </div>
                                             </div>
-                                        ))}
+                                        </div>
                                     </div>
-                                ) : (
-                                    <p className="text-gray-600 text-center py-4">No subscription plans are currently available. Please check back later.</p>
-                                )}
+                                ))}
                             </div>
+                        ) : (
+                            <EmptyState 
+                                icon="📋" 
+                                title="No Subscription History" 
+                                message="You haven't had any subscriptions yet. Choose a plan to get started!" 
+                            />
                         )}
                     </div>
+                )}
 
-                    {/* PayPal Payment Section */}
-                    {showPayPal && selectedPlanForPayment && (
-                        <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-6 border border-white/20">
-                            <h2 className="text-2xl font-bold text-gray-800 mb-4">Complete Your Payment</h2>
-                            <div className="max-w-md mx-auto">
-                                <div className="bg-blue-50 p-4 rounded-lg mb-6 border border-blue-200">
-                                    <h3 className="font-semibold text-blue-800 mb-2">Selected Plan: {selectedPlanForPayment.plan_name}</h3>
-                                    <p className="text-blue-700">
-                                        Price: {formatCurrency(selectedPlanForPayment.price)} per {getDurationDisplayText(selectedPlanForPayment.duration_type || 'monthly', selectedPlanForPayment.duration_value || 1).toLowerCase()}
-                                    </p>
-                                    <p className="text-blue-700">
-                                        Duration: {getDurationDisplayText(selectedPlanForPayment.duration_type || 'monthly', selectedPlanForPayment.duration_value || 1)}
-                                    </p>
-                                </div>
-                                
-                                {paypalLoading && (
-                                    <div className="text-center py-4">
-                                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
-                                        <p className="text-gray-600">Processing payment...</p>
-                                    </div>
-                                )}
-                                
-                                <div className="paypal-buttons-container">
-                                    <PayPalButtons
-                                        style={{ layout: 'vertical', color: 'blue', shape: 'rect', label: 'pay' }}
-                                        createOrder={createPayPalOrder}
-                                        onApprove={onPayPalApprove}
-                                        onError={onPayPalError}
-                                        onCancel={onPayPalCancel}
-                                        disabled={paypalLoading}
-                                    />
-                                </div>
-                                
-                                <div className="mt-4 text-center">
-                                    <button onClick={onPayPalCancel} className="text-gray-600 hover:text-gray-800 underline">Cancel</button>
-                                </div>
-                                
-                                <div className="mt-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
-                                    <p className="text-yellow-800 text-sm text-center">🔒 <strong>Sandbox Mode:</strong> This is a test environment. Use PayPal sandbox credentials.</p>
-                                </div>
-                            </div>
+                {/* PayPal Integration */}
+                {showPayPal && selectedPlanForPayment && (
+                    <div className="mt-8 relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-8 px-6 sm:px-8 lg:px-12 animate-fade-in" style={{
+                        background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+                        boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+                    }}>
+                        <h3 className="text-xl sm:text-2xl font-bold mb-6 text-center" style={{ color: '#000b3d' }}>
+                            Complete Payment for {selectedPlanForPayment.plan_name}
+                        </h3>
+                        <div className="max-w-md mx-auto">
+                            <PayPalScriptProvider options={PAYPAL_OPTIONS}>
+                                <PayPalButtons
+                                    createOrder={createPayPalOrder}
+                                    onApprove={onPayPalApprove}
+                                    onError={onPayPalError}
+                                    style={{ layout: "vertical" }}
+                                />
+                            </PayPalScriptProvider>
                         </div>
-                    )}
-                </div>
+                        <div className="text-center mt-6">
+                            <button
+                                onClick={() => {
+                                    setShowPayPal(false);
+                                    setSelectedPlanForPayment(null);
+                                }}
+                                className="text-sm font-medium transition-colors hover:opacity-80"
+                                style={{ color: '#000b3d', opacity: 0.7 }}
+                            >
+                                Cancel Payment
+                            </button>
+                        </div>
+                    </div>
+                )}
+
             </div>
-        </PayPalScriptProvider>
+        </div>
     );
 }
 

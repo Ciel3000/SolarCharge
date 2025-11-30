@@ -231,53 +231,89 @@ function UserProfilePage({ navigateTo }) {
   // Loading state
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-100 to-green-100 flex items-center justify-center p-4">
-        <div className="bg-white p-8 rounded-xl shadow-2xl text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading profile...</p>
+      <div className="min-h-screen flex items-center justify-center relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-float-slow" style={{ background: 'radial-gradient(circle, rgba(249, 210, 23, 0.25) 0%, rgba(249, 210, 23, 0.1) 50%, transparent 100%)' }}></div>
+          <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-float-slow-delay" style={{ background: 'radial-gradient(circle, rgba(56, 182, 255, 0.25) 0%, rgba(56, 182, 255, 0.1) 50%, transparent 100%)' }}></div>
+        </div>
+        <div className="relative z-10 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/30" style={{
+          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+          boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+        }}>
+          <div className="flex flex-col items-center">
+            <div className="animate-spin rounded-full h-16 w-16 border-4 border-t-transparent mb-4" style={{
+              borderColor: '#38b6ff',
+              borderTopColor: 'transparent'
+            }}></div>
+            <p className="text-lg font-semibold" style={{ color: '#000b3d' }}>Loading profile...</p>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-100 to-green-100 p-4">
-      <div className="max-w-2xl mx-auto bg-white rounded-xl shadow-2xl p-8 mt-8">
+    <div className="min-h-screen flex flex-col items-center p-4 text-gray-800 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+      {/* Animated Background Orbs */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-float-slow" style={{ background: 'radial-gradient(circle, rgba(249, 210, 23, 0.25) 0%, rgba(249, 210, 23, 0.1) 50%, transparent 100%)' }}></div>
+        <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-float-slow-delay" style={{ background: 'radial-gradient(circle, rgba(56, 182, 255, 0.25) 0%, rgba(56, 182, 255, 0.1) 50%, transparent 100%)' }}></div>
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full blur-3xl animate-pulse-slow" style={{ background: 'radial-gradient(circle, rgba(0, 11, 61, 0.15) 0%, rgba(0, 11, 61, 0.05) 50%, transparent 100%)' }}></div>
+        <div className="absolute top-1/4 right-1/4 w-64 h-64 rounded-full blur-3xl animate-float" style={{ background: 'radial-gradient(circle, rgba(56, 182, 255, 0.2) 0%, transparent 70%)' }}></div>
+        <div className="absolute bottom-1/4 left-1/4 w-64 h-64 rounded-full blur-3xl animate-float-delay" style={{ background: 'radial-gradient(circle, rgba(249, 210, 23, 0.2) 0%, transparent 70%)' }}></div>
+      </div>
+
+      {/* Main Content */}
+      <div className="w-full pt-24 pb-8 max-w-2xl mx-auto relative z-10">
         {/* Header */}
-        <div className="flex items-center justify-between mb-8">
+        <div className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-8 px-6 sm:px-8 lg:px-12 mb-8 animate-fade-in" style={{
+          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+          boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+        }}>
           <div>
-            <h1 className="text-3xl font-bold text-gray-800">User Profile</h1>
-            <p className="text-gray-600 mt-2">Manage your personal information</p>
+            <h1 className="text-3xl sm:text-4xl font-bold mb-2" style={{ color: '#000b3d' }}>User Profile</h1>
+            <p className="text-lg" style={{ color: '#000b3d', opacity: 0.7 }}>Manage your personal information</p>
           </div>
-          <button
-            onClick={handleBack}
-            className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg transition-colors duration-200"
-          >
-            ← Back
-          </button>
         </div>
 
         {/* Messages */}
         {message && (
-          <div className={`mb-6 p-4 rounded-lg ${
-            message.includes('Error') || message.includes('Failed') 
-              ? 'bg-red-100 border border-red-400 text-red-700'
-              : 'bg-green-100 border border-green-400 text-green-700'
-          }`}>
+          <div className={`mb-6 p-4 rounded-lg backdrop-blur-md mx-auto max-w-2xl text-center animate-fade-in ${
+            message.includes('Error') || message.includes('Failed')
+              ? ''
+              : ''
+          }`}
+          style={message.includes('Error') || message.includes('Failed')
+            ? {
+                background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(239, 68, 68, 0.1) 100%)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                color: '#dc2626'
+              }
+            : {
+                background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(16, 185, 129, 0.1) 100%)',
+                border: '1px solid rgba(16, 185, 129, 0.3)',
+                color: '#10b981'
+              }
+          }>
             {message}
           </div>
         )}
 
         {/* Profile Form */}
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <form onSubmit={handleSubmit} className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-8 px-6 sm:px-8 lg:px-12 animate-fade-in delay-200" style={{
+          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+          boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+        }}>
           {/* Personal Information Section */}
-          <div className="bg-gray-50 p-6 rounded-lg">
-            <h2 className="text-xl font-semibold text-gray-800 mb-4">Personal Information</h2>
+          <div className="mb-8">
+            <h2 className="text-xl sm:text-2xl font-bold mb-6 flex items-center gap-2" style={{ color: '#000b3d' }}>
+              <span className="text-2xl">👤</span> Personal Information
+            </h2>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* First Name */}
               <div>
-                <label htmlFor="firstName" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="firstName" className="block text-sm font-medium mb-2" style={{ color: '#000b3d', opacity: 0.8 }}>
                   First Name *
                 </label>
                 <input
@@ -286,21 +322,34 @@ function UserProfilePage({ navigateTo }) {
                   name="firstName"
                   value={formData.firstName}
                   onChange={handleInputChange}
-                  className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 transition-colors ${
+                  className={`w-full p-3 rounded-xl backdrop-blur-md focus:outline-none focus:ring-2 transition-all duration-300 ${
                     errors.firstName 
-                      ? 'border-red-500 focus:ring-red-200' 
-                      : 'border-gray-300 focus:ring-blue-200'
+                      ? 'border-2' 
+                      : 'border'
                   }`}
+                  style={errors.firstName
+                    ? {
+                        background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.15) 100%)',
+                        borderColor: 'rgba(239, 68, 68, 0.5)',
+                        color: '#000b3d',
+                        boxShadow: '0 4px 16px rgba(239, 68, 68, 0.1)'
+                      }
+                    : {
+                        background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.15) 100%)',
+                        borderColor: 'rgba(255, 255, 255, 0.3)',
+                        color: '#000b3d'
+                      }
+                  }
                   placeholder="Enter your first name"
                 />
                 {errors.firstName && (
-                  <p className="mt-1 text-sm text-red-600">{errors.firstName}</p>
+                  <p className="mt-1 text-sm" style={{ color: '#dc2626' }}>{errors.firstName}</p>
                 )}
               </div>
 
               {/* Last Name */}
               <div>
-                <label htmlFor="lastName" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="lastName" className="block text-sm font-medium mb-2" style={{ color: '#000b3d', opacity: 0.8 }}>
                   Last Name *
                 </label>
                 <input
@@ -309,28 +358,43 @@ function UserProfilePage({ navigateTo }) {
                   name="lastName"
                   value={formData.lastName}
                   onChange={handleInputChange}
-                  className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 transition-colors ${
+                  className={`w-full p-3 rounded-xl backdrop-blur-md focus:outline-none focus:ring-2 transition-all duration-300 ${
                     errors.lastName 
-                      ? 'border-red-500 focus:ring-red-200' 
-                      : 'border-gray-300 focus:ring-blue-200'
+                      ? 'border-2' 
+                      : 'border'
                   }`}
+                  style={errors.lastName
+                    ? {
+                        background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.15) 100%)',
+                        borderColor: 'rgba(239, 68, 68, 0.5)',
+                        color: '#000b3d',
+                        boxShadow: '0 4px 16px rgba(239, 68, 68, 0.1)'
+                      }
+                    : {
+                        background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.15) 100%)',
+                        borderColor: 'rgba(255, 255, 255, 0.3)',
+                        color: '#000b3d'
+                      }
+                  }
                   placeholder="Enter your last name"
                 />
                 {errors.lastName && (
-                  <p className="mt-1 text-sm text-red-600">{errors.lastName}</p>
+                  <p className="mt-1 text-sm" style={{ color: '#dc2626' }}>{errors.lastName}</p>
                 )}
               </div>
             </div>
           </div>
 
           {/* Contact Information Section */}
-          <div className="bg-gray-50 p-6 rounded-lg">
-            <h2 className="text-xl font-semibold text-gray-800 mb-4">Contact Information</h2>
+          <div className="mb-8">
+            <h2 className="text-xl sm:text-2xl font-bold mb-6 flex items-center gap-2" style={{ color: '#000b3d' }}>
+              <span className="text-2xl">📧</span> Contact Information
+            </h2>
             
-            <div className="space-y-4">
+            <div className="space-y-6">
               {/* Email */}
               <div>
-                <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="email" className="block text-sm font-medium mb-2" style={{ color: '#000b3d', opacity: 0.8 }}>
                   Email Address *
                 </label>
                 <input
@@ -339,24 +403,37 @@ function UserProfilePage({ navigateTo }) {
                   name="email"
                   value={formData.email}
                   onChange={handleInputChange}
-                  className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 transition-colors ${
+                  className={`w-full p-3 rounded-xl backdrop-blur-md focus:outline-none focus:ring-2 transition-all duration-300 ${
                     errors.email 
-                      ? 'border-red-500 focus:ring-red-200' 
-                      : 'border-gray-300 focus:ring-blue-200'
+                      ? 'border-2' 
+                      : 'border'
                   }`}
+                  style={errors.email
+                    ? {
+                        background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.15) 100%)',
+                        borderColor: 'rgba(239, 68, 68, 0.5)',
+                        color: '#000b3d',
+                        boxShadow: '0 4px 16px rgba(239, 68, 68, 0.1)'
+                      }
+                    : {
+                        background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.15) 100%)',
+                        borderColor: 'rgba(255, 255, 255, 0.3)',
+                        color: '#000b3d'
+                      }
+                  }
                   placeholder="Enter your email address"
                 />
                 {errors.email && (
-                  <p className="mt-1 text-sm text-red-600">{errors.email}</p>
+                  <p className="mt-1 text-sm" style={{ color: '#dc2626' }}>{errors.email}</p>
                 )}
-                <p className="mt-1 text-sm text-gray-500">
+                <p className="mt-1 text-sm" style={{ color: '#000b3d', opacity: 0.6 }}>
                   Changing your email will require verification
                 </p>
               </div>
 
               {/* Contact Number */}
               <div>
-                <label htmlFor="contactNumber" className="block text-sm font-medium text-gray-700 mb-2">
+                <label htmlFor="contactNumber" className="block text-sm font-medium mb-2" style={{ color: '#000b3d', opacity: 0.8 }}>
                   Contact Number
                 </label>
                 <input
@@ -365,17 +442,30 @@ function UserProfilePage({ navigateTo }) {
                   name="contactNumber"
                   value={formData.contactNumber}
                   onChange={handleInputChange}
-                  className={`w-full p-3 border rounded-lg focus:outline-none focus:ring-2 transition-colors ${
+                  className={`w-full p-3 rounded-xl backdrop-blur-md focus:outline-none focus:ring-2 transition-all duration-300 ${
                     errors.contactNumber 
-                      ? 'border-red-500 focus:ring-red-200' 
-                      : 'border-gray-300 focus:ring-blue-200'
+                      ? 'border-2' 
+                      : 'border'
                   }`}
+                  style={errors.contactNumber
+                    ? {
+                        background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.15) 100%)',
+                        borderColor: 'rgba(239, 68, 68, 0.5)',
+                        color: '#000b3d',
+                        boxShadow: '0 4px 16px rgba(239, 68, 68, 0.1)'
+                      }
+                    : {
+                        background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.15) 100%)',
+                        borderColor: 'rgba(255, 255, 255, 0.3)',
+                        color: '#000b3d'
+                      }
+                  }
                   placeholder="Enter your contact number (optional)"
                 />
                 {errors.contactNumber && (
-                  <p className="mt-1 text-sm text-red-600">{errors.contactNumber}</p>
+                  <p className="mt-1 text-sm" style={{ color: '#dc2626' }}>{errors.contactNumber}</p>
                 )}
-                <p className="mt-1 text-sm text-gray-500">
+                <p className="mt-1 text-sm" style={{ color: '#000b3d', opacity: 0.6 }}>
                   Include country code if applicable (e.g., +1234567890)
                 </p>
               </div>
@@ -383,14 +473,21 @@ function UserProfilePage({ navigateTo }) {
           </div>
 
           {/* Action Buttons */}
-          <div className="flex flex-col sm:flex-row gap-4 pt-4">
+          <div className="flex flex-col sm:flex-row gap-4 pt-6 border-t" style={{ borderColor: 'rgba(255, 255, 255, 0.3)' }}>
             <button
               type="submit"
               disabled={saving}
-              className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-bold py-3 px-6 rounded-lg transition-colors duration-200"
+              className="group relative flex-1 px-6 py-3 rounded-xl font-bold text-white overflow-hidden transition-all duration-300 hover:scale-105 focus:outline-none focus:ring-4 focus:ring-opacity-50 disabled:opacity-50"
+              style={{
+                background: saving
+                  ? 'linear-gradient(135deg, rgba(56, 182, 255, 0.6) 0%, rgba(0, 11, 61, 0.6) 100%)'
+                  : 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
+                boxShadow: '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                focusRingColor: 'rgba(56, 182, 255, 0.5)'
+              }}
             >
               {saving ? (
-                <span className="flex items-center justify-center">
+                <span className="relative z-10 flex items-center justify-center">
                   <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -398,21 +495,34 @@ function UserProfilePage({ navigateTo }) {
                   Saving...
                 </span>
               ) : (
-                'Save Changes'
+                <>
+                  <span className="relative z-10">Save Changes</span>
+                  <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" style={{
+                    background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.3) 0%, rgba(56, 182, 255, 0.3) 100%)'
+                  }}></div>
+                </>
               )}
             </button>
             
             <button
               type="button"
               onClick={handleBack}
-              className="flex-1 sm:flex-none bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded-lg transition-colors duration-200"
+              className="group relative flex-1 sm:flex-none px-6 py-3 rounded-xl font-bold text-white overflow-hidden transition-all duration-300 hover:scale-105 focus:outline-none focus:ring-4 focus:ring-opacity-50"
+              style={{
+                background: 'linear-gradient(135deg, #6b7280 0%, #4b5563 100%)',
+                boxShadow: '0 8px 24px rgba(107, 114, 128, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                focusRingColor: 'rgba(107, 114, 128, 0.5)'
+              }}
             >
-              Cancel
+              <span className="relative z-10">Cancel</span>
+              <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" style={{
+                background: 'linear-gradient(135deg, rgba(107, 114, 128, 0.3) 0%, rgba(75, 85, 99, 0.3) 100%)'
+              }}></div>
             </button>
           </div>
 
           {/* Required fields notice */}
-          <p className="text-sm text-gray-500 text-center">
+          <p className="text-sm text-center mt-6" style={{ color: '#000b3d', opacity: 0.6 }}>
             * Required fields
           </p>
         </form>

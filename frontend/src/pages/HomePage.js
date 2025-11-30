@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom'; // Add React Router hooks
 import { useAuth } from '../contexts/AuthContext';
+import { openGoogleMaps } from '../utils/mapUtils';
+import { filterActivePlans } from '../utils/planUtils';
 
 
 function HomePage({ navigateTo, message, stations: propStations, loadingStations: propLoadingStations }) {
@@ -54,6 +56,28 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
     }
   }, [session, location.pathname, stations.length, loadingStations]);
 
+  // Refresh usage data when navigating back to home page
+  useEffect(() => {
+    if (session?.access_token && location.pathname === '/home') {
+      // Fetch fresh usage data when returning to home page
+      const fetchUsageAnalytics = async () => {
+        try {
+          const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://solar-charger-backend.onrender.com';
+          const res = await fetch(`${BACKEND_URL}/api/user/usage`, {
+            headers: { Authorization: `Bearer ${session.access_token}` },
+          });
+          if (!res.ok) throw new Error('Failed to fetch usage data.');
+          const data = await res.json();
+          setUsage(data);
+        } catch (err) {
+          console.error('HomePage: Error fetching usage analytics on navigation:', err.message);
+        }
+      };
+      
+      fetchUsageAnalytics();
+    }
+  }, [session?.access_token, location.pathname]);
+
   // Enhanced station navigation with state passing
   const handleStationClick = (station) => {
     if (subscription) {
@@ -66,7 +90,11 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
         }
       });
     } else {
+      // For users without subscription, open Google Maps with precise coordinates
       openGoogleMaps(station.location_description, station.latitude, station.longitude);
+      
+      // Show a helpful message about getting a subscription
+      setDisplayMessage(`📍 Opening ${station.station_name} location in Google Maps. Get a subscription to access charging controls!`);
     }
   };
 
@@ -117,13 +145,22 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
         });
         if (!res.ok) throw new Error('Failed to fetch usage data.');
         const data = await res.json();
+        console.log('HomePage: Received usage data:', data);
         setUsage(data);
       } catch (err) {
         console.error('HomePage: Error fetching usage analytics:', err.message);
         setUsage({ totalSessions: 0, totalDuration: 0, totalCost: 0, totalEnergyMAH: 0 });
       }
     }
+    
+    // Initial fetch
     fetchUsageAnalytics();
+    
+    // Set up interval to refresh usage data every 30 seconds
+    const usageInterval = setInterval(fetchUsageAnalytics, 30000);
+    
+    // Cleanup interval on unmount or session change
+    return () => clearInterval(usageInterval);
   }, [session]);
 
   // Function to detect device information
@@ -280,52 +317,38 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
     return { deviceType, deviceName, deviceModel };
   };
 
-  // Function to get battery information (if available)
-  const getBatteryInfo = async () => {
+  // Function to get charging status and battery level (if available)
+  const getChargingStatus = async () => {
     // Check if Battery API is available
     if ('getBattery' in navigator) {
       try {
         const battery = await navigator.getBattery();
         
-        // Add event listeners for battery changes
-        battery.addEventListener('levelchange', () => {
-          console.log('Battery level changed:', Math.round(battery.level * 100));
-        });
-        
+        // Add event listener for charging changes
         battery.addEventListener('chargingchange', () => {
           console.log('Charging status changed:', battery.charging);
         });
         
+        // Add event listener for battery level changes
+        battery.addEventListener('levelchange', () => {
+          console.log('Battery level changed:', battery.level);
+        });
+        
         return {
-          level: Math.round(battery.level * 100),
           charging: battery.charging,
-          chargingTime: battery.chargingTime,
-          dischargingTime: battery.dischargingTime
+          batteryLevel: Math.round(battery.level * 100) // Convert to percentage
         };
       } catch (error) {
         console.log('Battery API error:', error.message);
-        return null;
+        return { charging: false, batteryLevel: null };
       }
     }
     
-    // Fallback: Try to detect if device is likely charging based on other indicators
-    const fallbackCharging = () => {
-      // Some mobile browsers might not support Battery API but we can make educated guesses
-      const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-      if (isMobile) {
-        // For mobile devices, we'll assume not charging as default
-        // This is a conservative approach since we can't reliably detect it
-        return false;
-      }
-      return false;
-    };
-    
+    // Fallback: Assume not charging if we can't detect it
     console.log('Battery API not available, using fallback');
     return {
-      level: null, // We can't determine battery level without the API
-      charging: fallbackCharging(),
-      chargingTime: null,
-      dischargingTime: null
+      charging: false, // Assume not charging if we can't detect it
+      batteryLevel: null
     };
   };
 
@@ -335,14 +358,13 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
       const deviceInfo = detectDeviceInfo();
       console.log('Detected device info:', deviceInfo);
       
-      getBatteryInfo().then(batteryInfo => {
-        console.log('Battery info:', batteryInfo);
+      getChargingStatus().then(chargingInfo => {
+        console.log('Charging info:', chargingInfo);
         
         const device = {
           ...deviceInfo,
-          batteryLevel: batteryInfo?.level || null,
-          isCharging: batteryInfo?.charging || false,
-          batteryCapacity: null // We don't have this info from browser APIs
+          isCharging: chargingInfo?.charging || false,
+          batteryLevel: chargingInfo?.batteryLevel
         };
         
         console.log('Final device object:', device);
@@ -353,6 +375,27 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
       });
     }
   }, [subscription, session]);
+
+  // Effect to update battery level periodically
+  useEffect(() => {
+    if (subscription && session && userDevices.length > 0) {
+      const updateBatteryLevel = async () => {
+        const chargingInfo = await getChargingStatus();
+        setUserDevices(prevDevices => 
+          prevDevices.map(device => ({
+            ...device,
+            isCharging: chargingInfo?.charging || false,
+            batteryLevel: chargingInfo?.batteryLevel
+          }))
+        );
+      };
+
+      // Update battery level every 30 seconds
+      const batteryInterval = setInterval(updateBatteryLevel, 30000);
+      
+      return () => clearInterval(batteryInterval);
+    }
+  }, [subscription, session, userDevices.length]);
 
   // Function to save device information to database
   const saveDeviceToDatabase = async (device) => {
@@ -368,9 +411,8 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
           device_type: device.deviceType,
           device_name: device.deviceName,
           device_model: device.deviceModel,
-          battery_capacity_mah: device.batteryCapacity,
-          current_battery_level: device.batteryLevel,
-          is_charging: device.isCharging
+          is_charging: device.isCharging,
+          current_battery_level: device.batteryLevel
         }),
       });
       
@@ -393,136 +435,218 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
     }).format(amount || 0);
   };
 
-  const openGoogleMaps = (locationDescription, latitude, longitude) => {
-    // Use coordinates if available, otherwise fall back to location description
-    if (latitude && longitude) {
-      window.open(`https://www.google.com/maps?q=${latitude},${longitude}`, '_blank');
-    } else {
-      const encodedLocation = encodeURIComponent(locationDescription);
-      window.open(`https://www.google.com/maps/search/?api=1&query=${encodedLocation}`, '_blank');
-    }
-  };
+  // openGoogleMaps function is now imported from utils/mapUtils.js
 
   // Only show loading during initial app load, not for tab switches or minor updates
   if (authLoading && !session) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-500"></div>
-        <p className="ml-4 text-lg text-gray-700">Loading...</p>
+      <div className="min-h-screen flex items-center justify-center relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-float-slow" style={{ background: 'radial-gradient(circle, rgba(249, 210, 23, 0.25) 0%, rgba(249, 210, 23, 0.1) 50%, transparent 100%)' }}></div>
+          <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-float-slow-delay" style={{ background: 'radial-gradient(circle, rgba(56, 182, 255, 0.25) 0%, rgba(56, 182, 255, 0.1) 50%, transparent 100%)' }}></div>
+        </div>
+        <div className="relative z-10 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/30" style={{
+          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+          boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+        }}>
+          <div className="animate-spin rounded-full h-16 w-16 border-4 border-t-transparent mx-auto mb-4" style={{
+            borderColor: '#38b6ff',
+            borderTopColor: 'transparent'
+          }}></div>
+          <p className="text-lg font-semibold" style={{ color: '#000b3d' }}>Loading...</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-emerald-50 via-blue-50 to-cyan-100 flex flex-col items-center justify-center p-4 text-gray-800 relative overflow-hidden">
-      {/* Background decorative elements */}
+    <div className="min-h-screen flex flex-col items-center justify-center p-4 text-gray-800 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+      {/* Animated Background Orbs with brand colors */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-gradient-to-br from-green-400/20 to-blue-400/20 rounded-full blur-3xl"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-gradient-to-tr from-cyan-400/20 to-emerald-400/20 rounded-full blur-3xl"></div>
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-gradient-to-r from-blue-400/10 to-green-400/10 rounded-full blur-3xl"></div>
+        {/* Sun-colored orb */}
+        <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-float-slow" style={{ background: 'radial-gradient(circle, rgba(249, 210, 23, 0.25) 0%, rgba(249, 210, 23, 0.1) 50%, transparent 100%)' }}></div>
+        {/* Lightning-colored orb */}
+        <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-float-slow-delay" style={{ background: 'radial-gradient(circle, rgba(56, 182, 255, 0.25) 0%, rgba(56, 182, 255, 0.1) 50%, transparent 100%)' }}></div>
+        {/* Solar panel colored accent */}
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full blur-3xl animate-pulse-slow" style={{ background: 'radial-gradient(circle, rgba(0, 11, 61, 0.15) 0%, rgba(0, 11, 61, 0.05) 50%, transparent 100%)' }}></div>
+        {/* Additional floating orbs */}
+        <div className="absolute top-1/4 right-1/4 w-64 h-64 rounded-full blur-3xl animate-float" style={{ background: 'radial-gradient(circle, rgba(56, 182, 255, 0.2) 0%, transparent 70%)' }}></div>
+        <div className="absolute bottom-1/4 left-1/4 w-64 h-64 rounded-full blur-3xl animate-float-delay" style={{ background: 'radial-gradient(circle, rgba(249, 210, 23, 0.2) 0%, transparent 70%)' }}></div>
       </div>
 
       {/* Message Display (from App.js or internal) */}
       {displayMessage && (
-        <div className="fixed top-20 left-0 right-0 p-4 bg-yellow-100 text-yellow-800 border-b border-yellow-300 text-center z-50 rounded-lg mx-auto max-w-md shadow-md">
+        <div className="fixed top-20 left-0 right-0 p-4 text-center z-50 rounded-lg mx-auto max-w-md shadow-md backdrop-blur-xl" style={{
+          background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.3) 0%, rgba(249, 210, 23, 0.2) 100%)',
+          border: '1px solid rgba(255, 255, 255, 0.3)',
+          color: '#000b3d'
+        }}>
           {displayMessage}
         </div>
       )}
 
       {/* Main Content with top padding for fixed nav */}
-      <div className="w-full pt-20">
+      <div className="w-full pt-20 pb-8">
         {/* Hero + Features Section */}
-        <section id="hero-features" className="w-full max-w-5xl mx-auto py-12 px-4 md:px-8 bg-gradient-to-br from-green-100 via-blue-100 to-cyan-100 rounded-3xl shadow-2xl mb-12 relative z-10 border border-white/20 overflow-hidden">
-          <div className="flex flex-col items-center md:items-start text-center md:text-left space-y-6 max-w-xl mx-auto">
-            <div className="flex items-center space-x-3">
-              <span className="text-4xl">⚡</span>
-              <span className="text-3xl font-extrabold text-gray-800 tracking-tight">SolarCharge</span>
-            </div>
-            {session && (
-              <div className="text-lg text-gray-700">
-                Hello <span className="font-semibold">{user?.email?.split('@')[0] || 'User'}</span>!
+        <section id="hero-features" className="w-full max-w-6xl mx-auto mb-16 relative z-10 animate-fade-in px-4 sm:px-6 lg:px-8">
+          {/* Glass card effect */}
+          <div className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-12 sm:py-16 px-6 sm:px-8 lg:px-12" style={{ 
+            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+            boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+          }}>
+            {/* Shimmer effect overlay */}
+            <div className="absolute inset-0 opacity-30" style={{
+              background: 'linear-gradient(135deg, transparent 0%, rgba(249, 210, 23, 0.1) 50%, transparent 100%)',
+              animation: 'shimmer 3s ease-in-out infinite'
+            }}></div>
+            
+            <div className="relative z-10">
+              {/* Welcome Header */}
+              <div className="text-center mb-8 animate-fade-in-down">
+                <div className="flex items-center justify-center space-x-3 mb-4">
+                  <img 
+                    src="/img/solarchargelogo.png" 
+                    alt="SolarCharge Logo" 
+                    className="h-12 md:h-16 w-auto drop-shadow-lg animate-logo-float"
+                  />
+                  <span className="text-3xl md:text-4xl font-black tracking-tight" style={{
+                    background: 'linear-gradient(135deg, #f9d217 0%, #38b6ff 50%, #000b3d 100%)',
+                    WebkitBackgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                    backgroundClip: 'text'
+                  }}>SolarCharge</span>
+                </div>
+                {session && (
+                  <div className="text-xl md:text-2xl font-semibold" style={{ color: '#000b3d' }}>
+                    Welcome back, <span className="font-bold">{user?.email?.split('@')[0] || 'User'}</span>!
+                  </div>
+                )}
               </div>
-            )}
             {subscription ? (
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 w-full max-w-6xl animate-fade-in-up">
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 w-full animate-fade-in-up">
                 {/* Left Panel - Current Plan */}
-                <div className="bg-white rounded-xl shadow-lg p-6 border-2 border-green-300 flex flex-col">
-                  <h4 className="text-xl font-bold text-green-700 mb-4 flex items-center gap-2">
-                    <span className="text-green-500">🌟</span> Your Current Plan
+                <div className="group relative backdrop-blur-xl rounded-3xl p-6 sm:p-8 flex flex-col transform transition-all duration-500 hover:scale-105 hover:-translate-y-2" style={{
+                  background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.15) 100%)',
+                  border: '1px solid rgba(255, 255, 255, 0.3)',
+                  boxShadow: '0 8px 32px 0 rgba(249, 210, 23, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+                }}>
+                  <h4 className="text-xl sm:text-2xl font-bold mb-4 flex items-center gap-2" style={{ color: '#000b3d' }}>
+                    <span className="text-2xl">🌟</span> Your Current Plan
                   </h4>
-                  <div className="mb-3 text-lg font-semibold text-gray-800">{subscription.plan_name}</div>
-                  <div className="mb-3 text-gray-600 text-sm">{subscription.description}</div>
-                  <div className="mb-3 text-gray-600 text-sm"><strong>Price:</strong> {formatCurrency(subscription.price)}</div>
-                  <div className="mb-6 text-gray-600 text-sm"><strong>Daily Limit:</strong> {subscription.daily_mah_limit} mAh</div>
+                  <div className="mb-3 text-lg sm:text-xl font-semibold" style={{ color: '#000b3d' }}>{subscription.plan_name}</div>
+                  <div className="mb-3 text-sm sm:text-base" style={{ color: '#000b3d', opacity: 0.7 }}>{subscription.description}</div>
+                  <div className="mb-6 text-sm sm:text-base" style={{ color: '#000b3d', opacity: 0.7 }}><strong>Daily Limit:</strong> {subscription.daily_mah_limit} mAh</div>
                   
                   {/* Usage Analytics - Made more compact */}
                   <div className="grid grid-cols-3 gap-3 w-full mb-6">
-                    <div className="flex flex-col items-center bg-blue-50 rounded-lg px-3 py-3 shadow">
-                      <span className="text-blue-600 text-xl font-bold">{usage.totalSessions}</span>
-                      <span className="text-xs text-gray-500 mt-1">Sessions</span>
+                    <div className="flex flex-col items-center rounded-xl px-3 py-3 backdrop-blur-md" style={{
+                      background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.1) 100%)',
+                      border: '1px solid rgba(56, 182, 255, 0.3)'
+                    }}>
+                      <span className="text-xl font-bold" style={{ color: '#38b6ff' }}>{usage.totalSessions}</span>
+                      <span className="text-xs mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>Sessions</span>
                     </div>
-                    <div className="flex flex-col items-center bg-green-50 rounded-lg px-3 py-3 shadow">
-                      <span className="text-green-600 text-xl font-bold">{usage.totalDuration}</span>
-                      <span className="text-xs text-gray-500 mt-1">Minutes</span>
+                    <div className="flex flex-col items-center rounded-xl px-3 py-3 backdrop-blur-md" style={{
+                      background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.1) 100%)',
+                      border: '1px solid rgba(249, 210, 23, 0.3)'
+                    }}>
+                      <span className="text-xl font-bold" style={{ color: '#f9d217' }}>{usage.totalDuration}</span>
+                      <span className="text-xs mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>Minutes</span>
                     </div>
-                    <div className="flex flex-col items-center bg-purple-50 rounded-lg px-3 py-3 shadow">
-                      <span className="text-purple-600 text-lg font-bold">{formatCurrency(usage.totalCost)}</span>
-                      <span className="text-xs text-gray-500 mt-1">Total Cost</span>
+                    <div className="flex flex-col items-center rounded-xl px-3 py-3 backdrop-blur-md" style={{
+                      background: 'linear-gradient(135deg, rgba(0, 11, 61, 0.2) 0%, rgba(0, 11, 61, 0.1) 100%)',
+                      border: '1px solid rgba(0, 11, 61, 0.3)'
+                    }}>
+                      <span className="text-lg font-bold" style={{ color: '#000b3d' }}>{usage.totalEnergyMAH ? parseFloat(usage.totalEnergyMAH).toFixed(0) : '0'}</span>
+                      <span className="text-xs mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>mAh Used</span>
                     </div>
                   </div>
                   
                   {/* Energy Consumed and Progress Bar */}
                   <div className="w-full mb-6">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm text-gray-600 font-medium">Energy Consumed (This Month)</span>
-                      <span className="text-sm text-gray-700 font-bold">{usage.totalEnergyMAH} mAh</span>
+                      <span className="text-sm font-medium" style={{ color: '#000b3d', opacity: 0.8 }}>Energy Consumed (This Month)</span>
+                      <span className="text-sm font-bold" style={{ color: '#000b3d' }}>{usage.totalEnergyMAH ? parseFloat(usage.totalEnergyMAH).toFixed(2) : '0.00'} mAh</span>
                     </div>
                     {(() => {
                       const daysSoFar = new Date().getDate();
                       const monthlyLimit = subscription.daily_mah_limit * daysSoFar;
-                      const percent = monthlyLimit > 0 ? Math.min(100, ((usage.totalEnergyMAH / monthlyLimit) * 100).toFixed(0)) : 0;
+                      const totalEnergyMAH = parseFloat(usage.totalEnergyMAH) || 0;
+                      const percent = monthlyLimit > 0 ? Math.min(100, ((totalEnergyMAH / monthlyLimit) * 100)) : 0;
+                      
+                      console.log('HomePage Progress Bar Debug:', {
+                        daysSoFar,
+                        monthlyLimit,
+                        totalEnergyMAH,
+                        percent,
+                        usage: usage.totalEnergyMAH
+                      });
+                      
                       return (
-                        <div className="w-full bg-gray-200 rounded-full h-3">
+                        <div className="w-full rounded-full h-3 backdrop-blur-md" style={{
+                          background: 'rgba(0, 11, 61, 0.1)',
+                          border: '1px solid rgba(255, 255, 255, 0.3)'
+                        }}>
                           <div
-                            className={`h-3 rounded-full transition-all duration-500 ${percent < 80 ? 'bg-green-400' : percent < 100 ? 'bg-yellow-400' : 'bg-red-500'}`}
-                            style={{ width: `${percent}%` }}
+                            className="h-3 rounded-full transition-all duration-500"
+                            style={{ 
+                              width: `${percent}%`,
+                              background: percent < 80 
+                                ? 'linear-gradient(135deg, #f9d217 0%, #38b6ff 100%)' 
+                                : percent < 100 
+                                ? 'linear-gradient(135deg, #f9d217 0%, #ff6b6b 100%)' 
+                                : 'linear-gradient(135deg, #ff6b6b 0%, #dc2626 100%)'
+                            }}
                           ></div>
                         </div>
                       );
                     })()}
                     <div className="flex justify-end mt-1">
-                      <span className="text-xs text-gray-500">{(() => {
+                      <span className="text-xs" style={{ color: '#000b3d', opacity: 0.6 }}>{(() => {
                         const daysSoFar = new Date().getDate();
                         const monthlyLimit = subscription.daily_mah_limit * daysSoFar;
-                        const percent = monthlyLimit > 0 ? Math.min(100, ((usage.totalEnergyMAH / monthlyLimit) * 100).toFixed(0)) : 0;
-                        return `${percent}% of monthly limit (${monthlyLimit} mAh)`;
+                        const totalEnergyMAH = parseFloat(usage.totalEnergyMAH) || 0;
+                        const percent = monthlyLimit > 0 ? Math.min(100, ((totalEnergyMAH / monthlyLimit) * 100)) : 0;
+                        return `${Math.round(percent)}% of monthly limit (${monthlyLimit} mAh)`;
                       })()}</span>
                     </div>
                   </div>
                   
                   <button
-                    className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-6 rounded-xl transition-colors w-full mt-auto"
-                    onClick={() => navigateTo('subscription')}
+                    className="group relative px-6 py-3 rounded-xl font-bold text-white overflow-hidden transition-all duration-300 hover:scale-105 focus:outline-none focus:ring-4 focus:ring-opacity-50 w-full mt-auto"
+                    style={{
+                      background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
+                      boxShadow: '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                      focusRingColor: 'rgba(56, 182, 255, 0.5)'
+                    }}
+                    onClick={() => navigateTo('usage')}
                   >
-                    Manage Subscription
+                    <span className="relative z-10">View Usage Details</span>
+                    <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" style={{
+                      background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.3) 0%, rgba(56, 182, 255, 0.3) 100%)'
+                    }}></div>
                   </button>
                 </div>
 
-                {/* Right Panel - Device Battery Details */}
-                <div className="bg-white rounded-xl shadow-lg p-6 border-2 border-blue-300 flex flex-col">
-                  <h4 className="text-xl font-bold text-blue-700 mb-4 flex items-center gap-2">
-                    <span className="text-blue-500">📱</span> Device Details
+                {/* Right Panel - Device Details */}
+                <div className="group relative backdrop-blur-xl rounded-3xl p-6 sm:p-8 flex flex-col transform transition-all duration-500 hover:scale-105 hover:-translate-y-2" style={{
+                  background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.15) 100%)',
+                  border: '1px solid rgba(255, 255, 255, 0.3)',
+                  boxShadow: '0 8px 32px 0 rgba(56, 182, 255, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+                }}>
+                  <h4 className="text-xl sm:text-2xl font-bold mb-4 flex items-center gap-2" style={{ color: '#000b3d' }}>
+                    <span className="text-2xl">📱</span> Device Details
                   </h4>
                   {userDevices.length > 0 ? (
                     userDevices.map((device, index) => (
                       <div key={index} className="w-full flex-1 flex flex-col">
                         <div className="text-center mb-4">
-                          <div className="text-lg font-semibold text-gray-800 mb-1">{device.deviceName}</div>
-                          <div className="text-sm text-gray-600 mb-4">{device.deviceModel}</div>
+                          <div className="text-lg sm:text-xl font-semibold mb-1" style={{ color: '#000b3d' }}>{device.deviceName}</div>
+                          <div className="text-sm sm:text-base mb-4" style={{ color: '#000b3d', opacity: 0.7 }}>{device.deviceModel}</div>
                           
                           {/* Device Type Icon */}
                           <div className="flex justify-center mb-4">
-                            <span className="text-4xl">
+                            <span className="text-4xl sm:text-5xl">
                               {device.deviceType === 'phone' ? '📱' : 
                                device.deviceType === 'tablet' ? '📱' : 
                                device.deviceType === 'laptop' ? '💻' : 
@@ -530,42 +654,54 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
                             </span>
                           </div>
                         </div>
-                        
+
                         {/* Battery Level */}
-                        {device.batteryLevel !== null ? (
-                          <div className="mb-4 flex-1">
-                            <div className="flex items-center justify-between mb-2">
-                              <span className="text-sm text-gray-600 font-medium">Battery Level</span>
-                              <span className={`text-sm font-bold ${
-                                device.batteryLevel > 50 ? 'text-green-600' : 
-                                device.batteryLevel > 20 ? 'text-yellow-600' : 'text-red-600'
-                              }`}>
-                                {device.batteryLevel}%
-                              </span>
+                        {device.batteryLevel !== null && (
+                          <div className="mb-4">
+                            <div className="flex items-center justify-center gap-2 p-3 rounded-xl backdrop-blur-md" style={{
+                              background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.1) 100%)',
+                              border: '1px solid rgba(56, 182, 255, 0.3)'
+                            }}>
+                              <span className="text-sm" style={{ color: '#000b3d', opacity: 0.7 }}>Battery:</span>
+                              <div className="flex items-center gap-2">
+                                <span className={`text-lg font-bold ${
+                                  device.batteryLevel <= 20 ? 'text-red-600' :
+                                  device.batteryLevel <= 50 ? 'text-yellow-600' :
+                                  'text-green-600'
+                                }`}>
+                                  {device.batteryLevel}%
+                                </span>
+                                <div className="w-16 h-2 rounded-full overflow-hidden backdrop-blur-md" style={{
+                                  background: 'rgba(0, 11, 61, 0.1)',
+                                  border: '1px solid rgba(255, 255, 255, 0.3)'
+                                }}>
+                                  <div 
+                                    className="h-full rounded-full transition-all duration-300"
+                                    style={{ 
+                                      width: `${device.batteryLevel}%`,
+                                      background: device.batteryLevel <= 20 
+                                        ? 'linear-gradient(135deg, #ff6b6b 0%, #dc2626 100%)'
+                                        : device.batteryLevel <= 50
+                                        ? 'linear-gradient(135deg, #f9d217 0%, #f59e0b 100%)'
+                                        : 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
+                                    }}
+                                  ></div>
+                                </div>
+                              </div>
                             </div>
-                            <div className="w-full bg-gray-200 rounded-full h-3">
-                              <div
-                                className={`h-3 rounded-full transition-all duration-500 ${
-                                  device.batteryLevel > 50 ? 'bg-green-400' : 
-                                  device.batteryLevel > 20 ? 'bg-yellow-400' : 'bg-red-500'
-                                }`}
-                                style={{ width: `${device.batteryLevel}%` }}
-                              ></div>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="mb-4 flex-1 flex items-center justify-center">
-                            <div className="text-sm text-gray-500">Battery level not available</div>
                           </div>
                         )}
 
                         {/* Charging Status */}
                         <div className="mt-auto">
-                          <div className="flex items-center justify-center gap-2 p-3 bg-gray-50 rounded-lg">
-                            <span className="text-sm text-gray-600">Status:</span>
+                          <div className="flex items-center justify-center gap-2 p-3 rounded-xl backdrop-blur-md" style={{
+                            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.1) 100%)',
+                            border: '1px solid rgba(255, 255, 255, 0.3)'
+                          }}>
+                            <span className="text-sm" style={{ color: '#000b3d', opacity: 0.7 }}>Status:</span>
                             <span className={`text-sm font-semibold ${
-                              device.isCharging ? 'text-green-600' : 'text-gray-600'
-                            }`}>
+                              device.isCharging ? 'text-green-600' : ''
+                            }`} style={!device.isCharging ? { color: '#000b3d', opacity: 0.7 } : {}}>
                               {device.isCharging ? '🔌 Charging' : '🔋 Not Charging'}
                             </span>
                           </div>
@@ -573,7 +709,7 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
                       </div>
                     ))
                   ) : (
-                    <div className="text-center text-gray-500 flex-1 flex flex-col items-center justify-center">
+                    <div className="text-center flex-1 flex flex-col items-center justify-center" style={{ color: '#000b3d', opacity: 0.7 }}>
                       <div className="text-4xl mb-4">📱</div>
                       <div className="text-sm">Detecting device information...</div>
                     </div>
@@ -582,118 +718,159 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
               </div>
             ) : (
               <div className="flex flex-col items-center w-full animate-fade-in-up">
-                <h3 className="text-2xl font-bold text-blue-700 mb-4">Choose Your Plan</h3>
-                <div className="grid grid-cols-1 gap-6 w-full">
-                  {plans.map(plan => (
-                    <div key={plan.plan_id} className="bg-white rounded-xl shadow-lg p-6 border-2 border-blue-200 w-full">
-                      <div className="text-xl font-bold text-blue-700 mb-2">{plan.plan_name}</div>
-                      <div className="text-gray-600 mb-2">{plan.description}</div>
-                      <div className="text-gray-600 mb-2"><strong>Price:</strong> {formatCurrency(plan.price)}</div>
-                      <div className="text-gray-600 mb-4"><strong>Daily Limit:</strong> {plan.daily_mah_limit} mAh</div>
+                <h3 className="text-2xl sm:text-3xl font-bold mb-6" style={{ color: '#000b3d' }}>Choose Your Plan</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full">
+                  {filterActivePlans(plans).map(plan => (
+                    <div key={plan.plan_id} className="group relative backdrop-blur-xl rounded-3xl p-6 sm:p-8 transform transition-all duration-500 hover:scale-105 hover:-translate-y-2" style={{
+                      background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.15) 100%)',
+                      border: '1px solid rgba(255, 255, 255, 0.3)',
+                      boxShadow: '0 8px 32px 0 rgba(56, 182, 255, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+                    }}>
+                      <div className="text-xl sm:text-2xl font-bold mb-2" style={{ color: '#000b3d' }}>{plan.plan_name}</div>
+                      <div className="mb-2" style={{ color: '#000b3d', opacity: 0.7 }}>{plan.description}</div>
+                      <div className="mb-2" style={{ color: '#000b3d', opacity: 0.7 }}><strong>Price:</strong> {formatCurrency(plan.price)}</div>
+                      <div className="mb-4" style={{ color: '#000b3d', opacity: 0.7 }}><strong>Daily Limit:</strong> {plan.daily_mah_limit} mAh</div>
                       <button
-                        className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-6 rounded-xl transition-colors w-full"
+                        className="group relative px-6 py-3 rounded-xl font-bold text-white overflow-hidden transition-all duration-300 hover:scale-105 focus:outline-none focus:ring-4 focus:ring-opacity-50 w-full"
+                        style={{
+                          background: 'linear-gradient(135deg, #f9d217 0%, #38b6ff 100%)',
+                          boxShadow: '0 8px 24px rgba(249, 210, 23, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                          focusRingColor: 'rgba(249, 210, 23, 0.5)'
+                        }}
                         onClick={() => navigateTo('subscription')}
                       >
-                        Subscribe
+                        <span className="relative z-10">Subscribe</span>
+                        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" style={{
+                          background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.3) 0%, rgba(249, 210, 23, 0.3) 100%)'
+                        }}></div>
                       </button>
                     </div>
                   ))}
                 </div>
               </div>
             )}
+            </div>
           </div>
         </section>
 
         {/* Available Stations Section */}
-        <section id="stations" className="w-full max-w-5xl mx-auto bg-white/90 backdrop-blur-sm p-10 rounded-3xl shadow-2xl mb-12 relative z-10 border border-white/20">
-          <div className="text-center mb-10">
-            <h3 className="text-4xl font-bold text-gray-800 mb-4">Find a Charging Station</h3>
-            <p className="text-xl text-gray-600">Locate and use our solar-powered charging stations across the city</p>
-          </div>
-          {loadingStations ? (
-            <div className="col-span-full text-center py-8">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-              <p className="text-gray-600">Loading stations...</p>
+        <section id="stations" className="w-full max-w-6xl mx-auto mb-16 relative z-10 animate-fade-in delay-400 px-4 sm:px-6 lg:px-8">
+          <div className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-12 sm:py-16 px-6 sm:px-8 lg:px-12" style={{
+            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+            boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+          }}>
+            <div className="text-center mb-10">
+              <h3 className="text-4xl sm:text-5xl font-bold mb-4" style={{ color: '#000b3d' }}>Find a Charging Station</h3>
+              <p className="text-lg sm:text-xl" style={{ color: '#000b3d', opacity: 0.7 }}>Locate and use our solar-powered charging stations across the city</p>
             </div>
-          ) : stations.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-              {stations.map((station, index) => (
-                <div
-                  key={station.station_id}
-                  className="group bg-gradient-to-br from-blue-50 to-cyan-50 p-8 rounded-2xl shadow-lg border border-blue-200 text-left transform transition-all duration-300 hover:scale-105 hover:shadow-xl cursor-pointer"
-                  style={{ animationDelay: `${index * 100}ms` }}
-                  onClick={() => handleStationClick(station)}
-                >
-                  <div className="flex flex-col gap-2"> {/* Changed to flex-col for better stacking on small screens */}
-                    <h4 className="text-2xl font-bold text-blue-800">{station.station_name}</h4>
-                    <p className="text-gray-700 text-base flex items-center">
-                      <svg className="w-5 h-5 mr-3 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd"></path>
-                      </svg>
-                      {station.location_description}
-                    </p>
-                  </div>
-
-                  {/* Conditional rendering for subscribed users */}
-                  {subscription && (
-                    <>
-                      <div className="space-y-3 text-gray-600 mt-6"> {/* Added mt-6 for spacing */}
-                        <div className="flex items-center justify-between p-3 bg-white/50 rounded-lg">
-                          <span className="flex items-center">
-                            <span className="mr-2">🔌</span> Free Ports
-                          </span>
-                          <span className="font-bold text-blue-600">{station.available_free_ports} / {station.num_free_ports}</span>
-                        </div>
-                        <div className="flex items-center justify-between p-3 bg-white/50 rounded-lg">
-                          <span className="flex items-center">
-                            <span className="mr-2">⚡</span> Premium Ports
-                          </span>
-                          <span className="font-bold text-purple-600">{station.available_premium_ports} / {station.num_premium_ports}</span>
-                        </div>
-                        <div className="flex items-center justify-between p-3 bg-white/50 rounded-lg">
-                          <span className="flex items-center">
-                            <span className="mr-2">🔋</span> Battery Level
-                          </span>
-                          <span className={`font-bold ${station.current_battery_level > 50 ? 'text-green-600' : station.current_battery_level > 20 ? 'text-yellow-600' : 'text-red-600'}`}>
-                            {station.current_battery_level}%
-                          </span>
-                        </div>
-                      </div>
-
-                      {station.last_maintenance_message && (
-                        <div className="mt-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
-                          <p className="text-gray-600 text-sm flex items-center">
-                            <span className="mr-2">🛠️</span> Last Maintenance: {station.last_maintenance_message}
-                          </p>
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {!subscription && (
-                    <div className="mt-4 text-center text-sm text-gray-500 italic">
-                      Tap to view on map. Subscribe for full details and charging.
+            {loadingStations ? (
+              <div className="col-span-full text-center py-12">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-t-transparent mx-auto mb-4" style={{
+                  borderColor: '#38b6ff',
+                  borderTopColor: 'transparent'
+                }}></div>
+                <p style={{ color: '#000b3d', opacity: 0.7 }}>Loading stations...</p>
+              </div>
+            ) : stations.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {stations.map((station, index) => (
+                  <div
+                    key={station.station_id}
+                    className="group relative backdrop-blur-xl p-6 rounded-2xl text-left transform transition-all duration-500 hover:scale-105 hover:-translate-y-2 cursor-pointer overflow-hidden"
+                    style={{
+                      background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.15) 100%)',
+                      border: '1px solid rgba(255, 255, 255, 0.3)',
+                      boxShadow: '0 8px 32px 0 rgba(56, 182, 255, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)',
+                      animationDelay: `${index * 100}ms`
+                    }}
+                    onClick={() => handleStationClick(station)}
+                  >
+                    <div className="flex flex-col gap-2">
+                      <h4 className="text-2xl font-bold" style={{ color: '#000b3d' }}>{station.station_name}</h4>
+                      <p className="text-base flex items-center" style={{ color: '#000b3d', opacity: 0.7 }}>
+                        <svg className="w-5 h-5 mr-3" style={{ color: '#38b6ff' }} fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd"></path>
+                        </svg>
+                        {station.location_description}
+                      </p>
                     </div>
-                  )}
+
+                    {/* Conditional rendering for subscribed users */}
+                    {subscription && (
+                      <>
+                        <div className="space-y-3 mt-6">
+                          <div className="flex items-center justify-between p-3 rounded-lg backdrop-blur-md" style={{
+                            background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.1) 100%)',
+                            border: '1px solid rgba(56, 182, 255, 0.3)'
+                          }}>
+                            <span className="flex items-center" style={{ color: '#000b3d', opacity: 0.8 }}>
+                              <span className="mr-2">🔌</span> Free Ports
+                            </span>
+                            <span className="font-bold" style={{ color: '#38b6ff' }}>{station.num_free_ports}</span>
+                          </div>
+                          <div className="flex items-center justify-between p-3 rounded-lg backdrop-blur-md" style={{
+                            background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.1) 100%)',
+                            border: '1px solid rgba(249, 210, 23, 0.3)'
+                          }}>
+                            <span className="flex items-center" style={{ color: '#000b3d', opacity: 0.8 }}>
+                              <span className="mr-2">⚡</span> Premium Ports
+                            </span>
+                            <span className="font-bold" style={{ color: '#f9d217' }}>{station.available_premium_ports} / {station.num_premium_ports}</span>
+                          </div>
+                        </div>
+
+                        {station.last_maintenance_message && (
+                          <div className="mt-4 p-3 rounded-lg backdrop-blur-md" style={{
+                            background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.1) 100%)',
+                            border: '1px solid rgba(249, 210, 23, 0.3)'
+                          }}>
+                            <p className="text-sm flex items-center" style={{ color: '#000b3d', opacity: 0.8 }}>
+                              <span className="mr-2">🛠️</span> Last Maintenance: {station.last_maintenance_message}
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {!subscription && (
+                      <div className="mt-4 text-center text-sm italic" style={{ color: '#000b3d', opacity: 0.6 }}>
+                        Tap to view on map. Subscribe for full details and charging.
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="col-span-full text-center py-12">
+                <div className="w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 backdrop-blur-md" style={{
+                  background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.1) 100%)',
+                  border: '1px solid rgba(255, 255, 255, 0.3)'
+                }}>
+                  <span className="text-4xl">🔌</span>
                 </div>
-              ))}
-            </div>
-          ) : (
-            <div className="col-span-full text-center py-8">
-              <p className="text-gray-600">No stations found.</p>
-            </div>
-          )}
+                <h4 className="text-2xl font-bold mb-2" style={{ color: '#000b3d' }}>No Stations Available</h4>
+                <p className="text-lg" style={{ color: '#000b3d', opacity: 0.7 }}>No charging stations found at the moment. Please check back later!</p>
+              </div>
+            )}
+          </div>
         </section>
 
         {/* Footer */}
-        <footer className="w-full max-w-5xl mx-auto text-center py-12 text-gray-600 relative z-10">
-          <div className="bg-white/80 backdrop-blur-sm p-8 rounded-3xl shadow-lg border border-white/20">
+        <footer className="w-full max-w-6xl mx-auto mb-16 relative z-10 animate-fade-in delay-600 px-4 sm:px-6 lg:px-8">
+          <div className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden text-center py-10 sm:py-12 px-6 sm:px-8 lg:px-12" style={{
+            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.15) 100%)',
+            boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.1), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+          }}>
             <div className="flex items-center justify-center mb-4">
-              <span className="text-2xl mr-2">⚡</span>
-              <h3 className="text-2xl font-bold text-gray-800">SolarCharge</h3>
+              <img 
+                src="/img/solarchargelogo.png" 
+                alt="SolarCharge Logo" 
+                className="h-10 sm:h-12 w-auto mr-3 drop-shadow-lg"
+              />
+              <h3 className="text-2xl sm:text-3xl font-bold" style={{ color: '#000b3d' }}>SolarCharge</h3>
             </div>
-            <p className="text-lg text-gray-700 mb-2">© {new Date().getFullYear()} SolarCharge. All rights reserved.</p>
-            <p className="text-gray-600">Innovating for a sustainable future.</p>
+            <p className="text-base sm:text-lg mb-2" style={{ color: '#000b3d', opacity: 0.8 }}>© {new Date().getFullYear()} SolarCharge. All rights reserved.</p>
+            <p className="text-sm sm:text-base" style={{ color: '#000b3d', opacity: 0.6 }}>Innovating for a sustainable future.</p>
           </div>
         </footer>
       </div>
