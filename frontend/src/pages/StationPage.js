@@ -7,7 +7,7 @@ import { openGoogleMaps } from '../utils/mapUtils';
 const BACKEND_URL = 'https://solar-charger-backend.onrender.com';
 
 function StationPage({ station, navigateTo }) {
-  const { user, session, handleSessionTimeout } = useAuth();
+  const { user, session, subscription, handleSessionTimeout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [chargerPortStatus, setChargerPortStatus] = useState({});
@@ -141,6 +141,13 @@ function StationPage({ station, navigateTo }) {
     }
   }, [user?.id, session?.access_token, devicePortMapping]);
 
+  // Get daily usage from subscription data
+  const getDailyUsage = useCallback(() => {
+    if (!subscription) return 0;
+    // Use current_daily_mah_consumed from subscription, which is updated in real-time
+    return parseFloat(subscription.current_daily_mah_consumed || 0);
+  }, [subscription]);
+
   // Fetch consumption data using existing endpoint
   const fetchPortConsumption = useCallback(async () => {
     try {
@@ -184,10 +191,10 @@ function StationPage({ station, navigateTo }) {
         const key = `${portData.device_id}_${portData.port_number}`;
         // Only update if this port belongs to the current station
         if (key.startsWith(deviceId + '_')) {
-          // Only set consumption if there's actually an active session (non-zero values)
-          // The API returns 0 for ports without active sessions
+          // Always update current_consumption if it exists (even if 0, to show real-time updates)
+          // Only set total_mah if there's an active session
           const hasActiveSession = (portData.current_consumption || 0) > 0 || (portData.total_mah || 0) > 0;
-          if (hasActiveSession) {
+          if (hasActiveSession || portData.current_consumption !== undefined) {
             consumptionMap[key] = {
               total_mah: portData.total_mah || 0,
               current_consumption: portData.current_consumption || 0,
@@ -238,6 +245,7 @@ function StationPage({ station, navigateTo }) {
       intervalsRef.current = [];
     }
   }, []);
+
 
   // Effect to start data fetching when component mounts
   useEffect(() => {
@@ -410,18 +418,12 @@ function StationPage({ station, navigateTo }) {
       isUserSession = false;
     }
     
-    // If there's no active session, clear consumption values
+    // Get current consumption (real-time, updates every 10 seconds)
+    // Show current consumption if there's an active session on this port
     let currentConsumption = 0;
-    let totalMah = 0;
-    
     if (userActiveSession) {
-      // Only show consumption if there's an active user session
+      // Show real-time current consumption from the API
       currentConsumption = consumptionInfo.current_consumption || 0;
-      totalMah = consumptionInfo.total_mah || 0;
-    } else {
-      // Clear consumption when session ends
-      currentConsumption = 0;
-      totalMah = 0;
     }
     
     return {
@@ -429,8 +431,7 @@ function StationPage({ station, navigateTo }) {
       buttonText,
       buttonDisabled,
       isUserSession,
-      consumption: currentConsumption,
-      totalMah: totalMah,
+      consumption: currentConsumption, // Real-time current consumption in mA
       energyKwh: 0 // Not available in old endpoint
     };
   }, [chargerPortStatus, portConsumption, activeSessions, stationData?.device_mqtt_id]);
@@ -670,9 +671,11 @@ function StationPage({ station, navigateTo }) {
                           <div className="text-center mb-4">
                             <div className="text-xs mb-1" style={{ color: '#000b3d', opacity: 0.7 }}>Current Consumption</div>
                             <div className="text-lg font-bold" style={{ color: '#38b6ff' }}>
-                              {currentStatus.consumption.toFixed(2)} mA
+                              {currentStatus.isUserSession ? currentStatus.consumption.toFixed(2) : '0.00'} mA
                             </div>
-                            <div className="text-xs mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>Total: {currentStatus.totalMah.toFixed(2)} mAh</div>
+                            <div className="text-xs mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>
+                              Daily Total: {getDailyUsage().toFixed(2)} mAh
+                            </div>
                           </div>
 
                           {currentStatus.displayStatus === 'Offline' ? (
