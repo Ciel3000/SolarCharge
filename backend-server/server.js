@@ -1464,14 +1464,15 @@ app.get('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req,
                 s.device_mqtt_id, cp.device_mqtt_id, s.num_free_ports, s.num_premium_ports
             ORDER BY 
                 s.created_at DESC
-        `, [SESSION_STATUS.ACTIVE]);
+        `);
         
         res.json(result.rows);
         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, 'Admin stations list fetched successfully', req.user.user_id);
     } catch (err) {
         console.error('Admin stations error:', err.message);
+        console.error('Full error:', err);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Admin stations error: ${err.message}`, req.user.user_id);
-        res.status(500).json({ error: 'Server error' });
+        res.status(500).json({ error: `Server error: ${err.message}` });
     }
 });
 
