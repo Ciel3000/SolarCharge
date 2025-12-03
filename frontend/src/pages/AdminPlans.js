@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../supabaseClient';
+import Navigation from '../components/Navigation';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
@@ -289,21 +290,45 @@ function AdminPlans({ navigateTo, handleSignOut }) {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-500"></div>
+      <div className="min-h-screen flex items-center justify-center relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-float-slow" style={{ background: 'radial-gradient(circle, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.05) 50%, transparent 100%)' }}></div>
+          <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-float-slow-delay" style={{ background: 'radial-gradient(circle, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.05) 50%, transparent 100%)' }}></div>
+        </div>
+        <div className="relative z-10 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/30" style={{
+          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+          boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+        }}>
+          <div className="animate-spin rounded-full h-16 w-16 border-4 border-t-transparent mx-auto mb-4" style={{
+            borderColor: '#38b6ff',
+            borderTopColor: 'transparent'
+          }}></div>
+          <p className="text-lg font-semibold" style={{ color: '#000b3d' }}>Loading...</p>
+        </div>
       </div>
     );
   }
 
   if (!isAdmin) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-red-600 mb-4">Access Denied</h1>
-          <p className="text-gray-600 mb-4">You don't have permission to access this page.</p>
+      <div className="min-h-screen flex items-center justify-center relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-float-slow" style={{ background: 'radial-gradient(circle, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.05) 50%, transparent 100%)' }}></div>
+          <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-float-slow-delay" style={{ background: 'radial-gradient(circle, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.05) 50%, transparent 100%)' }}></div>
+        </div>
+        <div className="relative z-10 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/30 text-center" style={{
+          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+          boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+        }}>
+          <h1 className="text-2xl font-bold mb-4" style={{ color: '#ef4444' }}>Access Denied</h1>
+          <p className="mb-4" style={{ color: '#000b3d', opacity: 0.7 }}>You don't have permission to access this page.</p>
           <button
             onClick={() => navigateTo('home')}
-            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg"
+            className="font-bold py-2 px-4 rounded-xl text-white transition-all duration-200 hover:scale-105"
+            style={{
+              background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
+              boxShadow: '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+            }}
           >
             Go to Home
           </button>
@@ -313,27 +338,49 @@ function AdminPlans({ navigateTo, handleSignOut }) {
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="bg-white rounded-xl shadow-lg p-6 mb-6">
+    <div className="min-h-screen flex flex-col items-center p-4 text-gray-800 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+      {/* Lightweight Animated Background */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none" style={{ willChange: 'transform' }}>
+        <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-float-slow" style={{ 
+          background: 'radial-gradient(circle, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.05) 50%, transparent 100%)',
+          willChange: 'transform',
+          transform: 'translateZ(0)'
+        }}></div>
+        <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-float-slow-delay" style={{ 
+          background: 'radial-gradient(circle, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.05) 50%, transparent 100%)',
+          willChange: 'transform',
+          transform: 'translateZ(0)'
+        }}></div>
+      </div>
+
+      <Navigation currentPage="admin-plans" navigateTo={navigateTo} handleSignOut={handleSignOut} />
+
+      <div className="w-full max-w-7xl mx-auto pt-24 pb-8 relative z-10 px-4 sm:px-6 lg:px-8" style={{ 
+        animation: 'fade-in 0.6s ease-out forwards',
+        willChange: 'opacity, transform'
+      }}>
+        {/* Header - Wrapped in its own glass card */}
+        <div className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-8 px-8 mb-8" style={{ 
+          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+          boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+        }}>
           <div className="flex justify-between items-center">
             <div>
-              <h1 className="text-3xl font-bold text-gray-800">Subscription Plans Management</h1>
-              <p className="text-gray-600 mt-2">Create, edit, and manage subscription plans</p>
+              <h1 className="text-4xl sm:text-5xl font-bold mb-2" style={{ color: '#000b3d' }}>Subscription Plans Management</h1>
+              <p className="text-lg" style={{ color: '#000b3d', opacity: 0.7 }}>Create, edit, and manage subscription plans</p>
             </div>
             <div className="flex space-x-4">
               <button
                 onClick={handleAddPlan}
-                className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg transition-colors"
+                className="font-bold py-2 px-6 rounded-xl text-white transition-all duration-200 hover:scale-105"
+                style={{
+                  background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                  boxShadow: '0 8px 24px rgba(16, 185, 129, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                  willChange: 'transform',
+                  transform: 'translateZ(0)'
+                }}
               >
                 <span className="mr-2">+</span>Add New Plan
-              </button>
-              <button
-                onClick={handleSignOut}
-                className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg transition-colors"
-              >
-                Sign Out
               </button>
             </div>
           </div>
@@ -341,67 +388,90 @@ function AdminPlans({ navigateTo, handleSignOut }) {
 
         {/* Messages */}
         {error && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg mb-6">
-            {error}
+          <div className="relative backdrop-blur-xl rounded-2xl shadow-xl border border-white/30 overflow-hidden py-4 px-6 mb-6" style={{ 
+            background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(220, 38, 38, 0.1) 100%)',
+            borderColor: 'rgba(239, 68, 68, 0.3)',
+            boxShadow: '0 8px 32px 0 rgba(239, 68, 68, 0.15)'
+          }}>
+            <p className="font-semibold" style={{ color: '#dc2626' }}>{error}</p>
           </div>
         )}
         {success && (
-          <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded-lg mb-6">
-            {success}
+          <div className="relative backdrop-blur-xl rounded-2xl shadow-xl border border-white/30 overflow-hidden py-4 px-6 mb-6" style={{ 
+            background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(5, 150, 105, 0.1) 100%)',
+            borderColor: 'rgba(16, 185, 129, 0.3)',
+            boxShadow: '0 8px 32px 0 rgba(16, 185, 129, 0.15)'
+          }}>
+            <p className="font-semibold" style={{ color: '#059669' }}>{success}</p>
           </div>
         )}
 
         {/* Plans List */}
-        <div className="bg-white rounded-xl shadow-lg overflow-hidden">
-          <div className="px-6 py-4 bg-gray-50 border-b border-gray-200">
-            <h2 className="text-xl font-semibold text-gray-800">Current Subscription Plans</h2>
+        <div className="relative backdrop-blur-xl rounded-2xl shadow-2xl border border-white/30 overflow-hidden" style={{ 
+          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+          boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+        }}>
+          <div className="px-6 py-4" style={{ background: 'rgba(255, 255, 255, 0.1)', borderBottom: '1px solid rgba(255, 255, 255, 0.3)' }}>
+            <h2 className="text-xl font-bold" style={{ color: '#000b3d' }}>Current Subscription Plans</h2>
           </div>
 
           {loading ? (
             <div className="p-8 text-center">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-              <p className="text-gray-600">Loading plans...</p>
+              <div className="animate-spin rounded-full h-12 w-12 border-4 border-t-transparent mx-auto mb-4" style={{
+                borderColor: '#38b6ff',
+                borderTopColor: 'transparent'
+              }}></div>
+              <p style={{ color: '#000b3d', opacity: 0.7 }}>Loading plans...</p>
             </div>
           ) : plans.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Plan Name</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Duration</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Daily Limit</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">PayPal Link</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Features</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Created</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                <thead>
+                  <tr style={{ background: 'rgba(255, 255, 255, 0.1)', borderBottom: '1px solid rgba(255, 255, 255, 0.3)' }}>
+                    {['Plan Name', 'Price', 'Duration', 'Daily Limit', 'PayPal Link', 'Features', 'Created', 'Actions'].map(h => (
+                      <th key={h} className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: '#000b3d', opacity: 0.7 }}>{h}</th>
+                    ))}
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {plans.map((plan) => (
-                    <tr key={plan.plan_id} className="hover:bg-gray-50">
-                                             <td className="px-6 py-4 whitespace-nowrap">
-                         <div>
-                           <div className={`text-sm font-medium ${plan.plan_name.includes('(DISCONTINUED)') ? 'text-red-600 line-through' : 'text-gray-900'}`}>
-                             {plan.plan_name}
-                           </div>
-                           <div className="text-sm text-gray-500">{plan.description}</div>
-                           {plan.plan_name.includes('(DISCONTINUED)') && (
-                             <div className="text-xs text-red-500 font-medium mt-1">DISCONTINUED</div>
-                           )}
-                         </div>
-                       </td>
+                <tbody>
+                  {plans.map((plan, index) => (
+                    <tr 
+                      key={plan.plan_id} 
+                      className="transition-colors duration-150"
+                      style={{ 
+                        borderBottom: index < plans.length - 1 ? '1px solid rgba(255, 255, 255, 0.2)' : 'none'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = 'transparent';
+                      }}
+                    >
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">{formatCurrency(plan.price)}</div>
-                        <div className="text-sm text-gray-500">
+                        <div>
+                          <div className={`text-sm font-medium ${plan.plan_name.includes('(DISCONTINUED)') ? 'line-through' : ''}`} style={{
+                            color: plan.plan_name.includes('(DISCONTINUED)') ? '#ef4444' : '#000b3d'
+                          }}>
+                            {plan.plan_name}
+                          </div>
+                          <div className="text-sm" style={{ color: '#000b3d', opacity: 0.7 }}>{plan.description}</div>
+                          {plan.plan_name.includes('(DISCONTINUED)') && (
+                            <div className="text-xs font-medium mt-1" style={{ color: '#ef4444' }}>DISCONTINUED</div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm font-medium" style={{ color: '#000b3d' }}>{formatCurrency(plan.price)}</div>
+                        <div className="text-sm" style={{ color: '#000b3d', opacity: 0.7 }}>
                           per {getDurationDisplayText(plan.duration_type || 'monthly', plan.duration_value || 1).toLowerCase()}
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">
+                        <div className="text-sm font-medium" style={{ color: '#000b3d' }}>
                           {getDurationDisplayText(plan.duration_type || 'monthly', plan.duration_value || 1)}
                         </div>
-                        <div className="text-sm text-gray-500">
+                        <div className="text-sm" style={{ color: '#000b3d', opacity: 0.7 }}>
                           {plan.duration_type === 'daily' ? 'Day pass' : 
                            plan.duration_type === 'weekly' ? 'Week pass' : 
                            plan.duration_type === 'monthly' ? 'Month pass' : 
@@ -410,9 +480,9 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">{plan.daily_mah_limit} mAh</div>
+                        <div className="text-sm font-medium" style={{ color: '#000b3d' }}>{plan.daily_mah_limit} mAh</div>
                         {plan.max_session_duration_hours && (
-                          <div className="text-sm text-gray-500">{plan.max_session_duration_hours}h max session</div>
+                          <div className="text-sm" style={{ color: '#000b3d', opacity: 0.7 }}>{plan.max_session_duration_hours}h max session</div>
                         )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -421,51 +491,71 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                             href={plan.paypal_link}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-blue-600 hover:text-blue-800 text-sm underline"
+                            className="text-sm underline transition-colors duration-200"
+                            style={{ color: '#38b6ff' }}
+                            onMouseEnter={(e) => e.currentTarget.style.color = '#000b3d'}
+                            onMouseLeave={(e) => e.currentTarget.style.color = '#38b6ff'}
                           >
                             View Link
                           </a>
                         ) : (
-                          <span className="text-gray-400 text-sm">No link</span>
+                          <span className="text-sm" style={{ color: '#000b3d', opacity: 0.4 }}>No link</span>
                         )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex flex-wrap gap-1">
                           {plan.fast_charging_access && (
-                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium" style={{
+                              background: 'rgba(56, 182, 255, 0.2)',
+                              color: '#38b6ff',
+                              border: '1px solid rgba(56, 182, 255, 0.3)'
+                            }}>
                               Fast Charging
                             </span>
                           )}
                           {plan.priority_access && (
-                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium" style={{
+                              background: 'rgba(147, 51, 234, 0.2)',
+                              color: '#9333ea',
+                              border: '1px solid rgba(147, 51, 234, 0.3)'
+                            }}>
                               Priority Access
                             </span>
                           )}
                         </div>
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm" style={{ color: '#000b3d', opacity: 0.7 }}>
                         {formatDate(plan.created_at)}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                         <div className="flex space-x-2">
                           <button
                             onClick={() => handleViewPlan(plan)}
-                            className="text-blue-600 hover:text-blue-900"
+                            className="font-semibold transition-colors duration-200"
+                            style={{ color: '#38b6ff' }}
+                            onMouseEnter={(e) => e.currentTarget.style.color = '#000b3d'}
+                            onMouseLeave={(e) => e.currentTarget.style.color = '#38b6ff'}
                           >
                             View
                           </button>
                           <button
                             onClick={() => handleEditPlan(plan)}
-                            className="text-indigo-600 hover:text-indigo-900"
+                            className="font-semibold transition-colors duration-200"
+                            style={{ color: '#9333ea' }}
+                            onMouseEnter={(e) => e.currentTarget.style.color = '#000b3d'}
+                            onMouseLeave={(e) => e.currentTarget.style.color = '#9333ea'}
                           >
                             Edit
                           </button>
-                                                     <button
-                             onClick={() => handleDeletePlan(plan)}
-                             className={`${plan.plan_name.includes('(DISCONTINUED)') ? 'text-orange-600 hover:text-orange-900' : 'text-red-600 hover:text-red-900'}`}
-                           >
-                             {plan.plan_name.includes('(DISCONTINUED)') ? 'Force Delete' : 'Delete'}
-                           </button>
+                          <button
+                            onClick={() => handleDeletePlan(plan)}
+                            className="font-semibold transition-colors duration-200"
+                            style={{ color: plan.plan_name.includes('(DISCONTINUED)') ? '#f9d217' : '#ef4444' }}
+                            onMouseEnter={(e) => e.currentTarget.style.color = plan.plan_name.includes('(DISCONTINUED)') ? '#000b3d' : '#dc2626'}
+                            onMouseLeave={(e) => e.currentTarget.style.color = plan.plan_name.includes('(DISCONTINUED)') ? '#f9d217' : '#ef4444'}
+                          >
+                            {plan.plan_name.includes('(DISCONTINUED)') ? 'Force Delete' : 'Delete'}
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -475,10 +565,14 @@ function AdminPlans({ navigateTo, handleSignOut }) {
             </div>
           ) : (
             <div className="p-8 text-center">
-              <div className="text-gray-500 text-lg mb-4">No subscription plans found</div>
+              <div className="text-lg mb-4" style={{ color: '#000b3d', opacity: 0.6 }}>No subscription plans found</div>
               <button
                 onClick={handleAddPlan}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg"
+                className="font-bold py-2 px-4 rounded-xl text-white transition-all duration-200 hover:scale-105"
+                style={{
+                  background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
+                  boxShadow: '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
+                }}
               >
                 Create First Plan
               </button>
@@ -489,78 +583,92 @@ function AdminPlans({ navigateTo, handleSignOut }) {
 
       {/* Modal for Create/Edit/View */}
       {showModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-          <div className="relative top-20 mx-auto p-5 border w-full max-w-2xl shadow-lg rounded-md bg-white">
-            <div className="mt-3">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-medium text-gray-900">
-                  {modalMode === 'create' ? 'Create New Plan' : 
-                   modalMode === 'edit' ? 'Edit Plan' : 'Plan Details'}
-                </h3>
-                <button
-                  onClick={() => setShowModal(false)}
-                  className="text-gray-400 hover:text-gray-600"
-                >
-                  <span className="sr-only">Close</span>
-                  <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                </button>
-              </div>
+        <div className="fixed inset-0 bg-black bg-opacity-50 overflow-y-auto h-full w-full z-50 backdrop-blur-sm flex items-start justify-center pt-20 pb-20">
+          <div className="relative backdrop-blur-xl rounded-2xl shadow-2xl border border-white/30 overflow-hidden p-6 w-full max-w-2xl" style={{ 
+            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+            boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+          }}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold" style={{ color: '#000b3d' }}>
+                {modalMode === 'create' ? 'Create New Plan' : 
+                 modalMode === 'edit' ? 'Edit Plan' : 'Plan Details'}
+              </h3>
+              <button
+                onClick={() => setShowModal(false)}
+                className="transition-colors duration-200"
+                style={{ color: '#000b3d', opacity: 0.6 }}
+                onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
+                onMouseLeave={(e) => e.currentTarget.style.opacity = '0.6'}
+              >
+                <span className="sr-only">Close</span>
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
 
               {modalMode === 'view' ? (
                 // View Mode
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">Plan Name</label>
-                      <p className="text-sm text-gray-900">{selectedPlan?.plan_name}</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">Price</label>
-                      <p className="text-sm text-gray-900">
-                        {formatCurrency(selectedPlan?.price)} per {getDurationDisplayText(selectedPlan?.duration_type || 'monthly', selectedPlan?.duration_value || 1).toLowerCase()}
-                      </p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">Duration</label>
-                      <p className="text-sm text-gray-900">
-                        {getDurationDisplayText(selectedPlan?.duration_type || 'monthly', selectedPlan?.duration_value || 1)}
-                      </p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">Daily Limit</label>
-                      <p className="text-sm text-gray-900">{selectedPlan?.daily_mah_limit || 'N/A'} mAh</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">Max Session Duration</label>
-                      <p className="text-sm text-gray-900">{selectedPlan?.max_session_duration_hours || 'Unlimited'} hours</p>
-                    </div>
+                    {[
+                      { label: 'Plan Name', value: selectedPlan?.plan_name },
+                      { label: 'Price', value: `${formatCurrency(selectedPlan?.price)} per ${getDurationDisplayText(selectedPlan?.duration_type || 'monthly', selectedPlan?.duration_value || 1).toLowerCase()}` },
+                      { label: 'Duration', value: getDurationDisplayText(selectedPlan?.duration_type || 'monthly', selectedPlan?.duration_value || 1) },
+                      { label: 'Daily Limit', value: `${selectedPlan?.daily_mah_limit || 'N/A'} mAh` },
+                      { label: 'Max Session Duration', value: `${selectedPlan?.max_session_duration_hours || 'Unlimited'} hours` }
+                    ].map((item, idx) => (
+                      <div key={idx} className="p-3 rounded-xl backdrop-blur-md" style={{
+                        background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.1) 100%)',
+                        border: '1px solid rgba(255, 255, 255, 0.3)'
+                      }}>
+                        <label className="block text-sm font-bold mb-1" style={{ color: '#000b3d', opacity: 0.8 }}>{item.label}</label>
+                        <p className="text-sm" style={{ color: '#000b3d' }}>{item.value}</p>
+                      </div>
+                    ))}
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700">Description</label>
-                    <p className="text-sm text-gray-900">{selectedPlan?.description || 'No description'}</p>
+                  <div className="p-3 rounded-xl backdrop-blur-md" style={{
+                    background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.1) 100%)',
+                    border: '1px solid rgba(255, 255, 255, 0.3)'
+                  }}>
+                    <label className="block text-sm font-bold mb-1" style={{ color: '#000b3d', opacity: 0.8 }}>Description</label>
+                    <p className="text-sm" style={{ color: '#000b3d' }}>{selectedPlan?.description || 'No description'}</p>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">Fast Charging Access</label>
-                      <p className="text-sm text-gray-900">{selectedPlan?.fast_charging_access ? 'Yes' : 'No'}</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700">Priority Access</label>
-                      <p className="text-sm text-gray-900">{selectedPlan?.priority_access ? 'Yes' : 'No'}</p>
-                    </div>
+                    {[
+                      { label: 'Fast Charging Access', value: selectedPlan?.fast_charging_access ? 'Yes' : 'No' },
+                      { label: 'Priority Access', value: selectedPlan?.priority_access ? 'Yes' : 'No' }
+                    ].map((item, idx) => (
+                      <div key={idx} className="p-3 rounded-xl backdrop-blur-md" style={{
+                        background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.1) 100%)',
+                        border: '1px solid rgba(255, 255, 255, 0.3)'
+                      }}>
+                        <label className="block text-sm font-bold mb-1" style={{ color: '#000b3d', opacity: 0.8 }}>{item.label}</label>
+                        <p className="text-sm" style={{ color: '#000b3d' }}>{item.value}</p>
+                      </div>
+                    ))}
                   </div>
                   <div className="flex justify-end space-x-3 pt-4">
                     <button
                       onClick={() => setShowModal(false)}
-                      className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg"
+                      className="font-bold py-2 px-4 rounded-xl transition-all duration-200 hover:scale-105"
+                      style={{
+                        background: 'linear-gradient(135deg, rgba(0, 11, 61, 0.2) 0%, rgba(0, 11, 61, 0.1) 100%)',
+                        color: '#000b3d',
+                        border: '1px solid rgba(0, 11, 61, 0.3)'
+                      }}
                     >
                       Close
                     </button>
                     <button
                       onClick={() => handleEditPlan(selectedPlan)}
-                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg"
+                      className="font-bold py-2 px-4 rounded-xl text-white transition-all duration-200 hover:scale-105"
+                      style={{
+                        background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
+                        boxShadow: '0 4px 12px rgba(56, 182, 255, 0.3)',
+                        willChange: 'transform',
+                        transform: 'translateZ(0)'
+                      }}
                     >
                       Edit Plan
                     </button>
@@ -571,7 +679,7 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                 <form onSubmit={handleSubmit} className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label htmlFor="plan_name" className="block text-sm font-medium text-gray-700">
+                      <label htmlFor="plan_name" className="block text-sm font-bold mb-2" style={{ color: '#000b3d' }}>
                         Plan Name *
                       </label>
                       <input
@@ -580,12 +688,28 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                         name="plan_name"
                         value={formData.plan_name}
                         onChange={handleInputChange}
-                        className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                        className="mt-1 block w-full rounded-xl px-3 py-2 transition-all duration-200"
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.2)',
+                          border: '1px solid rgba(255, 255, 255, 0.3)',
+                          color: '#000b3d',
+                          backdropFilter: 'blur(10px)'
+                        }}
+                        onFocus={(e) => {
+                          e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+                          e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+                          e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+                        }}
+                        onBlur={(e) => {
+                          e.target.style.boxShadow = 'none';
+                          e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                          e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+                        }}
                         required
                       />
                     </div>
                     <div>
-                      <label htmlFor="price" className="block text-sm font-medium text-gray-700">
+                      <label htmlFor="price" className="block text-sm font-bold mb-2" style={{ color: '#000b3d' }}>
                         Price (PHP) *
                       </label>
                       <input
@@ -596,14 +720,30 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                         onChange={handleInputChange}
                         step="0.01"
                         min="0"
-                        className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                        className="mt-1 block w-full rounded-xl px-3 py-2 transition-all duration-200"
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.2)',
+                          border: '1px solid rgba(255, 255, 255, 0.3)',
+                          color: '#000b3d',
+                          backdropFilter: 'blur(10px)'
+                        }}
+                        onFocus={(e) => {
+                          e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+                          e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+                          e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+                        }}
+                        onBlur={(e) => {
+                          e.target.style.boxShadow = 'none';
+                          e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                          e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+                        }}
                         required
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label htmlFor="description" className="block text-sm font-medium text-gray-700">
+                    <label htmlFor="description" className="block text-sm font-bold mb-2" style={{ color: '#000b3d' }}>
                       Description
                     </label>
                     <textarea
@@ -612,13 +752,29 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                       value={formData.description}
                       onChange={handleInputChange}
                       rows="3"
-                      className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                      className="mt-1 block w-full rounded-xl px-3 py-2 transition-all duration-200"
+style={{
+  background: 'rgba(255, 255, 255, 0.2)',
+  border: '1px solid rgba(255, 255, 255, 0.3)',
+  color: '#000b3d',
+  backdropFilter: 'blur(10px)'
+}}
+onFocus={(e) => {
+  e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+  e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+  e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+}}
+onBlur={(e) => {
+  e.target.style.boxShadow = 'none';
+  e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+  e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+}}
                     />
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label htmlFor="duration_type" className="block text-sm font-medium text-gray-700">
+                      <label htmlFor="duration_type" className="block text-sm font-bold mb-2" style={{ color: '#000b3d' }}>
                         Duration Type *
                       </label>
                       <select
@@ -626,7 +782,23 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                         name="duration_type"
                         value={formData.duration_type}
                         onChange={handleInputChange}
-                        className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                        className="mt-1 block w-full rounded-xl px-3 py-2 transition-all duration-200"
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.2)',
+                          border: '1px solid rgba(255, 255, 255, 0.3)',
+                          color: '#000b3d',
+                          backdropFilter: 'blur(10px)'
+                        }}
+                        onFocus={(e) => {
+                          e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+                          e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+                          e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+                        }}
+                        onBlur={(e) => {
+                          e.target.style.boxShadow = 'none';
+                          e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                          e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+                        }}
                         required
                       >
                         <option value="daily">Daily</option>
@@ -637,7 +809,7 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                       </select>
                     </div>
                     <div>
-                      <label htmlFor="duration_value" className="block text-sm font-medium text-gray-700">
+                      <label htmlFor="duration_value" className="block text-sm font-bold mb-2" style={{ color: '#000b3d' }}>
                         Duration Value *
                       </label>
                       <input
@@ -647,14 +819,30 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                         value={formData.duration_value}
                         onChange={handleInputChange}
                         min="1"
-                        className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                        className="mt-1 block w-full rounded-xl px-3 py-2 transition-all duration-200"
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.2)',
+                          border: '1px solid rgba(255, 255, 255, 0.3)',
+                          color: '#000b3d',
+                          backdropFilter: 'blur(10px)'
+                        }}
+                        onFocus={(e) => {
+                          e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+                          e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+                          e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+                        }}
+                        onBlur={(e) => {
+                          e.target.style.boxShadow = 'none';
+                          e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                          e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+                        }}
                         required
                       />
                     </div>
                   </div>
                   
                   <div>
-                    <label htmlFor="paypal_link" className="block text-sm font-medium text-gray-700">
+                    <label htmlFor="paypal_link" className="block text-sm font-bold mb-2" style={{ color: '#000b3d' }}>
                       PayPal Payment Link
                     </label>
                     <input
@@ -664,16 +852,32 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                       value={formData.paypal_link}
                       onChange={handleInputChange}
                       placeholder="https://www.paypal.com/paypalme/yourusername/amount"
-                      className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                      className="mt-1 block w-full rounded-xl px-3 py-2 transition-all duration-200"
+style={{
+  background: 'rgba(255, 255, 255, 0.2)',
+  border: '1px solid rgba(255, 255, 255, 0.3)',
+  color: '#000b3d',
+  backdropFilter: 'blur(10px)'
+}}
+onFocus={(e) => {
+  e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+  e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+  e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+}}
+onBlur={(e) => {
+  e.target.style.boxShadow = 'none';
+  e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+  e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+}}
                     />
-                    <p className="mt-1 text-sm text-gray-500">
+                    <p className="mt-1 text-sm" style={{ color: '#000b3d', opacity: 0.6 }}>
                       Direct PayPal payment link for this plan (optional)
                     </p>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label htmlFor="daily_mah_limit" className="block text-sm font-medium text-gray-700">
+                      <label htmlFor="daily_mah_limit" className="block text-sm font-bold mb-2" style={{ color: '#000b3d' }}>
                         Daily Limit (mAh) *
                       </label>
                       <input
@@ -684,12 +888,28 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                         onChange={handleInputChange}
                         step="0.1"
                         min="0"
-                        className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                        className="mt-1 block w-full rounded-xl px-3 py-2 transition-all duration-200"
+                        style={{
+                          background: 'rgba(255, 255, 255, 0.2)',
+                          border: '1px solid rgba(255, 255, 255, 0.3)',
+                          color: '#000b3d',
+                          backdropFilter: 'blur(10px)'
+                        }}
+                        onFocus={(e) => {
+                          e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+                          e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+                          e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+                        }}
+                        onBlur={(e) => {
+                          e.target.style.boxShadow = 'none';
+                          e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                          e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+                        }}
                         required
                       />
                     </div>
                     <div>
-                      <label htmlFor="max_session_duration_hours" className="block text-sm font-medium text-gray-700">
+                      <label htmlFor="max_session_duration_hours" className="block text-sm font-bold mb-2" style={{ color: '#000b3d' }}>
                         Max Session Duration (hours)
                       </label>
                       <input
@@ -700,15 +920,31 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                         onChange={handleInputChange}
                         step="0.5"
                         min="0"
-                        className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                        className="mt-1 block w-full rounded-xl px-3 py-2 transition-all duration-200"
+style={{
+  background: 'rgba(255, 255, 255, 0.2)',
+  border: '1px solid rgba(255, 255, 255, 0.3)',
+  color: '#000b3d',
+  backdropFilter: 'blur(10px)'
+}}
+onFocus={(e) => {
+  e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+  e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+  e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+}}
+onBlur={(e) => {
+  e.target.style.boxShadow = 'none';
+  e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+  e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+}}
                       />
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label htmlFor="cooldown_percentage" className="block text-sm font-medium text-gray-700">
-                        Cooldown Percentage
+                      <label htmlFor="cooldown_percentage" className="block text-sm font-bold mb-2" style={{ color: '#000b3d' }}>
+                        Cooldown Percentage (%)
                       </label>
                       <input
                         type="number"
@@ -719,7 +955,23 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                         step="0.1"
                         min="0"
                         max="100"
-                        className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                        className="mt-1 block w-full rounded-xl px-3 py-2 transition-all duration-200"
+style={{
+  background: 'rgba(255, 255, 255, 0.2)',
+  border: '1px solid rgba(255, 255, 255, 0.3)',
+  color: '#000b3d',
+  backdropFilter: 'blur(10px)'
+}}
+onFocus={(e) => {
+  e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+  e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+  e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+}}
+onBlur={(e) => {
+  e.target.style.boxShadow = 'none';
+  e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+  e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+}}
                       />
                     </div>
                     <div>
@@ -734,7 +986,23 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                         onChange={handleInputChange}
                         step="0.1"
                         min="0"
-                        className="mt-1 block w-full border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                        className="mt-1 block w-full rounded-xl px-3 py-2 transition-all duration-200"
+style={{
+  background: 'rgba(255, 255, 255, 0.2)',
+  border: '1px solid rgba(255, 255, 255, 0.3)',
+  color: '#000b3d',
+  backdropFilter: 'blur(10px)'
+}}
+onFocus={(e) => {
+  e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+  e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+  e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+}}
+onBlur={(e) => {
+  e.target.style.boxShadow = 'none';
+  e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+  e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+}}
                       />
                     </div>
                   </div>
@@ -747,9 +1015,10 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                         name="fast_charging_access"
                         checked={formData.fast_charging_access}
                         onChange={handleInputChange}
-                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                        className="h-4 w-4 rounded"
+                        style={{ accentColor: '#38b6ff' }}
                       />
-                      <label htmlFor="fast_charging_access" className="ml-2 block text-sm text-gray-900">
+                      <label htmlFor="fast_charging_access" className="ml-2 block text-sm font-bold" style={{ color: '#000b3d' }}>
                         Fast Charging Access
                       </label>
                     </div>
@@ -760,9 +1029,10 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                         name="priority_access"
                         checked={formData.priority_access}
                         onChange={handleInputChange}
-                        className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                        className="h-4 w-4 rounded"
+                        style={{ accentColor: '#38b6ff' }}
                       />
-                      <label htmlFor="priority_access" className="ml-2 block text-sm text-gray-900">
+                      <label htmlFor="priority_access" className="ml-2 block text-sm font-bold" style={{ color: '#000b3d' }}>
                         Priority Access
                       </label>
                     </div>
@@ -772,13 +1042,24 @@ function AdminPlans({ navigateTo, handleSignOut }) {
                     <button
                       type="button"
                       onClick={() => setShowModal(false)}
-                      className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded-lg"
+                      className="font-bold py-2 px-4 rounded-xl transition-all duration-200 hover:scale-105"
+                      style={{
+                        background: 'linear-gradient(135deg, rgba(0, 11, 61, 0.2) 0%, rgba(0, 11, 61, 0.1) 100%)',
+                        color: '#000b3d',
+                        border: '1px solid rgba(0, 11, 61, 0.3)'
+                      }}
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
-                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg"
+                      className="font-bold py-2 px-4 rounded-xl text-white transition-all duration-200 hover:scale-105"
+                      style={{
+                        background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
+                        boxShadow: '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                        willChange: 'transform',
+                        transform: 'translateZ(0)'
+                      }}
                     >
                       {modalMode === 'create' ? 'Create Plan' : 'Update Plan'}
                     </button>
@@ -787,7 +1068,6 @@ function AdminPlans({ navigateTo, handleSignOut }) {
               )}
             </div>
           </div>
-        </div>
       )}
     </div>
   );

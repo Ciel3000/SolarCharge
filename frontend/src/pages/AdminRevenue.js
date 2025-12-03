@@ -113,117 +113,168 @@ function AdminRevenue({ navigateTo, handleSignOut }) {
   };
   
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen flex flex-col items-center p-4 text-gray-800 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+      {/* Lightweight Animated Background */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none" style={{ willChange: 'transform' }}>
+        <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-float-slow" style={{ 
+          background: 'radial-gradient(circle, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.05) 50%, transparent 100%)',
+          willChange: 'transform',
+          transform: 'translateZ(0)'
+        }}></div>
+        <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-float-slow-delay" style={{ 
+          background: 'radial-gradient(circle, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.05) 50%, transparent 100%)',
+          willChange: 'transform',
+          transform: 'translateZ(0)'
+        }}></div>
+      </div>
+
       <Navigation currentPage="admin-revenue" navigateTo={navigateTo} handleSignOut={handleSignOut} />
       
-      <div className="container mx-auto px-6 py-8">
-        <h1 className="text-3xl font-semibold text-gray-800">Revenue Reports</h1>
+      <div className="w-full max-w-7xl mx-auto pt-24 pb-8 relative z-10 px-4 sm:px-6 lg:px-8" style={{ 
+        animation: 'fade-in 0.6s ease-out forwards',
+        willChange: 'opacity, transform'
+      }}>
+        {/* Header - Wrapped in its own glass card */}
+        <div className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-8 px-8 mb-8" style={{ 
+          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+          boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+        }}>
+          <h1 className="text-4xl sm:text-5xl font-bold mb-2" style={{ color: '#000b3d' }}>Revenue Reports</h1>
+          <p className="text-lg" style={{ color: '#000b3d', opacity: 0.7 }}>Track and analyze revenue performance</p>
+        </div>
         
         {error && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mt-4">
-            <p>Error: {error}</p>
+          <div className="relative backdrop-blur-xl rounded-2xl shadow-xl border border-white/30 overflow-hidden py-4 px-6 mb-6" style={{ 
+            background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(220, 38, 38, 0.1) 100%)',
+            borderColor: 'rgba(239, 68, 68, 0.3)',
+            boxShadow: '0 8px 32px 0 rgba(239, 68, 68, 0.15)'
+          }}>
+            <p className="font-semibold" style={{ color: '#dc2626' }}>Error: {error}</p>
           </div>
         )}
         
         {loading ? (
-          <div className="text-center py-8">
-            <p>Loading revenue data...</p>
+          <div className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-16 px-8 text-center" style={{ 
+            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+            boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+          }}>
+            <div className="animate-spin rounded-full h-12 w-12 border-4 border-t-transparent mx-auto mb-4" style={{
+              borderColor: '#38b6ff',
+              borderTopColor: 'transparent'
+            }}></div>
+            <p style={{ color: '#000b3d', opacity: 0.7 }}>Loading revenue data...</p>
           </div>
         ) : (
           <>
             {/* Summary Stats */}
-            <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-white rounded-lg shadow-md p-6">
-                <h2 className="text-xl font-semibold text-gray-800">Total Revenue</h2>
-                <p className="text-3xl font-bold text-green-600 mt-2">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+              <div className="relative backdrop-blur-xl rounded-2xl shadow-2xl border border-white/30 overflow-hidden p-6" style={{ 
+                background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+                boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+              }}>
+                <h2 className="text-xl font-bold mb-2" style={{ color: '#000b3d' }}>Total Revenue</h2>
+                <p className="text-3xl font-bold mt-2" style={{ color: '#10b981' }}>
                   ${parseFloat(revenueData.total || 0).toFixed(2)}
                 </p>
               </div>
               
-              <div className="bg-white rounded-lg shadow-md p-6">
-                <h2 className="text-xl font-semibold text-gray-800">Current View Total</h2>
-                <p className="text-3xl font-bold text-blue-600 mt-2">
+              <div className="relative backdrop-blur-xl rounded-2xl shadow-2xl border border-white/30 overflow-hidden p-6" style={{ 
+                background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+                boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+              }}>
+                <h2 className="text-xl font-bold mb-2" style={{ color: '#000b3d' }}>Current View Total</h2>
+                <p className="text-3xl font-bold mt-2" style={{ color: '#38b6ff' }}>
                   ${calculateCurrentTotal().toFixed(2)}
                 </p>
-                <p className="text-gray-600 text-sm mt-1">
+                <p className="text-sm mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>
                   {activeTab === 'daily' ? 'Last 7 days' : activeTab === 'weekly' ? 'Last 4 weeks' : 'Last 6 months'}
                 </p>
               </div>
               
-              <div className="bg-white rounded-lg shadow-md p-6">
-                <h2 className="text-xl font-semibold text-gray-800">Current View Average</h2>
-                <p className="text-3xl font-bold text-purple-600 mt-2">
+              <div className="relative backdrop-blur-xl rounded-2xl shadow-2xl border border-white/30 overflow-hidden p-6" style={{ 
+                background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+                boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+              }}>
+                <h2 className="text-xl font-bold mb-2" style={{ color: '#000b3d' }}>Current View Average</h2>
+                <p className="text-3xl font-bold mt-2" style={{ color: '#9333ea' }}>
                   ${calculateCurrentAverage().toFixed(2)}
                 </p>
-                <p className="text-gray-600 text-sm mt-1">
+                <p className="text-sm mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>
                   Per {activeTab === 'daily' ? 'day' : activeTab === 'weekly' ? 'week' : 'month'}
                 </p>
               </div>
             </div>
             
             {/* Tabs */}
-            <div className="mt-8">
-              <div className="border-b border-gray-200">
+            <div className="relative backdrop-blur-xl rounded-2xl shadow-2xl border border-white/30 overflow-hidden" style={{ 
+              background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+              boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+            }}>
+              <div className="border-b" style={{ borderColor: 'rgba(255, 255, 255, 0.3)' }}>
                 <nav className="-mb-px flex">
-                  <button
-                    onClick={() => setActiveTab('daily')}
-                    className={`py-4 px-6 ${
-                      activeTab === 'daily'
-                        ? 'border-b-2 border-blue-500 text-blue-600'
-                        : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    Daily
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('weekly')}
-                    className={`py-4 px-6 ${
-                      activeTab === 'weekly'
-                        ? 'border-b-2 border-blue-500 text-blue-600'
-                        : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    Weekly
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('monthly')}
-                    className={`py-4 px-6 ${
-                      activeTab === 'monthly'
-                        ? 'border-b-2 border-blue-500 text-blue-600'
-                        : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    Monthly
-                  </button>
+                  {['daily', 'weekly', 'monthly'].map((tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => setActiveTab(tab)}
+                      className="py-4 px-6 font-semibold transition-all duration-200 capitalize"
+                      style={{
+                        borderBottom: activeTab === tab ? '2px solid #38b6ff' : '2px solid transparent',
+                        color: activeTab === tab ? '#38b6ff' : 'rgba(0, 11, 61, 0.6)'
+                      }}
+                      onMouseEnter={(e) => {
+                        if (activeTab !== tab) e.currentTarget.style.color = '#000b3d';
+                      }}
+                      onMouseLeave={(e) => {
+                        if (activeTab !== tab) e.currentTarget.style.color = 'rgba(0, 11, 61, 0.6)';
+                      }}
+                    >
+                      {tab}
+                    </button>
+                  ))}
                 </nav>
               </div>
               
               {/* Revenue Chart Placeholder */}
-              <div className="mt-6 bg-white rounded-lg shadow-md p-6">
-                <h2 className="text-xl font-semibold text-gray-800">
+              <div className="p-6">
+                <h2 className="text-xl font-bold mb-4" style={{ color: '#000b3d' }}>
                   {activeTab === 'daily' ? 'Daily Revenue' : activeTab === 'weekly' ? 'Weekly Revenue' : 'Monthly Revenue'}
                 </h2>
                 
-                <div className="mt-4 h-64 bg-gray-100 rounded flex items-center justify-center">
-                  <p className="text-gray-500">Revenue chart would be displayed here</p>
+                <div className="mt-4 h-64 rounded-xl backdrop-blur-md flex items-center justify-center" style={{
+                  background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.1) 100%)',
+                  border: '1px solid rgba(255, 255, 255, 0.3)'
+                }}>
+                  <p style={{ color: '#000b3d', opacity: 0.6 }}>Revenue chart would be displayed here</p>
                 </div>
                 
                 {/* Data Table */}
                 <div className="mt-6 overflow-x-auto">
                   <table className="min-w-full">
                     <thead>
-                      <tr>
-                        <th className="py-3 px-4 text-left">Date</th>
-                        <th className="py-3 px-4 text-left">Revenue</th>
-                        <th className="py-3 px-4 text-left">Sessions</th>
+                      <tr style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.3)' }}>
+                        {['Date', 'Revenue', 'Sessions'].map(h => (
+                          <th key={h} className="py-3 px-4 text-left text-xs font-medium uppercase tracking-wider" style={{ color: '#000b3d', opacity: 0.7 }}>{h}</th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
                       {getCurrentData().map((item, index) => (
-                        <tr key={index} className="border-t">
-                          <td className="py-3 px-4">{formatDate(item.date)}</td>
-                          <td className="py-3 px-4">${parseFloat(item.amount || 0).toFixed(2)}</td>
-                          <td className="py-3 px-4">{item.sessions}</td>
+                        <tr 
+                          key={index} 
+                          className="transition-colors duration-150"
+                          style={{ 
+                            borderBottom: index < getCurrentData().length - 1 ? '1px solid rgba(255, 255, 255, 0.2)' : 'none'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'transparent';
+                          }}
+                        >
+                          <td className="py-3 px-4" style={{ color: '#000b3d' }}>{formatDate(item.date)}</td>
+                          <td className="py-3 px-4" style={{ color: '#000b3d' }}>${parseFloat(item.amount || 0).toFixed(2)}</td>
+                          <td className="py-3 px-4" style={{ color: '#000b3d' }}>{item.sessions}</td>
                         </tr>
                       ))}
                     </tbody>

@@ -202,72 +202,119 @@ function AdminSystemStatus({ navigateTo, handleSignOut }) {
     }).format(date);
   };
   
-  // Get color for battery level
+  // Get color for battery level - Updated to use brand colors
   const getBatteryColor = (level) => {
     if (level > 70) {
-      return 'bg-green-500';
+      return '#10b981';
     } else if (level > 40) {
-      return 'bg-yellow-500';
+      return '#f9d217';
     } else {
-      return 'bg-red-500';
+      return '#ef4444';
     }
   };
   
-  // Get color for log type
+  // Get color for log type - Updated to use brand colors
   const getLogTypeColor = (logType) => {
     switch (logType) {
       case 'error':
-        return 'text-red-600';
+        return '#ef4444';
       case 'warning':
-        return 'text-yellow-600';
+        return '#f9d217';
       case 'info':
       default:
-        return 'text-blue-600';
+        return '#38b6ff';
     }
   };
   
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen flex flex-col items-center p-4 text-gray-800 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+      {/* Lightweight Animated Background */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none" style={{ willChange: 'transform' }}>
+        <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-float-slow" style={{ 
+          background: 'radial-gradient(circle, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.05) 50%, transparent 100%)',
+          willChange: 'transform',
+          transform: 'translateZ(0)'
+        }}></div>
+        <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-float-slow-delay" style={{ 
+          background: 'radial-gradient(circle, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.05) 50%, transparent 100%)',
+          willChange: 'transform',
+          transform: 'translateZ(0)'
+        }}></div>
+      </div>
+
       <Navigation currentPage="admin-system" navigateTo={navigateTo} handleSignOut={handleSignOut} />
       
-      <div className="container mx-auto px-6 py-8">
-        <h1 className="text-3xl font-semibold text-gray-800">System Status</h1>
+      <div className="w-full max-w-7xl mx-auto pt-24 pb-8 relative z-10 px-4 sm:px-6 lg:px-8" style={{ 
+        animation: 'fade-in 0.6s ease-out forwards',
+        willChange: 'opacity, transform'
+      }}>
+        {/* Header - Wrapped in its own glass card */}
+        <div className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-8 px-8 mb-8" style={{ 
+          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+          boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+        }}>
+          <h1 className="text-4xl sm:text-5xl font-bold mb-2" style={{ color: '#000b3d' }}>System Status</h1>
+          <p className="text-lg" style={{ color: '#000b3d', opacity: 0.7 }}>Monitor system health and performance</p>
+        </div>
         
         {error && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mt-4">
-            <p>Error: {error}</p>
+          <div className="relative backdrop-blur-xl rounded-2xl shadow-xl border border-white/30 overflow-hidden py-4 px-6 mb-6" style={{ 
+            background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(220, 38, 38, 0.1) 100%)',
+            borderColor: 'rgba(239, 68, 68, 0.3)',
+            boxShadow: '0 8px 32px 0 rgba(239, 68, 68, 0.15)'
+          }}>
+            <p className="font-semibold" style={{ color: '#dc2626' }}>Error: {error}</p>
           </div>
         )}
         
         {/* System Status Card */}
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-xl font-semibold text-gray-800">Overall System Status</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+          <div className="relative backdrop-blur-xl rounded-2xl shadow-2xl border border-white/30 overflow-hidden p-6" style={{ 
+            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+            boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+          }}>
+            <h2 className="text-xl font-bold mb-4" style={{ color: '#000b3d' }}>Overall System Status</h2>
             <div className="mt-4 flex items-center">
               <div
-                className={`w-4 h-4 rounded-full mr-2 ${
-                  systemStatus.status === 'Operational' ? 'bg-green-500' : 'bg-yellow-500'
-                }`}
+                className="w-4 h-4 rounded-full mr-2"
+                style={{
+                  background: systemStatus.status === 'Operational' ? '#10b981' : '#f9d217'
+                }}
               ></div>
-              <p className="text-2xl font-bold">{systemStatus.status}</p>
+              <p className="text-2xl font-bold" style={{ color: '#000b3d' }}>{systemStatus.status}</p>
             </div>
-            <p className="text-gray-600 mt-2">
+            <p className="mt-2" style={{ color: '#000b3d', opacity: 0.7 }}>
               Last update: {formatDate(systemStatus.lastUpdate)}
             </p>
           </div>
           
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-xl font-semibold text-gray-800">Quick Actions</h2>
+          <div className="relative backdrop-blur-xl rounded-2xl shadow-2xl border border-white/30 overflow-hidden p-6" style={{ 
+            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+            boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+          }}>
+            <h2 className="text-xl font-bold mb-4" style={{ color: '#000b3d' }}>Quick Actions</h2>
             <div className="mt-4 space-y-2">
               <button
                 onClick={fetchSystemStatus}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded w-full"
+                className="font-bold py-2 px-4 rounded-xl text-white w-full transition-all duration-200 hover:scale-105"
+                style={{
+                  background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
+                  boxShadow: '0 4px 12px rgba(56, 182, 255, 0.3)',
+                  willChange: 'transform',
+                  transform: 'translateZ(0)'
+                }}
               >
                 Refresh Status
               </button>
               <button
                 onClick={() => navigateTo('admin-logs')}
-                className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded w-full"
+                className="font-bold py-2 px-4 rounded-xl text-white w-full transition-all duration-200 hover:scale-105"
+                style={{
+                  background: 'linear-gradient(135deg, #9333ea 0%, #7c3aed 100%)',
+                  boxShadow: '0 4px 12px rgba(147, 51, 234, 0.3)',
+                  willChange: 'transform',
+                  transform: 'translateZ(0)'
+                }}
               >
                 View All Logs
               </button>
@@ -276,26 +323,42 @@ function AdminSystemStatus({ navigateTo, handleSignOut }) {
         </div>
         
         {/* Battery Levels */}
-        <div className="mt-8 bg-white rounded-lg shadow-md p-6">
-          <h2 className="text-xl font-semibold text-gray-800">Station Battery Levels</h2>
+        <div className="relative backdrop-blur-xl rounded-2xl shadow-2xl border border-white/30 overflow-hidden p-6 mb-8" style={{ 
+          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+          boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+        }}>
+          <h2 className="text-xl font-bold mb-4" style={{ color: '#000b3d' }}>Station Battery Levels</h2>
           
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
             {batteryLevels.map((station, index) => (
-              <div key={index} className="border rounded-lg overflow-hidden">
-                <div className="p-4">
-                  <h3 className="font-semibold">{station.station_name}</h3>
-                  <div className="mt-2 h-4 bg-gray-200 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full ${getBatteryColor(station.level)}`}
-                      style={{ width: `${station.level}%` }}
-                    ></div>
-                  </div>
-                  <div className="mt-1 flex justify-between text-sm">
-                    <span>{station.level}%</span>
-                    <span className={station.status === 'Critical' ? 'text-red-600' : station.status === 'Warning' ? 'text-yellow-600' : 'text-green-600'}>
-                      {station.status}
-                    </span>
-                  </div>
+              <div key={index} className="relative backdrop-blur-md rounded-xl overflow-hidden p-4" style={{
+                background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.15) 100%)',
+                border: '1px solid rgba(255, 255, 255, 0.3)'
+              }}>
+                <h3 className="font-bold mb-2" style={{ color: '#000b3d' }}>{station.station_name}</h3>
+                <div className="mt-2 h-4 rounded-full overflow-hidden backdrop-blur-md" style={{
+                  background: 'rgba(0, 11, 61, 0.1)',
+                  border: '1px solid rgba(255, 255, 255, 0.3)'
+                }}>
+                  <div
+                    className="h-full transition-all duration-300"
+                    style={{ 
+                      width: `${station.level}%`,
+                      background: station.level > 70 
+                        ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
+                        : station.level > 40
+                        ? 'linear-gradient(135deg, #f9d217 0%, #f59e0b 100%)'
+                        : 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'
+                    }}
+                  ></div>
+                </div>
+                <div className="mt-1 flex justify-between text-sm">
+                  <span style={{ color: '#000b3d' }}>{station.level}%</span>
+                  <span style={{
+                    color: station.status === 'Critical' ? '#ef4444' : station.status === 'Warning' ? '#f9d217' : '#10b981'
+                  }}>
+                    {station.status}
+                  </span>
                 </div>
               </div>
             ))}
@@ -303,16 +366,25 @@ function AdminSystemStatus({ navigateTo, handleSignOut }) {
         </div>
         
         {/* System Logs */}
-        <div className="mt-8 bg-white rounded-lg shadow-md p-6">
-          <div className="flex justify-between items-center">
-            <h2 className="text-xl font-semibold text-gray-800">System Logs</h2>
+        <div className="relative backdrop-blur-xl rounded-2xl shadow-2xl border border-white/30 overflow-hidden p-6" style={{ 
+          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+          boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+        }}>
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-bold" style={{ color: '#000b3d' }}>System Logs</h2>
             
             <div className="flex space-x-2">
               <select
                 name="range"
                 value={logFilters.range}
                 onChange={handleLogFilterChange}
-                className="border rounded px-2 py-1 text-sm"
+                className="rounded-xl px-2 py-1 text-sm transition-all duration-200"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.2)',
+                  border: '1px solid rgba(255, 255, 255, 0.3)',
+                  color: '#000b3d',
+                  backdropFilter: 'blur(10px)'
+                }}
               >
                 <option value="1h">Last Hour</option>
                 <option value="24h">Last 24 Hours</option>
@@ -324,7 +396,13 @@ function AdminSystemStatus({ navigateTo, handleSignOut }) {
                 name="type"
                 value={logFilters.type}
                 onChange={handleLogFilterChange}
-                className="border rounded px-2 py-1 text-sm"
+                className="rounded-xl px-2 py-1 text-sm transition-all duration-200"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.2)',
+                  border: '1px solid rgba(255, 255, 255, 0.3)',
+                  color: '#000b3d',
+                  backdropFilter: 'blur(10px)'
+                }}
               >
                 <option value="all">All Types</option>
                 <option value="info">Info</option>
@@ -336,7 +414,13 @@ function AdminSystemStatus({ navigateTo, handleSignOut }) {
                 name="source"
                 value={logFilters.source}
                 onChange={handleLogFilterChange}
-                className="border rounded px-2 py-1 text-sm"
+                className="rounded-xl px-2 py-1 text-sm transition-all duration-200"
+                style={{
+                  background: 'rgba(255, 255, 255, 0.2)',
+                  border: '1px solid rgba(255, 255, 255, 0.3)',
+                  color: '#000b3d',
+                  backdropFilter: 'blur(10px)'
+                }}
               >
                 <option value="all">All Sources</option>
                 <option value="backend">Backend</option>
@@ -349,34 +433,50 @@ function AdminSystemStatus({ navigateTo, handleSignOut }) {
           
           {loading ? (
             <div className="text-center py-8">
-              <p>Loading logs...</p>
+              <div className="animate-spin rounded-full h-8 w-8 border-4 border-t-transparent mx-auto mb-4" style={{
+                borderColor: '#38b6ff',
+                borderTopColor: 'transparent'
+              }}></div>
+              <p style={{ color: '#000b3d', opacity: 0.7 }}>Loading logs...</p>
             </div>
           ) : (
             <div className="mt-4 overflow-x-auto">
               <table className="min-w-full">
                 <thead>
-                  <tr>
-                    <th className="py-2 px-4 text-left">Time</th>
-                    <th className="py-2 px-4 text-left">Type</th>
-                    <th className="py-2 px-4 text-left">Source</th>
-                    <th className="py-2 px-4 text-left">Message</th>
-                    <th className="py-2 px-4 text-left">User</th>
+                  <tr style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.3)' }}>
+                    {['Time', 'Type', 'Source', 'Message', 'User'].map(h => (
+                      <th key={h} className="py-2 px-4 text-left text-xs font-medium uppercase tracking-wider" style={{ color: '#000b3d', opacity: 0.7 }}>{h}</th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {logs.map((log) => (
-                    <tr key={log.log_id} className="border-t">
-                      <td className="py-2 px-4 text-sm">
+                  {logs.map((log, index) => (
+                    <tr 
+                      key={log.log_id} 
+                      className="transition-colors duration-150"
+                      style={{ 
+                        borderBottom: index < logs.length - 1 ? '1px solid rgba(255, 255, 255, 0.2)' : 'none'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = 'transparent';
+                      }}
+                    >
+                      <td className="py-2 px-4 text-sm" style={{ color: '#000b3d', opacity: 0.7 }}>
                         {formatDate(log.timestamp)}
                       </td>
                       <td className="py-2 px-4">
-                        <span className={`font-medium ${getLogTypeColor(log.log_type)}`}>
+                        <span className="font-medium" style={{
+                          color: log.log_type === 'error' ? '#ef4444' : log.log_type === 'warning' ? '#f9d217' : '#38b6ff'
+                        }}>
                           {log.log_type}
                         </span>
                       </td>
-                      <td className="py-2 px-4">{log.source}</td>
-                      <td className="py-2 px-4">{log.message}</td>
-                      <td className="py-2 px-4">{log.user_email || 'System'}</td>
+                      <td className="py-2 px-4" style={{ color: '#000b3d' }}>{log.source}</td>
+                      <td className="py-2 px-4" style={{ color: '#000b3d' }}>{log.message}</td>
+                      <td className="py-2 px-4" style={{ color: '#000b3d', opacity: 0.7 }}>{log.user_email || 'System'}</td>
                     </tr>
                   ))}
                 </tbody>

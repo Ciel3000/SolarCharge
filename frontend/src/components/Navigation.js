@@ -52,15 +52,16 @@ function Navigation({ navigateTo, handleSignOut }) {
       } else {
         // Regular user links (not admin)
         links.push({ name: 'Home', path: '/home', type: 'internal' });
-        links.push({ name: 'Stations', path: '/stations', type: 'internal' });
         
         if (subscription) {
           // Links for subscribed users
+          links.push({ name: 'Stations', path: '/stations', type: 'internal' });
           links.push({ name: 'Usage', path: '/usage', type: 'internal' });
           links.push({ name: 'Subscription', path: '/subscription', type: 'internal' });
           links.push({ name: 'Profile', path: '/profile', type: 'internal' });
         } else {
           // Links for non-subscribed users
+          links.push({ name: 'Stations', path: '/stations', type: 'internal' });
           links.push({ name: 'Subscription', path: '/subscription', type: 'internal' });
           links.push({ name: 'Profile', path: '/profile', type: 'internal' });
         }
@@ -122,14 +123,14 @@ function Navigation({ navigateTo, handleSignOut }) {
             {/* Logo now uses Link to navigate to the appropriate starting page */}
             <Link
               to={session ? (isAdmin ? "/admin/dashboard" : "/home") : "/landing"}
-              className="flex items-center space-x-2 focus:outline-none transition-all duration-300 hover:scale-105 group"
+              className="flex items-center space-x-2 focus:outline-none hover:opacity-80 transition-opacity"
             >
               <img 
                 src="/img/solarchargelogo.png" 
                 alt="SolarCharge Logo" 
-                className="h-10 w-auto drop-shadow-lg transition-transform duration-300 group-hover:rotate-3"
+                className="h-10 w-auto drop-shadow-lg"
               />
-              <span className="text-xl font-bold transition-colors duration-300 group-hover:opacity-80" style={{ color: '#000b3d' }}>SolarCharge</span>
+              <span className="text-xl font-bold" style={{ color: '#000b3d' }}>SolarCharge</span>
             </Link>
           </div>
 
@@ -141,26 +142,19 @@ function Navigation({ navigateTo, handleSignOut }) {
                 <button
                   key={link.path}
                   onClick={() => scrollToSection(link.path)}
-                  className="font-medium transition-all duration-300 relative group pb-1"
+                  className="font-medium transition-all duration-200 hover:scale-105"
                   style={{ color: '#000b3d' }}
-                  onMouseEnter={(e) => {
-                    e.target.style.color = '#38b6ff';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.target.style.color = '#000b3d';
-                  }}
+                  onMouseEnter={(e) => e.target.style.color = '#38b6ff'}
+                  onMouseLeave={(e) => e.target.style.color = '#000b3d'}
                 >
                   {link.name}
-                  <span className="absolute bottom-0 left-0 w-0 h-0.5 transition-all duration-300 group-hover:w-full" style={{
-                    background: 'linear-gradient(90deg, #38b6ff 0%, #f9d217 100%)'
-                  }}></span>
                 </button>
               ) : (
                 // Internal links use Link component
                 <Link
                   key={link.path}
                   to={link.path}
-                  className={`font-medium transition-all duration-300 relative group pb-1
+                  className={`font-medium transition-all duration-200 hover:scale-105
                              ${isActiveRoute(link.path) ? 'border-b-2' : ''}`}
                   style={{ 
                     color: isActiveRoute(link.path) ? '#38b6ff' : '#000b3d',
@@ -178,11 +172,6 @@ function Navigation({ navigateTo, handleSignOut }) {
                   }}
                 >
                   {link.name}
-                  {!isActiveRoute(link.path) && (
-                    <span className="absolute bottom-0 left-0 w-0 h-0.5 transition-all duration-300 group-hover:w-full" style={{
-                      background: 'linear-gradient(90deg, #38b6ff 0%, #f9d217 100%)'
-                    }}></span>
-                  )}
                 </Link>
               )
             ))}
@@ -193,11 +182,11 @@ function Navigation({ navigateTo, handleSignOut }) {
                 <button
                   onClick={() => { navigateTo('login'); setIsMenuOpen(false); }}
                   className={`transition-all duration-300 ease-in-out hover:scale-105 focus:outline-none ${
-                    isOnLoginPage || isOnLandingPage
+                    isOnSignupPage || isOnLandingPage
                       ? 'group relative px-6 py-2 rounded-xl font-bold text-white overflow-visible focus:ring-4 focus:ring-opacity-50' 
                       : 'font-medium'
                   }`}
-                  style={isOnLoginPage || isOnLandingPage ? {
+                  style={isOnSignupPage || isOnLandingPage ? {
                     background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
                     boxShadow: '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
                     focusRingColor: 'rgba(56, 182, 255, 0.5)',
@@ -210,68 +199,55 @@ function Navigation({ navigateTo, handleSignOut }) {
                     padding: '0.5rem 1.5rem'
                   }}
                   onMouseDown={(e) => {
-                    if (isOnLoginPage || isOnLandingPage) {
+                    if (isOnSignupPage || isOnLandingPage) {
                       e.target.style.outline = '3px solid rgba(56, 182, 255, 0.8)';
-                      e.target.style.background = 'linear-gradient(135deg, #2a8fcc 0%, #00082a 100%)';
-                      e.target.style.boxShadow = 'inset 0 4px 12px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(56, 182, 255, 0.4)';
-                      e.target.style.transform = 'scale(0.98)';
                     } else {
-                      e.target.style.border = '2px solid rgba(56, 182, 255, 0.6)';
-                      e.target.style.background = 'rgba(56, 182, 255, 0.15)';
-                      e.target.style.boxShadow = 'inset 0 2px 8px rgba(0, 0, 0, 0.2)';
-                      e.target.style.transform = 'scale(0.98)';
+                      e.target.style.outline = '2px solid rgba(56, 182, 255, 0.5)';
+                      e.target.style.outlineOffset = '2px';
                     }
                   }}
                   onMouseUp={(e) => {
-                    if (isOnLoginPage || isOnLandingPage) {
+                    if (isOnSignupPage || isOnLandingPage) {
                       e.target.style.outline = '2px solid rgba(56, 182, 255, 0.5)';
-                      e.target.style.background = 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)';
-                      e.target.style.boxShadow = '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)';
-                      e.target.style.transform = 'scale(1)';
                     } else {
-                      e.target.style.border = '2px solid rgba(56, 182, 255, 0.3)';
-                      e.target.style.background = 'transparent';
-                      e.target.style.boxShadow = 'none';
-                      e.target.style.transform = 'scale(1)';
+                      e.target.style.outline = '';
+                      e.target.style.outlineOffset = '';
                     }
                   }}
                   onMouseLeave={(e) => {
-                    if (isOnLoginPage || isOnLandingPage) {
+                    if (isOnSignupPage || isOnLandingPage) {
                       e.target.style.outline = '2px solid rgba(56, 182, 255, 0.5)';
-                      e.target.style.background = 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)';
-                      e.target.style.boxShadow = '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)';
-                      e.target.style.transform = 'scale(1)';
                     } else {
-                      e.target.style.border = '2px solid rgba(56, 182, 255, 0.3)';
-                      e.target.style.background = 'transparent';
-                      e.target.style.boxShadow = 'none';
-                      e.target.style.transform = 'scale(1)';
+                      e.target.style.outline = '';
+                      e.target.style.outlineOffset = '';
                     }
-                    if (!isOnLoginPage && !isOnLandingPage) {
+                    if (!isOnSignupPage && !isOnLandingPage) {
                       e.target.style.color = '#000b3d';
                     }
                   }}
                   onMouseEnter={(e) => {
-                    if (!isOnLoginPage && !isOnLandingPage) {
+                    if (!isOnSignupPage && !isOnLandingPage) {
                       e.target.style.color = '#38b6ff';
                     }
                   }}
                   onFocus={(e) => {
-                    if (isOnLoginPage || isOnLandingPage) {
+                    if (isOnSignupPage || isOnLandingPage) {
                       e.target.style.outline = '3px solid rgba(56, 182, 255, 0.8)';
                     } else {
-                      e.target.style.border = '2px solid rgba(56, 182, 255, 0.6)';
+                      e.target.style.outline = '2px solid rgba(56, 182, 255, 0.5)';
+                      e.target.style.outlineOffset = '2px';
                     }
                   }}
                   onBlur={(e) => {
-                    if (isOnLoginPage || isOnLandingPage) {
+                    if (isOnSignupPage || isOnLandingPage) {
                       e.target.style.outline = '2px solid rgba(56, 182, 255, 0.5)';
                     } else {
-                      e.target.style.border = '2px solid rgba(56, 182, 255, 0.3)';
+                      e.target.style.outline = '';
+                      e.target.style.outlineOffset = '';
                     }
                   }}
                 >
-                  {isOnLoginPage || isOnLandingPage ? (
+                  {isOnSignupPage || isOnLandingPage ? (
                     <>
                       <span className="relative z-10">Login</span>
                       <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" style={{
@@ -287,85 +263,69 @@ function Navigation({ navigateTo, handleSignOut }) {
                 <button
                   onClick={() => { navigateTo('signup'); setIsMenuOpen(false); }}
                   className={`transition-all duration-300 ease-in-out hover:scale-105 focus:outline-none ${
-                    isOnSignupPage || isOnLandingPage
+                    isOnLoginPage || isOnLandingPage
                       ? 'group relative px-6 py-2 rounded-xl font-bold text-white overflow-visible focus:ring-4 focus:ring-opacity-50' 
                       : 'font-medium'
                   }`}
-                  style={isOnSignupPage || isOnLandingPage ? {
+                  style={isOnLoginPage || isOnLandingPage ? {
                     background: 'linear-gradient(135deg, #f9d217 0%, #38b6ff 100%)',
                     boxShadow: '0 8px 24px rgba(249, 210, 23, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
                     focusRingColor: 'rgba(249, 210, 23, 0.5)',
                     outline: '2px solid rgba(249, 210, 23, 0.5)',
                     outlineOffset: '2px'
                   } : {
-                    color: '#000b3d',
-                    border: '2px solid rgba(249, 210, 23, 0.3)',
-                    borderRadius: '0.75rem',
-                    padding: '0.5rem 1.5rem'
+                    color: '#000b3d'
                   }}
                   onMouseDown={(e) => {
-                    if (isOnSignupPage || isOnLandingPage) {
+                    if (isOnLoginPage || isOnLandingPage) {
                       e.target.style.outline = '3px solid rgba(249, 210, 23, 0.8)';
-                      e.target.style.background = 'linear-gradient(135deg, #c4a815 0%, #2a8fcc 100%)';
-                      e.target.style.boxShadow = 'inset 0 4px 12px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(249, 210, 23, 0.4)';
-                      e.target.style.transform = 'scale(0.98)';
                     } else {
-                      e.target.style.border = '2px solid rgba(249, 210, 23, 0.6)';
-                      e.target.style.background = 'rgba(249, 210, 23, 0.15)';
-                      e.target.style.boxShadow = 'inset 0 2px 8px rgba(0, 0, 0, 0.2)';
-                      e.target.style.transform = 'scale(0.98)';
+                      e.target.style.outline = '2px solid rgba(249, 210, 23, 0.5)';
+                      e.target.style.outlineOffset = '2px';
                     }
                   }}
                   onMouseUp={(e) => {
-                    if (isOnSignupPage || isOnLandingPage) {
+                    if (isOnLoginPage || isOnLandingPage) {
                       e.target.style.outline = '2px solid rgba(249, 210, 23, 0.5)';
-                      e.target.style.background = 'linear-gradient(135deg, #f9d217 0%, #38b6ff 100%)';
-                      e.target.style.boxShadow = '0 8px 24px rgba(249, 210, 23, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)';
-                      e.target.style.transform = 'scale(1)';
                     } else {
-                      e.target.style.border = '2px solid rgba(249, 210, 23, 0.3)';
-                      e.target.style.background = 'transparent';
-                      e.target.style.boxShadow = 'none';
-                      e.target.style.transform = 'scale(1)';
+                      e.target.style.outline = '';
+                      e.target.style.outlineOffset = '';
                     }
                   }}
                   onMouseLeave={(e) => {
-                    if (isOnSignupPage || isOnLandingPage) {
+                    if (isOnLoginPage || isOnLandingPage) {
                       e.target.style.outline = '2px solid rgba(249, 210, 23, 0.5)';
-                      e.target.style.background = 'linear-gradient(135deg, #f9d217 0%, #38b6ff 100%)';
-                      e.target.style.boxShadow = '0 8px 24px rgba(249, 210, 23, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)';
-                      e.target.style.transform = 'scale(1)';
                     } else {
-                      e.target.style.border = '2px solid rgba(249, 210, 23, 0.3)';
-                      e.target.style.background = 'transparent';
-                      e.target.style.boxShadow = 'none';
-                      e.target.style.transform = 'scale(1)';
+                      e.target.style.outline = '';
+                      e.target.style.outlineOffset = '';
                     }
-                    if (!isOnSignupPage && !isOnLandingPage) {
+                    if (!isOnLoginPage && !isOnLandingPage) {
                       e.target.style.color = '#000b3d';
                     }
                   }}
                   onMouseEnter={(e) => {
-                    if (!isOnSignupPage && !isOnLandingPage) {
+                    if (!isOnLoginPage && !isOnLandingPage) {
                       e.target.style.color = '#38b6ff';
                     }
                   }}
                   onFocus={(e) => {
-                    if (isOnSignupPage || isOnLandingPage) {
+                    if (isOnLoginPage || isOnLandingPage) {
                       e.target.style.outline = '3px solid rgba(249, 210, 23, 0.8)';
                     } else {
-                      e.target.style.border = '2px solid rgba(249, 210, 23, 0.6)';
+                      e.target.style.outline = '2px solid rgba(249, 210, 23, 0.5)';
+                      e.target.style.outlineOffset = '2px';
                     }
                   }}
                   onBlur={(e) => {
-                    if (isOnSignupPage || isOnLandingPage) {
+                    if (isOnLoginPage || isOnLandingPage) {
                       e.target.style.outline = '2px solid rgba(249, 210, 23, 0.5)';
                     } else {
-                      e.target.style.border = '2px solid rgba(249, 210, 23, 0.3)';
+                      e.target.style.outline = '';
+                      e.target.style.outlineOffset = '';
                     }
                   }}
                 >
-                  {isOnSignupPage || isOnLandingPage ? (
+                  {isOnLoginPage || isOnLandingPage ? (
                     <>
                       <span className="relative z-10">Sign Up</span>
                       <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" style={{
@@ -491,85 +451,70 @@ function Navigation({ navigateTo, handleSignOut }) {
                   <button
                     onClick={() => { navigateTo('login'); setIsMenuOpen(false); }}
                     className={`block w-full text-left px-3 py-2 rounded-lg transition-all duration-300 ease-in-out hover:scale-105 focus:outline-none ${
-                      isOnLoginPage || isOnLandingPage
+                      isOnSignupPage || isOnLandingPage
                         ? 'group relative font-bold text-white overflow-visible' 
                         : 'font-medium'
                     }`}
-                    style={isOnLoginPage || isOnLandingPage ? {
+                    style={isOnSignupPage || isOnLandingPage ? {
                       background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
                       boxShadow: '0 4px 16px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
                       outline: '2px solid rgba(56, 182, 255, 0.5)',
                       outlineOffset: '2px'
                     } : {
-                      color: '#000b3d',
-                      border: '2px solid rgba(56, 182, 255, 0.3)',
-                      borderRadius: '0.5rem'
+                      color: '#000b3d'
                     }}
                     onMouseDown={(e) => {
-                      if (isOnLoginPage || isOnLandingPage) {
+                      if (isOnSignupPage || isOnLandingPage) {
                         e.target.style.outline = '3px solid rgba(56, 182, 255, 0.8)';
-                        e.target.style.background = 'linear-gradient(135deg, #2a8fcc 0%, #00082a 100%)';
-                        e.target.style.boxShadow = 'inset 0 4px 12px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(56, 182, 255, 0.4)';
-                        e.target.style.transform = 'scale(0.98)';
                       } else {
-                        e.target.style.border = '2px solid rgba(56, 182, 255, 0.6)';
-                        e.target.style.background = 'rgba(56, 182, 255, 0.15)';
-                        e.target.style.boxShadow = 'inset 0 2px 8px rgba(0, 0, 0, 0.2)';
-                        e.target.style.transform = 'scale(0.98)';
+                        e.target.style.outline = '2px solid rgba(56, 182, 255, 0.5)';
+                        e.target.style.outlineOffset = '2px';
                       }
                     }}
                     onMouseUp={(e) => {
-                      if (isOnLoginPage || isOnLandingPage) {
+                      if (isOnSignupPage || isOnLandingPage) {
                         e.target.style.outline = '2px solid rgba(56, 182, 255, 0.5)';
-                        e.target.style.background = 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)';
-                        e.target.style.boxShadow = '0 4px 16px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)';
-                        e.target.style.transform = 'scale(1)';
                       } else {
-                        e.target.style.border = '2px solid rgba(56, 182, 255, 0.3)';
-                        e.target.style.background = 'transparent';
-                        e.target.style.boxShadow = 'none';
-                        e.target.style.transform = 'scale(1)';
+                        e.target.style.outline = '';
+                        e.target.style.outlineOffset = '';
                       }
                     }}
                     onMouseLeave={(e) => {
-                      if (isOnLoginPage || isOnLandingPage) {
+                      if (isOnSignupPage || isOnLandingPage) {
                         e.target.style.outline = '2px solid rgba(56, 182, 255, 0.5)';
-                        e.target.style.background = 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)';
-                        e.target.style.boxShadow = '0 4px 16px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)';
-                        e.target.style.transform = 'scale(1)';
                       } else {
-                        e.target.style.border = '2px solid rgba(56, 182, 255, 0.3)';
-                        e.target.style.background = 'transparent';
-                        e.target.style.boxShadow = 'none';
-                        e.target.style.transform = 'scale(1)';
+                        e.target.style.outline = '';
+                        e.target.style.outlineOffset = '';
                       }
-                      if (!isOnLoginPage && !isOnLandingPage) {
+                      if (!isOnSignupPage && !isOnLandingPage) {
                         e.target.style.color = '#000b3d';
                         e.target.style.background = 'transparent';
                       }
                     }}
                     onMouseEnter={(e) => {
-                      if (!isOnLoginPage && !isOnLandingPage) {
+                      if (!isOnSignupPage && !isOnLandingPage) {
                         e.target.style.color = '#38b6ff';
                         e.target.style.background = 'rgba(56, 182, 255, 0.1)';
                       }
                     }}
                     onFocus={(e) => {
-                      if (isOnLoginPage || isOnLandingPage) {
+                      if (isOnSignupPage || isOnLandingPage) {
                         e.target.style.outline = '3px solid rgba(56, 182, 255, 0.8)';
                       } else {
-                        e.target.style.border = '2px solid rgba(56, 182, 255, 0.6)';
+                        e.target.style.outline = '2px solid rgba(56, 182, 255, 0.5)';
+                        e.target.style.outlineOffset = '2px';
                       }
                     }}
                     onBlur={(e) => {
-                      if (isOnLoginPage || isOnLandingPage) {
+                      if (isOnSignupPage || isOnLandingPage) {
                         e.target.style.outline = '2px solid rgba(56, 182, 255, 0.5)';
                       } else {
-                        e.target.style.border = '2px solid rgba(56, 182, 255, 0.3)';
+                        e.target.style.outline = '';
+                        e.target.style.outlineOffset = '';
                       }
                     }}
                   >
-                    {isOnLoginPage || isOnLandingPage ? (
+                    {isOnSignupPage || isOnLandingPage ? (
                       <>
                         <span className="relative z-10">Login</span>
                         <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" style={{
@@ -585,85 +530,70 @@ function Navigation({ navigateTo, handleSignOut }) {
                   <button
                     onClick={() => { navigateTo('signup'); setIsMenuOpen(false); }}
                     className={`block w-full text-left px-3 py-2 rounded-lg transition-all duration-300 ease-in-out hover:scale-105 focus:outline-none ${
-                      isOnSignupPage || isOnLandingPage
+                      isOnLoginPage || isOnLandingPage
                         ? 'group relative font-bold text-white overflow-visible' 
                         : 'font-medium'
                     }`}
-                    style={isOnSignupPage || isOnLandingPage ? {
+                    style={isOnLoginPage || isOnLandingPage ? {
                       background: 'linear-gradient(135deg, #f9d217 0%, #38b6ff 100%)',
                       boxShadow: '0 4px 16px rgba(249, 210, 23, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
                       outline: '2px solid rgba(249, 210, 23, 0.5)',
                       outlineOffset: '2px'
                     } : {
-                      color: '#000b3d',
-                      border: '2px solid rgba(249, 210, 23, 0.3)',
-                      borderRadius: '0.5rem'
+                      color: '#000b3d'
                     }}
                     onMouseDown={(e) => {
-                      if (isOnSignupPage || isOnLandingPage) {
+                      if (isOnLoginPage || isOnLandingPage) {
                         e.target.style.outline = '3px solid rgba(249, 210, 23, 0.8)';
-                        e.target.style.background = 'linear-gradient(135deg, #c4a815 0%, #2a8fcc 100%)';
-                        e.target.style.boxShadow = 'inset 0 4px 12px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(249, 210, 23, 0.4)';
-                        e.target.style.transform = 'scale(0.98)';
                       } else {
-                        e.target.style.border = '2px solid rgba(249, 210, 23, 0.6)';
-                        e.target.style.background = 'rgba(249, 210, 23, 0.15)';
-                        e.target.style.boxShadow = 'inset 0 2px 8px rgba(0, 0, 0, 0.2)';
-                        e.target.style.transform = 'scale(0.98)';
+                        e.target.style.outline = '2px solid rgba(249, 210, 23, 0.5)';
+                        e.target.style.outlineOffset = '2px';
                       }
                     }}
                     onMouseUp={(e) => {
-                      if (isOnSignupPage || isOnLandingPage) {
+                      if (isOnLoginPage || isOnLandingPage) {
                         e.target.style.outline = '2px solid rgba(249, 210, 23, 0.5)';
-                        e.target.style.background = 'linear-gradient(135deg, #f9d217 0%, #38b6ff 100%)';
-                        e.target.style.boxShadow = '0 4px 16px rgba(249, 210, 23, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)';
-                        e.target.style.transform = 'scale(1)';
                       } else {
-                        e.target.style.border = '2px solid rgba(249, 210, 23, 0.3)';
-                        e.target.style.background = 'transparent';
-                        e.target.style.boxShadow = 'none';
-                        e.target.style.transform = 'scale(1)';
+                        e.target.style.outline = '';
+                        e.target.style.outlineOffset = '';
                       }
                     }}
                     onMouseLeave={(e) => {
-                      if (isOnSignupPage || isOnLandingPage) {
+                      if (isOnLoginPage || isOnLandingPage) {
                         e.target.style.outline = '2px solid rgba(249, 210, 23, 0.5)';
-                        e.target.style.background = 'linear-gradient(135deg, #f9d217 0%, #38b6ff 100%)';
-                        e.target.style.boxShadow = '0 4px 16px rgba(249, 210, 23, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)';
-                        e.target.style.transform = 'scale(1)';
                       } else {
-                        e.target.style.border = '2px solid rgba(249, 210, 23, 0.3)';
-                        e.target.style.background = 'transparent';
-                        e.target.style.boxShadow = 'none';
-                        e.target.style.transform = 'scale(1)';
+                        e.target.style.outline = '';
+                        e.target.style.outlineOffset = '';
                       }
-                      if (!isOnSignupPage && !isOnLandingPage) {
+                      if (!isOnLoginPage && !isOnLandingPage) {
                         e.target.style.color = '#000b3d';
                         e.target.style.background = 'transparent';
                       }
                     }}
                     onMouseEnter={(e) => {
-                      if (!isOnSignupPage && !isOnLandingPage) {
+                      if (!isOnLoginPage && !isOnLandingPage) {
                         e.target.style.color = '#38b6ff';
                         e.target.style.background = 'rgba(56, 182, 255, 0.1)';
                       }
                     }}
                     onFocus={(e) => {
-                      if (isOnSignupPage || isOnLandingPage) {
+                      if (isOnLoginPage || isOnLandingPage) {
                         e.target.style.outline = '3px solid rgba(249, 210, 23, 0.8)';
                       } else {
-                        e.target.style.border = '2px solid rgba(249, 210, 23, 0.6)';
+                        e.target.style.outline = '2px solid rgba(249, 210, 23, 0.5)';
+                        e.target.style.outlineOffset = '2px';
                       }
                     }}
                     onBlur={(e) => {
-                      if (isOnSignupPage || isOnLandingPage) {
+                      if (isOnLoginPage || isOnLandingPage) {
                         e.target.style.outline = '2px solid rgba(249, 210, 23, 0.5)';
                       } else {
-                        e.target.style.border = '2px solid rgba(249, 210, 23, 0.3)';
+                        e.target.style.outline = '';
+                        e.target.style.outlineOffset = '';
                       }
                     }}
                   >
-                    {isOnSignupPage || isOnLandingPage ? (
+                    {isOnLoginPage || isOnLandingPage ? (
                       <>
                         <span className="relative z-10">Sign Up</span>
                         <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" style={{

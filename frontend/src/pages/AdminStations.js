@@ -38,7 +38,8 @@ function AdminStations({ navigateTo, handleSignOut }) {
     } else {
       setLoading(false);
     }
-  }, [initialLoad, stations.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialLoad]);
   
   //Fetch stations
   async function fetchStations() {
@@ -54,23 +55,59 @@ function AdminStations({ navigateTo, handleSignOut }) {
         throw new Error("Not authenticated");
       }
       
-      // Fetch stations from backend
-      const res = await fetch(`${BACKEND_URL}/api/admin/stations`, {
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json'
+      // Create AbortController for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+      
+      try {
+        // Fetch stations from backend
+        const res = await fetch(`${BACKEND_URL}/api/admin/stations`, {
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json'
+          },
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (!res.ok) {
+          // Try to get error message from response
+          let errorMessage = `Error fetching stations: ${res.status} ${res.statusText}`;
+          try {
+            const errorData = await res.json();
+            if (errorData.error) {
+              errorMessage = `Error fetching stations: ${errorData.error}`;
+            }
+          } catch (e) {
+            // If response is not JSON, use status text
+            const errorText = await res.text();
+            if (errorText) {
+              errorMessage = `Error fetching stations: ${errorText}`;
+            }
+          }
+          throw new Error(errorMessage);
         }
-      });
-      
-      if (!res.ok) {
-        throw new Error(`Error fetching stations: ${res.statusText}`);
+        
+        const data = await res.json();
+        setStations(data);
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        if (fetchError.name === 'AbortError') {
+          throw new Error('Request timeout: The server took too long to respond. The backend server might be sleeping or overloaded.');
+        }
+        throw fetchError;
       }
-      
-      const data = await res.json();
-      setStations(data);
     } catch (error) {
       console.error("Stations error:", error);
-      setError(error.message);
+      // Provide more detailed error message
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        setError(`Network error: Unable to connect to backend server at ${BACKEND_URL}. The server might be down or sleeping. Please try again in a moment.`);
+      } else if (error.message.includes('timeout')) {
+        setError(error.message);
+      } else {
+        setError(error.message || 'An unknown error occurred while fetching stations');
+      }
     } finally {
       setLoading(false);
     }
@@ -287,41 +324,104 @@ function AdminStations({ navigateTo, handleSignOut }) {
   };
   
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen flex flex-col items-center p-4 text-gray-800 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+      {/* Lightweight Animated Background */}
+      <div className="absolute inset-0 overflow-hidden pointer-events-none" style={{ willChange: 'transform' }}>
+        <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-float-slow" style={{ 
+          background: 'radial-gradient(circle, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.05) 50%, transparent 100%)',
+          willChange: 'transform',
+          transform: 'translateZ(0)'
+        }}></div>
+        <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-float-slow-delay" style={{ 
+          background: 'radial-gradient(circle, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.05) 50%, transparent 100%)',
+          willChange: 'transform',
+          transform: 'translateZ(0)'
+        }}></div>
+      </div>
+
       <Navigation currentPage="admin-stations" navigateTo={navigateTo} handleSignOut={handleSignOut} />
       
-      <div className="container mx-auto px-6 py-8">
-        <div className="flex justify-between items-center">
-          <h1 className="text-3xl font-semibold text-gray-800">Manage Stations</h1>
-          
-          <button
-            onClick={handleAddStation}
-            className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded"
-          >
-            Add New Station
-          </button>
+      <div className="w-full max-w-7xl mx-auto pt-24 pb-8 relative z-10 px-4 sm:px-6 lg:px-8" style={{ 
+        animation: 'fade-in 0.6s ease-out forwards',
+        willChange: 'opacity, transform'
+      }}>
+        {/* Header - Wrapped in its own glass card */}
+        <div className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-8 px-8 mb-8" style={{ 
+          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+          boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+        }}>
+          <div className="flex justify-between items-center">
+            <div>
+              <h1 className="text-4xl sm:text-5xl font-bold mb-2" style={{ color: '#000b3d' }}>Manage Stations</h1>
+              <p className="text-lg" style={{ color: '#000b3d', opacity: 0.7 }}>Create and manage charging stations</p>
+            </div>
+            <button
+              onClick={handleAddStation}
+              className="font-bold py-2 px-6 rounded-xl text-white transition-all duration-200 hover:scale-105"
+              style={{
+                background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                boxShadow: '0 8px 24px rgba(16, 185, 129, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                willChange: 'transform',
+                transform: 'translateZ(0)'
+              }}
+            >
+              Add New Station
+            </button>
+          </div>
         </div>
         
         {error && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mt-4">
-            <p>Error: {error}</p>
+          <div className="relative backdrop-blur-xl rounded-2xl shadow-xl border border-white/30 overflow-hidden py-4 px-6 mb-6" style={{ 
+            background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(220, 38, 38, 0.1) 100%)',
+            borderColor: 'rgba(239, 68, 68, 0.3)',
+            boxShadow: '0 8px 32px 0 rgba(239, 68, 68, 0.15)'
+          }}>
+            <div className="flex justify-between items-center">
+              <p className="flex-1 font-semibold" style={{ color: '#dc2626' }}>Error: {error}</p>
+              <button
+                onClick={() => {
+                  setInitialLoad(true);
+                  fetchStations();
+                }}
+                className="ml-4 font-bold py-2 px-4 rounded-xl text-white transition-all duration-200 hover:scale-105"
+                style={{
+                  background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+                  boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)',
+                  willChange: 'transform',
+                  transform: 'translateZ(0)'
+                }}
+                disabled={loading}
+              >
+                {loading ? 'Retrying...' : 'Retry'}
+              </button>
+            </div>
           </div>
         )}
         
         {loading && !isEditing && !isAdding ? (
-          <div className="text-center py-8">
-            <p>Loading stations...</p>
+          <div className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-16 px-8 text-center" style={{ 
+            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+            boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+          }}>
+            <div className="animate-spin rounded-full h-12 w-12 border-4 border-t-transparent mx-auto mb-4" style={{
+              borderColor: '#38b6ff',
+              borderTopColor: 'transparent'
+            }}></div>
+            <p style={{ color: '#000b3d', opacity: 0.7 }}>Loading stations...</p>
           </div>
         ) : isEditing || isAdding ? (
-          <div className="mt-8 bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-xl font-semibold text-gray-800 mb-4">
+          <div className="relative backdrop-blur-xl rounded-2xl shadow-2xl border border-white/30 overflow-hidden p-8" style={{ 
+            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+            boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+          }}>
+            <h2 className="text-2xl font-bold mb-6" style={{ color: '#000b3d' }}>
               {isAdding ? "Add New Station" : "Edit Station"}
             </h2>
             
             <form onSubmit={handleSubmit}>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-gray-700 text-sm font-bold mb-2">
+                  <label className="block font-bold mb-2" style={{ color: '#000b3d' }}>
                     Station Name
                   </label>
                   <input
@@ -329,13 +429,29 @@ function AdminStations({ navigateTo, handleSignOut }) {
                     name="station_name"
                     value={formData.station_name}
                     onChange={handleInputChange}
-                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    className="rounded-xl w-full py-2 px-3 leading-tight transition-all duration-200"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.2)',
+                      border: '1px solid rgba(255, 255, 255, 0.3)',
+                      color: '#000b3d',
+                      backdropFilter: 'blur(10px)'
+                    }}
+                    onFocus={(e) => {
+                      e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+                      e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.boxShadow = 'none';
+                      e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+                    }}
                     required
                   />
                 </div>
                 
                 <div>
-                  <label className="block text-gray-700 text-sm font-bold mb-2">
+                  <label className="block font-bold mb-2" style={{ color: '#000b3d' }}>
                     Location Description
                   </label>
                   <input
@@ -343,13 +459,29 @@ function AdminStations({ navigateTo, handleSignOut }) {
                     name="location_description"
                     value={formData.location_description}
                     onChange={handleInputChange}
-                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    className="rounded-xl w-full py-2 px-3 leading-tight transition-all duration-200"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.2)',
+                      border: '1px solid rgba(255, 255, 255, 0.3)',
+                      color: '#000b3d',
+                      backdropFilter: 'blur(10px)'
+                    }}
+                    onFocus={(e) => {
+                      e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+                      e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.boxShadow = 'none';
+                      e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+                    }}
                     required
                   />
                 </div>
                 
                 <div>
-                  <label className="block text-gray-700 text-sm font-bold mb-2">
+                  <label className="block font-bold mb-2" style={{ color: '#000b3d' }}>
                     Latitude
                   </label>
                   <input
@@ -357,14 +489,30 @@ function AdminStations({ navigateTo, handleSignOut }) {
                     name="latitude"
                     value={formData.latitude}
                     onChange={handleInputChange}
-                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    className="rounded-xl w-full py-2 px-3 leading-tight transition-all duration-200"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.2)',
+                      border: '1px solid rgba(255, 255, 255, 0.3)',
+                      color: '#000b3d',
+                      backdropFilter: 'blur(10px)'
+                    }}
+                    onFocus={(e) => {
+                      e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+                      e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.boxShadow = 'none';
+                      e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+                    }}
                     step="0.000001"
                     required
                   />
                 </div>
                 
                 <div>
-                  <label className="block text-gray-700 text-sm font-bold mb-2">
+                  <label className="block font-bold mb-2" style={{ color: '#000b3d' }}>
                     Longitude
                   </label>
                   <input
@@ -372,14 +520,30 @@ function AdminStations({ navigateTo, handleSignOut }) {
                     name="longitude"
                     value={formData.longitude}
                     onChange={handleInputChange}
-                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    className="rounded-xl w-full py-2 px-3 leading-tight transition-all duration-200"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.2)',
+                      border: '1px solid rgba(255, 255, 255, 0.3)',
+                      color: '#000b3d',
+                      backdropFilter: 'blur(10px)'
+                    }}
+                    onFocus={(e) => {
+                      e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+                      e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.boxShadow = 'none';
+                      e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+                    }}
                     step="0.000001"
                     required
                   />
                 </div>
                 
                 <div>
-                  <label className="block text-gray-700 text-sm font-bold mb-2">
+                  <label className="block font-bold mb-2" style={{ color: '#000b3d' }}>
                     Solar Panel Wattage
                   </label>
                   <input
@@ -387,13 +551,29 @@ function AdminStations({ navigateTo, handleSignOut }) {
                     name="solar_panel_wattage"
                     value={formData.solar_panel_wattage}
                     onChange={handleInputChange}
-                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    className="rounded-xl w-full py-2 px-3 leading-tight transition-all duration-200"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.2)',
+                      border: '1px solid rgba(255, 255, 255, 0.3)',
+                      color: '#000b3d',
+                      backdropFilter: 'blur(10px)'
+                    }}
+                    onFocus={(e) => {
+                      e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+                      e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.boxShadow = 'none';
+                      e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+                    }}
                     required
                   />
                 </div>
                 
                 <div>
-                  <label className="block text-gray-700 text-sm font-bold mb-2">
+                  <label className="block font-bold mb-2" style={{ color: '#000b3d' }}>
                     Battery Capacity (kWh)
                   </label>
                   <input
@@ -401,14 +581,30 @@ function AdminStations({ navigateTo, handleSignOut }) {
                     name="battery_capacity_kwh"
                     value={formData.battery_capacity_kwh}
                     onChange={handleInputChange}
-                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    className="rounded-xl w-full py-2 px-3 leading-tight transition-all duration-200"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.2)',
+                      border: '1px solid rgba(255, 255, 255, 0.3)',
+                      color: '#000b3d',
+                      backdropFilter: 'blur(10px)'
+                    }}
+                    onFocus={(e) => {
+                      e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+                      e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.boxShadow = 'none';
+                      e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+                    }}
                     step="0.001"
                     required
                   />
                 </div>
                 
                 <div>
-                  <label className="block text-gray-700 text-sm font-bold mb-2">
+                  <label className="block font-bold mb-2" style={{ color: '#000b3d' }}>
                     Current Battery Level (%)
                   </label>
                   <input
@@ -416,68 +612,148 @@ function AdminStations({ navigateTo, handleSignOut }) {
                     name="current_battery_level"
                     value={formData.current_battery_level}
                     onChange={handleInputChange}
-                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    className="rounded-xl w-full py-2 px-3 leading-tight transition-all duration-200"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.2)',
+                      border: '1px solid rgba(255, 255, 255, 0.3)',
+                      color: '#000b3d',
+                      backdropFilter: 'blur(10px)'
+                    }}
+                    onFocus={(e) => {
+                      e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+                      e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.boxShadow = 'none';
+                      e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+                    }}
                     min="0"
                     max="100"
                     required
                   />
                 </div>
                 
-                                 <div>
-                   <label className="block text-gray-700 text-sm font-bold mb-2">
-                     Price per kWh (₱)
-                   </label>
-                   <input
-                     type="number"
-                     name="price_per_kwh"
-                     value={formData.price_per_kwh}
-                     onChange={handleInputChange}
-                     className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-                     step="0.01"
-                     required
-                   />
-                 </div>
+                <div>
+                  <label className="block font-bold mb-2" style={{ color: '#000b3d' }}>
+                    Price per kWh (₱)
+                  </label>
+                  <input
+                    type="number"
+                    name="price_per_kwh"
+                    value={formData.price_per_kwh}
+                    onChange={handleInputChange}
+                    className="rounded-xl w-full py-2 px-3 leading-tight transition-all duration-200"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.2)',
+                      border: '1px solid rgba(255, 255, 255, 0.3)',
+                      color: '#000b3d',
+                      backdropFilter: 'blur(10px)'
+                    }}
+                    onFocus={(e) => {
+                      e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+                      e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.boxShadow = 'none';
+                      e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+                    }}
+                    step="0.01"
+                    required
+                  />
+                </div>
                  
-                 <div>
-                   <label className="block text-gray-700 text-sm font-bold mb-2">
-                     Device MQTT ID
-                   </label>
-                   <input
-                     type="text"
-                     name="device_mqtt_id"
-                     value={formData.device_mqtt_id}
-                     onChange={handleInputChange}
-                     placeholder="e.g., ESP32_CHARGER_STATION_001"
-                     className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-                     required
-                   />
-                 </div>
+                <div>
+                  <label className="block font-bold mb-2" style={{ color: '#000b3d' }}>
+                    Device MQTT ID
+                  </label>
+                  <input
+                    type="text"
+                    name="device_mqtt_id"
+                    value={formData.device_mqtt_id}
+                    onChange={handleInputChange}
+                    placeholder="e.g., ESP32_CHARGER_STATION_001"
+                    className="rounded-xl w-full py-2 px-3 leading-tight transition-all duration-200"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.2)',
+                      border: '1px solid rgba(255, 255, 255, 0.3)',
+                      color: '#000b3d',
+                      backdropFilter: 'blur(10px)'
+                    }}
+                    onFocus={(e) => {
+                      e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+                      e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.boxShadow = 'none';
+                      e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+                    }}
+                    required
+                  />
+                </div>
                 
-                                 <div>
-                   <label className="block text-gray-700 text-sm font-bold mb-2">
-                     Number of Free Ports
-                   </label>
-                   <input
-                     type="number"
-                     name="num_free_ports"
-                     value={formData.num_free_ports}
-                     onChange={handleInputChange}
-                     className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
-                     min="0"
-                     required
-                   />
-                 </div>
+                <div>
+                  <label className="block font-bold mb-2" style={{ color: '#000b3d' }}>
+                    Number of Free Ports
+                  </label>
+                  <input
+                    type="number"
+                    name="num_free_ports"
+                    value={formData.num_free_ports}
+                    onChange={handleInputChange}
+                    className="rounded-xl w-full py-2 px-3 leading-tight transition-all duration-200"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.2)',
+                      border: '1px solid rgba(255, 255, 255, 0.3)',
+                      color: '#000b3d',
+                      backdropFilter: 'blur(10px)'
+                    }}
+                    onFocus={(e) => {
+                      e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+                      e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.boxShadow = 'none';
+                      e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+                    }}
+                    min="0"
+                    required
+                  />
+                </div>
                  
-                 <div>
-                   <label className="block text-gray-700 text-sm font-bold mb-2">
-                     Number of Premium Ports
-                   </label>
+                <div>
+                  <label className="block font-bold mb-2" style={{ color: '#000b3d' }}>
+                    Number of Premium Ports
+                  </label>
                   <input
                     type="number"
                     name="num_premium_ports"
                     value={formData.num_premium_ports}
                     onChange={handleInputChange}
-                    className="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"
+                    className="rounded-xl w-full py-2 px-3 leading-tight transition-all duration-200"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.2)',
+                      border: '1px solid rgba(255, 255, 255, 0.3)',
+                      color: '#000b3d',
+                      backdropFilter: 'blur(10px)'
+                    }}
+                    onFocus={(e) => {
+                      e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
+                      e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.3)';
+                    }}
+                    onBlur={(e) => {
+                      e.target.style.boxShadow = 'none';
+                      e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
+                      e.target.style.background = 'rgba(255, 255, 255, 0.2)';
+                    }}
                     min="0"
                     required
                   />
@@ -489,9 +765,10 @@ function AdminStations({ navigateTo, handleSignOut }) {
                     name="is_active"
                     checked={formData.is_active}
                     onChange={handleInputChange}
-                    className="mr-2"
+                    className="mr-2 rounded"
+                    style={{ accentColor: '#38b6ff' }}
                   />
-                  <label className="text-gray-700 text-sm font-bold">
+                  <label className="font-bold" style={{ color: '#000b3d' }}>
                     Station Active
                   </label>
                 </div>
@@ -505,14 +782,25 @@ function AdminStations({ navigateTo, handleSignOut }) {
                     setIsAdding(false);
                     setSelectedStation(null);
                   }}
-                  className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded mr-2"
+                  className="font-bold py-2 px-6 rounded-xl transition-all duration-200 hover:scale-105 mr-2"
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(0, 11, 61, 0.2) 0%, rgba(0, 11, 61, 0.1) 100%)',
+                    color: '#000b3d',
+                    border: '1px solid rgba(0, 11, 61, 0.3)'
+                  }}
                 >
                   Cancel
                 </button>
                 
                 <button
                   type="submit"
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded"
+                  className="font-bold py-2 px-6 rounded-xl text-white transition-all duration-200 hover:scale-105"
+                  style={{
+                    background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
+                    boxShadow: '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                    willChange: 'transform',
+                    transform: 'translateZ(0)'
+                  }}
                   disabled={loading}
                 >
                   {loading ? "Saving..." : isAdding ? "Add Station" : "Update Station"}
@@ -521,43 +809,71 @@ function AdminStations({ navigateTo, handleSignOut }) {
             </form>
           </div>
         ) : (
-          <div className="mt-8">
+          <div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {stations.map((station) => (
                 <div
                   key={station.station_id}
-                  className="bg-white rounded-lg shadow-md p-6"
+                  className="relative backdrop-blur-xl rounded-2xl shadow-2xl border border-white/30 overflow-hidden p-6"
+                  style={{ 
+                    background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+                    boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)',
+                    transition: 'transform 0.2s ease-out',
+                    willChange: 'transform',
+                    transform: 'translateZ(0)'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.transform = 'scale(1.02) translateZ(0)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.transform = 'scale(1) translateZ(0)';
+                  }}
                 >
                   <div className="flex justify-between items-start">
-                    <h2 className="text-xl font-semibold text-gray-800">{station.station_name}</h2>
+                    <h2 className="text-xl font-bold" style={{ color: '#000b3d' }}>{station.station_name}</h2>
                     <span
-                      className={`px-2 py-1 rounded text-xs font-bold ${
-                        station.is_active ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-800"
-                      }`}
+                      className="px-2 py-1 rounded-full text-xs font-bold"
+                      style={{
+                        background: station.is_active ? 'rgba(16, 185, 129, 0.2)' : 'rgba(249, 210, 23, 0.2)',
+                        color: station.is_active ? '#10b981' : '#f9d217',
+                        border: `1px solid ${station.is_active ? 'rgba(16, 185, 129, 0.3)' : 'rgba(249, 210, 23, 0.3)'}`
+                      }}
                     >
                       {station.is_active ? "Active" : "Inactive"}
                     </span>
                   </div>
                   
-                                     <p className="text-gray-600 mt-2">{station.location_description}</p>
-                   <p className="text-gray-600 text-sm mt-1"><strong>Device ID:</strong> {station.device_mqtt_id || 'Not set'}</p>
+                  <p className="mt-2" style={{ color: '#000b3d', opacity: 0.7 }}>{station.location_description}</p>
+                  <p className="text-sm mt-1" style={{ color: '#000b3d', opacity: 0.7 }}><strong>Device ID:</strong> {station.device_mqtt_id || 'Not set'}</p>
                    
-                   <div className="mt-4 grid grid-cols-2 gap-2">
-                     <div>
-                       <p className="text-gray-600 text-sm">Free Ports</p>
-                       <p className="font-bold">{station.num_free_ports}</p>
-                     </div>
-                     <div>
-                       <p className="text-gray-600 text-sm">Premium Ports</p>
-                       <p className="font-bold">{station.num_premium_ports}</p>
-                     </div>
-                    <div>
-                      <p className="text-gray-600 text-sm">Battery</p>
-                      <p className="font-bold">{station.battery_capacity_mah ? (station.battery_capacity_mah / 1000).toFixed(2) : '0'} kWh</p>
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    <div className="p-2 rounded-xl backdrop-blur-md" style={{
+                      background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.1) 100%)',
+                      border: '1px solid rgba(56, 182, 255, 0.3)'
+                    }}>
+                      <p className="text-xs mb-1" style={{ color: '#000b3d', opacity: 0.7 }}>Free Ports</p>
+                      <p className="font-bold" style={{ color: '#38b6ff' }}>{station.num_free_ports}</p>
                     </div>
-                    <div>
-                      <p className="text-gray-600 text-sm">Level</p>
-                      <p className="font-bold">{station.current_battery_level}%</p>
+                    <div className="p-2 rounded-xl backdrop-blur-md" style={{
+                      background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.1) 100%)',
+                      border: '1px solid rgba(249, 210, 23, 0.3)'
+                    }}>
+                      <p className="text-xs mb-1" style={{ color: '#000b3d', opacity: 0.7 }}>Premium Ports</p>
+                      <p className="font-bold" style={{ color: '#f9d217' }}>{station.num_premium_ports}</p>
+                    </div>
+                    <div className="p-2 rounded-xl backdrop-blur-md" style={{
+                      background: 'linear-gradient(135deg, rgba(0, 11, 61, 0.2) 0%, rgba(0, 11, 61, 0.1) 100%)',
+                      border: '1px solid rgba(0, 11, 61, 0.3)'
+                    }}>
+                      <p className="text-xs mb-1" style={{ color: '#000b3d', opacity: 0.7 }}>Battery</p>
+                      <p className="font-bold" style={{ color: '#000b3d' }}>{station.battery_capacity_mah ? (station.battery_capacity_mah / 1000).toFixed(2) : '0'} kWh</p>
+                    </div>
+                    <div className="p-2 rounded-xl backdrop-blur-md" style={{
+                      background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(16, 185, 129, 0.1) 100%)',
+                      border: '1px solid rgba(16, 185, 129, 0.3)'
+                    }}>
+                      <p className="text-xs mb-1" style={{ color: '#000b3d', opacity: 0.7 }}>Level</p>
+                      <p className="font-bold" style={{ color: '#10b981' }}>{station.current_battery_level}%</p>
                     </div>
                   </div>
                   
@@ -567,14 +883,26 @@ function AdminStations({ navigateTo, handleSignOut }) {
                         handleSelectStation(station);
                         setIsEditing(true);
                       }}
-                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-3 rounded text-sm"
+                      className="font-bold py-1 px-3 rounded-xl text-white text-sm transition-all duration-200 hover:scale-105"
+                      style={{
+                        background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
+                        boxShadow: '0 4px 12px rgba(56, 182, 255, 0.3)',
+                        willChange: 'transform',
+                        transform: 'translateZ(0)'
+                      }}
                     >
                       Edit
                     </button>
                     
                     <button
                       onClick={() => handleDeleteStation(station.station_id)}
-                      className="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-3 rounded text-sm"
+                      className="font-bold py-1 px-3 rounded-xl text-white text-sm transition-all duration-200 hover:scale-105"
+                      style={{
+                        background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+                        boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)',
+                        willChange: 'transform',
+                        transform: 'translateZ(0)'
+                      }}
                     >
                       Delete
                     </button>
