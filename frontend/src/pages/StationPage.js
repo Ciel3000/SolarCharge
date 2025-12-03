@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { apiFetch } from '../utils/apiErrorHandler';
 import { openGoogleMaps } from '../utils/mapUtils';
+import { supabase } from '../supabaseClient';
 
 const BACKEND_URL = 'https://solar-charger-backend.onrender.com';
 
@@ -27,6 +28,7 @@ function StationPage({ station, navigateTo }) {
   const sessionIntervalRef = useRef(null);
   const isPageVisibleRef = useRef(true);
   const intervalsRef = useRef([]); // New ref for all intervals
+  const realtimeSyncTimeoutRef = useRef(null);
 
   const fromRoute = location.state?.from || '/home';
   
@@ -211,6 +213,25 @@ function StationPage({ station, navigateTo }) {
     }
   }, [stationData]);
 
+  const syncStationState = useCallback(async () => {
+    if (!stationData?.station_id) return;
+
+    try {
+      const response = await apiFetch(`${BACKEND_URL}/api/stations/${stationData.station_id}/sync`, {}, { handleSessionTimeout });
+      if (!response.ok) {
+        console.error('Station sync returned non-200 status:', response.status);
+      }
+    } catch (error) {
+      console.error('Error syncing station state:', error);
+    } finally {
+      await Promise.all([
+        fetchChargerDeviceStatus(),
+        fetchPortConsumption(),
+        fetchActiveUserSessions()
+      ]);
+    }
+  }, [stationData?.station_id, fetchChargerDeviceStatus, fetchPortConsumption, fetchActiveUserSessions, handleSessionTimeout]);
+
   // Function to start intervals
   const startIntervals = useCallback(() => {
     // Status update interval (every 5 seconds)
@@ -254,9 +275,7 @@ function StationPage({ station, navigateTo }) {
       stopIntervals();
       
       // Initial data fetch
-      fetchChargerDeviceStatus();
-      fetchPortConsumption();
-      fetchActiveUserSessions();
+      syncStationState();
       
       // Start intervals
       startIntervals();
@@ -270,7 +289,7 @@ function StationPage({ station, navigateTo }) {
         }
       };
     }
-  }, [stationData?.station_id, fetchChargerDeviceStatus, fetchPortConsumption, fetchActiveUserSessions, startIntervals, stopIntervals]);
+  }, [stationData?.station_id, syncStationState, startIntervals, stopIntervals]);
 
   // Handle page visibility changes
   useEffect(() => {
@@ -284,9 +303,7 @@ function StationPage({ station, navigateTo }) {
         isPageVisibleRef.current = true;
         
         // Immediately fetch fresh data
-        fetchChargerDeviceStatus();
-        fetchPortConsumption();
-        fetchActiveUserSessions();
+        syncStationState();
         
         // Restart intervals
         startIntervals();
@@ -299,8 +316,48 @@ function StationPage({ station, navigateTo }) {
     // Cleanup
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (realtimeSyncTimeoutRef.current) {
+        clearTimeout(realtimeSyncTimeoutRef.current);
+        realtimeSyncTimeoutRef.current = null;
+      }
     };
-  }, [fetchChargerDeviceStatus, fetchPortConsumption, fetchActiveUserSessions, startIntervals, stopIntervals]);
+  }, [syncStationState, startIntervals, stopIntervals]);
+
+  useEffect(() => {
+    if (!stationData?.station_id) return;
+
+    const channelName = `station-sync-${stationData.station_id}`;
+    const channel = supabase.channel(channelName);
+
+    const scheduleRealtimeSync = () => {
+      if (realtimeSyncTimeoutRef.current) return;
+      realtimeSyncTimeoutRef.current = setTimeout(() => {
+        realtimeSyncTimeoutRef.current = null;
+      }, 1000);
+      syncStationState();
+    };
+
+    channel
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'charging_port', filter: `station_id=eq.${stationData.station_id}` },
+        scheduleRealtimeSync
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'charging_session', filter: `station_id=eq.${stationData.station_id}` },
+        scheduleRealtimeSync
+      )
+      .subscribe();
+
+    return () => {
+      if (realtimeSyncTimeoutRef.current) {
+        clearTimeout(realtimeSyncTimeoutRef.current);
+        realtimeSyncTimeoutRef.current = null;
+      }
+      supabase.removeChannel(channel);
+    };
+  }, [stationData?.station_id, syncStationState]);
 
   const handleControlCommand = async (portNumber, command) => {
     if (!user || !stationData || !session?.access_token) return;
@@ -344,13 +401,7 @@ function StationPage({ station, navigateTo }) {
       if (response.ok) {
         const result = await response.json();
         console.log(`Control command ${command} sent successfully for port ${portNumber}:`, result);
-        
-        // Refresh data after successful command
-        setTimeout(() => {
-          fetchChargerDeviceStatus();
-          fetchPortConsumption();
-          fetchActiveUserSessions();
-        }, 1000);
+        await syncStationState();
       } else {
         const errorData = await response.json();
         console.error(`Failed to send control command:`, errorData);
@@ -626,9 +677,7 @@ function StationPage({ station, navigateTo }) {
                   <h2 className="text-xl font-bold" style={{ color: '#000b3d' }}>Control Charger Ports</h2>
                   <button
                     onClick={() => {
-                      fetchChargerDeviceStatus();
-                      fetchActiveUserSessions();
-                      fetchPortConsumption();
+                      syncStationState();
                     }}
                     className="font-bold py-2 px-4 rounded-xl text-white transition-all duration-300 hover:scale-105"
                     style={{

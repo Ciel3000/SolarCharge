@@ -34,6 +34,7 @@ async function acquireSessionLock(sessionKey, timeoutMs = 5000) {
 
 // --- Constants ---
 const INACTIVITY_TIMEOUT_SECONDS = 300; // 5 minutes for inactivity timeout
+const DEVICE_STATUS_STALE_THRESHOLD_SECONDS = 45; // when device stops reporting
 const NOMINAL_CHARGING_VOLTAGE_DC = 12; // Volts DC. Adjust this based on your battery system.
 const MAX_REASONABLE_CONSUMPTION = 10000; // 10kW in watts, for consumption validation
 
@@ -323,6 +324,87 @@ async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortI
         console.error(`Error during inactivity turn-off for ${sessionKey}:`, error);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.BACKEND, `Error during inactivity turn-off for ${sessionKey}: ${error.message}`);
     }
+}
+
+async function finalizeSessionFromDeviceEvent({
+    deviceId,
+    portNumberInDevice,
+    actualPortId,
+    endReason = 'device_event',
+    source = LOG_SOURCES.MQTT
+}) {
+    if (!deviceId || !portNumberInDevice || !actualPortId) {
+        return false;
+    }
+
+    const sessionKey = `${deviceId}_${portNumberInDevice}`;
+    let sessionRow;
+    let sessionId = activeChargerSessions[sessionKey];
+
+    if (sessionId) {
+        const { rows } = await pool.query(
+            "SELECT session_id, user_id, energy_consumed_kwh, energy_consumed_mah FROM charging_session WHERE session_id = $1 AND session_status = $2",
+            [sessionId, SESSION_STATUS.ACTIVE]
+        );
+        if (rows.length > 0) {
+            sessionRow = rows[0];
+        } else {
+            sessionId = null;
+        }
+    }
+
+    if (!sessionId) {
+        const result = await pool.query(
+            "SELECT session_id, user_id, energy_consumed_kwh, energy_consumed_mah FROM charging_session WHERE port_id = $1 AND session_status = $2 ORDER BY start_time DESC LIMIT 1",
+            [actualPortId, SESSION_STATUS.ACTIVE]
+        );
+
+        if (result.rows.length === 0) {
+            return false;
+        }
+
+        sessionRow = result.rows[0];
+        sessionId = sessionRow.session_id;
+    }
+
+    const energyConsumed = parseFloat(sessionRow.energy_consumed_kwh) || 0;
+    const mAhConsumed = parseFloat(sessionRow.energy_consumed_mah) || 0;
+    const sessionCost = await calculateSessionCost(sessionId, energyConsumed);
+
+    const updateResult = await pool.query(
+        "UPDATE charging_session SET end_time = NOW(), session_status = $1, last_status_update = NOW(), cost = $2 WHERE session_id = $3 AND session_status = $4",
+        [SESSION_STATUS.COMPLETED, sessionCost, sessionId, SESSION_STATUS.ACTIVE]
+    );
+
+    if (updateResult.rowCount === 0) {
+        return false;
+    }
+
+    if (sessionRow.user_id) {
+        await pool.query(
+            "UPDATE user_subscription SET current_daily_mah_consumed = COALESCE(current_daily_mah_consumed, 0) + $1 WHERE user_id = $2 AND is_active = true",
+            [mAhConsumed, sessionRow.user_id]
+        );
+    }
+
+    delete activeChargerSessions[sessionKey];
+    if (activePortTimers[sessionKey]) {
+        clearTimeout(activePortTimers[sessionKey].timerId);
+        delete activePortTimers[sessionKey];
+    }
+
+    await pool.query(
+        "UPDATE charging_port SET current_status = $1, is_occupied = false, last_status_update = NOW() WHERE port_id = $2",
+        [PORT_STATUS.AVAILABLE, actualPortId]
+    );
+
+    logSystemEvent(
+        LOG_TYPES.INFO,
+        source,
+        `Auto-completed session ${sessionId} for ${sessionKey}. Reason: ${endReason}`
+    );
+
+    return true;
 }
 
 
@@ -691,6 +773,85 @@ app.get('/api/devices/consumption', async (req, res) => {
         console.error('Error fetching device consumption:', error);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching all device consumption: ${error.message}`);
         res.status(500).json({ error: 'Failed to fetch device consumption' });
+    }
+});
+
+app.get('/api/stations/:stationId/sync', async (req, res) => {
+    const { stationId } = req.params;
+    try {
+        await reconcileStationState(stationId);
+
+        const statusResult = await pool.query(`
+            SELECT
+                cp.device_mqtt_id as device_id,
+                cp.port_id,
+                COALESCE(cds.status_message, 'online') as status_message,
+                COALESCE(cds.charger_state, 'OFF') as charger_state,
+                COALESCE(cds.last_update, NOW()) as last_update,
+                cp.port_number_in_device,
+                cs.total_mah_consumed,
+                cs.energy_consumed_kwh,
+                cs.session_id
+            FROM charging_port cp
+            LEFT JOIN current_device_status cds ON cp.port_id = cds.port_id
+            LEFT JOIN charging_session cs ON cp.port_id = cs.port_id AND cs.session_status = $2
+            WHERE cp.station_id = $1
+            ORDER BY cp.device_mqtt_id, cp.port_number_in_device
+        `, [stationId, SESSION_STATUS.ACTIVE]);
+
+        const consumptionResult = await pool.query(`
+            SELECT
+                cp.device_mqtt_id as device_id,
+                cp.port_number_in_device as port_number,
+                COALESCE(cs.total_mah_consumed, 0) as total_mah_consumed,
+                COALESCE(cs.energy_consumed_kwh, 0) as energy_consumed_kwh,
+                COALESCE(cs.last_status_update, NOW()) as timestamp,
+                (SELECT AVG(sub.consumption_watts) 
+                 FROM (
+                     SELECT consumption_watts
+                     FROM consumption_data cd 
+                     WHERE cd.session_id = cs.session_id 
+                     AND cd.timestamp > NOW() - INTERVAL '1 minute'
+                     ORDER BY cd.timestamp DESC 
+                     LIMIT 6
+                 ) sub) as recent_consumption_watts
+            FROM charging_port cp
+            LEFT JOIN charging_session cs ON cp.port_id = cs.port_id AND cs.session_status = $2
+            WHERE cp.station_id = $1
+            ORDER BY cp.device_mqtt_id, cp.port_number_in_device
+        `, [stationId, SESSION_STATUS.ACTIVE]);
+
+        const consumptionData = consumptionResult.rows.map(row => {
+            const totalMah = Number(row.total_mah_consumed) || 0;
+            const recentWatts = Number(row.recent_consumption_watts) || 0;
+            const currentConsumption = recentWatts > 0 ? (recentWatts / NOMINAL_CHARGING_VOLTAGE_DC) * 1000 : 0;
+
+            return {
+                device_id: row.device_id,
+                port_number: row.port_number,
+                total_mah: totalMah,
+                current_consumption: currentConsumption,
+                energy_consumed_kwh: Number(row.energy_consumed_kwh) || 0,
+                timestamp: row.timestamp
+            };
+        });
+
+        const activeSessionsResult = await pool.query(
+            `SELECT session_id, user_id, port_id, station_id, start_time, energy_consumed_kwh, energy_consumed_mah
+             FROM charging_session
+             WHERE station_id = $1 AND session_status = $2`,
+            [stationId, SESSION_STATUS.ACTIVE]
+        );
+
+        res.json({
+            status: statusResult.rows,
+            consumption: consumptionData,
+            activeSessions: activeSessionsResult.rows
+        });
+    } catch (error) {
+        console.error(`Error syncing station ${stationId}:`, error);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error syncing station ${stationId}: ${error.message}`);
+        res.status(500).json({ error: 'Failed to sync station state' });
     }
 });
 
@@ -2931,7 +3092,7 @@ async function requireAdmin(req, res, next) {
 
 // Helper function to handle MQTT status messages and update DB
 async function handleMqttStatusMessage(payload, deviceId, actualPortId, isPremiumPort) {
-    const { status, charger_state, timestamp } = payload;
+    const { status, charger_state, timestamp, port_number, event_type, reason } = payload;
     const currentTimestamp = new Date(timestamp);
 
     let mapped_current_status;
@@ -2983,6 +3144,68 @@ async function handleMqttStatusMessage(payload, deviceId, actualPortId, isPremiu
     );
     console.log(`MQTT: Updated status for ${deviceId} Port ${payload.port_number}: ${mapped_current_status}, Charger: ${charger_state}`);
     logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.MQTT, `Status update for ${deviceId} Port ${payload.port_number}: ${mapped_current_status}, Charger: ${charger_state}`);
+
+    if (Number.isInteger(port_number) && charger_state === CHARGER_STATES.OFF) {
+        const endReason = reason || status || 'device_reported_off';
+        const eventSource = event_type ? `${LOG_SOURCES.MQTT}:${event_type}` : LOG_SOURCES.MQTT;
+        await finalizeSessionFromDeviceEvent({
+            deviceId,
+            portNumberInDevice: port_number,
+            actualPortId,
+            endReason,
+            source: eventSource
+        });
+    }
+}
+
+async function reconcileStationState(stationId) {
+    if (!stationId) return;
+
+    const { rows: ports } = await pool.query(
+        `SELECT 
+            cp.port_id,
+            cp.device_mqtt_id,
+            cp.port_number_in_device,
+            cds.charger_state,
+            cds.last_update AS status_last_update
+        FROM charging_port cp
+        LEFT JOIN current_device_status cds ON cp.port_id = cds.port_id
+        WHERE cp.station_id = $1`,
+        [stationId]
+    );
+
+    for (const port of ports) {
+        if (!port.port_number_in_device || !port.device_mqtt_id) continue;
+
+        const activeSessionResult = await pool.query(
+            "SELECT session_id FROM charging_session WHERE port_id = $1 AND session_status = $2",
+            [port.port_id, SESSION_STATUS.ACTIVE]
+        );
+
+        if (activeSessionResult.rows.length === 0) {
+            continue;
+        }
+
+        const lastUpdate = port.status_last_update ? new Date(port.status_last_update) : null;
+        const secondsSinceUpdate = lastUpdate ? (Date.now() - lastUpdate.getTime()) / 1000 : Number.POSITIVE_INFINITY;
+        const chargerIsOff = !port.charger_state || port.charger_state === CHARGER_STATES.OFF;
+        const isStale = secondsSinceUpdate > DEVICE_STATUS_STALE_THRESHOLD_SECONDS;
+
+        if (chargerIsOff || isStale) {
+            try {
+                await finalizeSessionFromDeviceEvent({
+                    deviceId: port.device_mqtt_id,
+                    portNumberInDevice: port.port_number_in_device,
+                    actualPortId: port.port_id,
+                    endReason: chargerIsOff ? 'device_reported_off' : 'stale_status_sync',
+                    source: isStale ? 'sync_reconciliation' : LOG_SOURCES.MQTT
+                });
+            } catch (error) {
+                console.error(`Sync: Failed to finalize session for ${port.device_mqtt_id}_${port.port_number_in_device}:`, error);
+                logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.BACKEND, `Sync reconcile failed for port ${port.port_id}: ${error.message}`);
+            }
+        }
+    }
 }
 
 // Helper function to validate consumption readings
