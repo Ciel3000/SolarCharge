@@ -3178,7 +3178,7 @@ async function reconcileStationState(stationId) {
         if (!port.port_number_in_device || !port.device_mqtt_id) continue;
 
         const activeSessionResult = await pool.query(
-            "SELECT session_id FROM charging_session WHERE port_id = $1 AND session_status = $2",
+            "SELECT session_id, last_status_update FROM charging_session WHERE port_id = $1 AND session_status = $2",
             [port.port_id, SESSION_STATUS.ACTIVE]
         );
 
@@ -3188,17 +3188,19 @@ async function reconcileStationState(stationId) {
 
         const lastUpdate = port.status_last_update ? new Date(port.status_last_update) : null;
         const secondsSinceUpdate = lastUpdate ? (Date.now() - lastUpdate.getTime()) / 1000 : Number.POSITIVE_INFINITY;
-        const chargerIsOff = !port.charger_state || port.charger_state === CHARGER_STATES.OFF;
+        const sessionLastUpdate = activeSessionResult.rows[0].last_status_update ? new Date(activeSessionResult.rows[0].last_status_update) : null;
+        const secondsSinceSessionUpdate = sessionLastUpdate ? (Date.now() - sessionLastUpdate.getTime()) / 1000 : Number.POSITIVE_INFINITY;
         const isStale = secondsSinceUpdate > DEVICE_STATUS_STALE_THRESHOLD_SECONDS;
+        const sessionInactiveLongEnough = secondsSinceSessionUpdate > DEVICE_STATUS_STALE_THRESHOLD_SECONDS;
 
-        if (chargerIsOff || isStale) {
+        if (isStale && sessionInactiveLongEnough) {
             try {
                 await finalizeSessionFromDeviceEvent({
                     deviceId: port.device_mqtt_id,
                     portNumberInDevice: port.port_number_in_device,
                     actualPortId: port.port_id,
-                    endReason: chargerIsOff ? 'device_reported_off' : 'stale_status_sync',
-                    source: isStale ? 'sync_reconciliation' : LOG_SOURCES.MQTT
+                    endReason: 'stale_status_sync',
+                    source: 'sync_reconciliation'
                 });
             } catch (error) {
                 console.error(`Sync: Failed to finalize session for ${port.device_mqtt_id}_${port.port_number_in_device}:`, error);
