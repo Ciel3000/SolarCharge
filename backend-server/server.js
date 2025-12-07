@@ -498,21 +498,37 @@ mqttClient.on('message', async (topic, message) => {
 
         // --- Handle charger/usage topic (for consumption data and session management) ---
         if (topic.startsWith(MQTT_TOPICS.USAGE)) {
-            const { consumption, timestamp, charger_state } = payload;
-            const currentTimestamp = new Date(timestamp);
+            const serverTimestamp = new Date();
+            const rawConsumption = Number(payload.consumption);
+            const consumptionAmps = Number.isFinite(rawConsumption) ? rawConsumption : 0;
+            const deviceTimestampMs = Number(payload.timestamp);
+            const hasDeviceTimestamp = Number.isFinite(deviceTimestampMs);
+            const charger_state = payload.charger_state;
 
-            console.log(`MQTT: Processing usage message for ${sessionKey}. Charger state: ${charger_state}, Consumption: ${consumption}W, Session ID: ${currentSessionId}`);
+            const consumptionWatts = consumptionAmps * NOMINAL_CHARGING_VOLTAGE_DC;
+            const validatedConsumption = validateConsumption(consumptionWatts);
+
+            console.log(
+                `MQTT: Processing usage message for ${sessionKey}. Charger state: ${charger_state}, ` +
+                `Consumption: ${consumptionAmps.toFixed(3)}A (~${validatedConsumption.toFixed(2)}W), Session ID: ${currentSessionId}`
+            );
+            console.log(
+                `MQTT: Normalized usage timestamp using server time ${serverTimestamp.toISOString()} ` +
+                `(device timestamp: ${hasDeviceTimestamp ? deviceTimestampMs : 'n/a'})`
+            );
 
             // ALWAYS store consumption data regardless of session state
-            const validatedConsumption = validateConsumption(consumption);
             
             if (validatedConsumption > 0) {
                 // Store consumption data with port_number for easier querying
                 await pool.query(
-                    'INSERT INTO consumption_data (session_id, device_id, port_number, consumption_watts, timestamp, charger_state) VALUES ($1, $2, $3, $4, TO_TIMESTAMP($5 / 1000.0), $6)',
-                    [currentSessionId, deviceId, portNumberInDevice, validatedConsumption, timestamp, charger_state]
+                    'INSERT INTO consumption_data (session_id, device_id, port_number, consumption_watts, timestamp, charger_state) VALUES ($1, $2, $3, $4, $5, $6)',
+                    [currentSessionId, deviceId, portNumberInDevice, validatedConsumption, serverTimestamp, charger_state]
                 );
-                console.log(`MQTT: Stored consumption for ${deviceId} Port ${portNumberInDevice}: ${validatedConsumption}W`);
+                console.log(
+                    `MQTT: Stored consumption for ${deviceId} Port ${portNumberInDevice}: ` +
+                    `${validatedConsumption}W at ${serverTimestamp.toISOString()}`
+                );
 
                 // If we have an active session, update session totals
                 if (currentSessionId) {
@@ -527,7 +543,7 @@ mqttClient.on('message', async (topic, message) => {
 
                     await pool.query(
                         'UPDATE charging_session SET energy_consumed_kwh = COALESCE(energy_consumed_kwh, 0) + $1, energy_consumed_mah = COALESCE(energy_consumed_mah, 0) + $2, total_mah_consumed = COALESCE(total_mah_consumed, 0) + $3, last_status_update = $4 WHERE session_id = $5',
-                        [kwhIncrement, mAhIncrement, mAhIncrement, currentTimestamp, currentSessionId]
+                        [kwhIncrement, mAhIncrement, mAhIncrement, serverTimestamp, currentSessionId]
                     );
 
                     // Reset inactivity timer on new consumption data
@@ -555,8 +571,8 @@ mqttClient.on('message', async (topic, message) => {
                     console.log(`MQTT: Consumption stored for ${deviceId} Port ${portNumberInDevice} but no active session. Data preserved for later linking.`);
                 }
             } else {
-                console.warn(`MQTT: Ignoring invalid consumption value (${consumption}W) for ${deviceId} Port ${portNumberInDevice}`);
-                logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.MQTT, `Invalid consumption value (${consumption}W) for ${sessionKey}`);
+                console.warn(`MQTT: Ignoring invalid consumption value (${consumptionAmps}A) for ${deviceId} Port ${portNumberInDevice}`);
+                logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.MQTT, `Invalid consumption value (${consumptionAmps}A) for ${sessionKey}`);
             }
         }
 
