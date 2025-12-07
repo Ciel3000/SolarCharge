@@ -381,15 +381,22 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
     if (subscription && session && userDevices.length > 0) {
       const updateBatteryLevel = async () => {
         const chargingInfo = await getChargingStatus();
-        setUserDevices(prevDevices => 
-          prevDevices.map(device => ({
-            ...device,
-            isCharging: chargingInfo?.charging || false,
-            batteryLevel: chargingInfo?.batteryLevel
-          }))
-        );
+      let updatedDevicesSnapshot = [];
+      setUserDevices(prevDevices => {
+        updatedDevicesSnapshot = prevDevices.map(device => ({
+          ...device,
+          isCharging: chargingInfo?.charging || false,
+          batteryLevel: chargingInfo?.batteryLevel
+        }));
+        return updatedDevicesSnapshot;
+      });
+
+      if (updatedDevicesSnapshot.length > 0) {
+        saveDeviceToDatabase(updatedDevicesSnapshot[0]);
+      }
       };
 
+    updateBatteryLevel(); // Push immediate telemetry update
       // Update battery level every 30 seconds
       const batteryInterval = setInterval(updateBatteryLevel, 30000);
       

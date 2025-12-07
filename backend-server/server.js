@@ -13,6 +13,8 @@ const PORT = process.env.PORT || 3001;
 const activeChargerSessions = {};
 // activePortTimers: Maps `${deviceId}_${portNumberInDevice}` -> { timerId: setTimeout_ID, lastConsumptionTime: Date.now() }
 const activePortTimers = {};
+// fullChargeNotificationState: Maps session_id -> { userId, portId, portNumber, fullSentAt, disconnectSent }
+const fullChargeNotificationState = new Map();
 
 // --- Session locking mechanism to prevent race conditions ---
 const sessionLocks = new Map(); // Maps sessionKey -> lock status
@@ -35,6 +37,7 @@ async function acquireSessionLock(sessionKey, timeoutMs = 5000) {
 // --- Constants ---
 const INACTIVITY_TIMEOUT_SECONDS = 300; // 5 minutes for inactivity timeout
 const DEVICE_STATUS_STALE_THRESHOLD_SECONDS = 45; // when device stops reporting
+const USER_DEVICE_ONLINE_THRESHOLD_SECONDS = 120; // consider mobile device online if updated within last 2 minutes
 const NOMINAL_CHARGING_VOLTAGE_DC = 12; // Volts DC. Adjust this based on your battery system.
 const MAX_REASONABLE_CONSUMPTION = 10000; // 10kW in watts, for consumption validation
 
@@ -232,6 +235,210 @@ async function calculateSessionCost(sessionId, energyKWH) {
     return 0; // Default to 0 if calculation fails
 }
 
+async function createUserNotification({ userId, type = 'info', content, context = null }) {
+    if (!userId || !content) {
+        return;
+    }
+
+    const allowedTypes = ['info', 'success', 'warning', 'error'];
+    const normalizedType = allowedTypes.includes(type) ? type : 'info';
+
+    try {
+        await pool.query(
+            `INSERT INTO notification (user_id, notification_type, notification_context, notification_content)
+             VALUES ($1, $2::notification_type, $3, $4)`,
+            [userId, normalizedType, context || null, content]
+        );
+        logSystemEvent(
+            LOG_TYPES.INFO,
+            LOG_SOURCES.BACKEND,
+            `Notification (${normalizedType}) queued for user ${userId}: ${content.substring(0, 120)}`,
+            userId
+        );
+    } catch (error) {
+        console.error('Notification insert error:', error);
+        logSystemEvent(
+            LOG_TYPES.ERROR,
+            LOG_SOURCES.BACKEND,
+            `Failed to persist notification for user ${userId}: ${error.message}`,
+            userId
+        );
+    }
+}
+
+async function getActiveSessionForPort(portId) {
+    if (!portId) return null;
+    try {
+        const { rows } = await pool.query(
+            `SELECT session_id, user_id, station_id
+             FROM charging_session
+             WHERE port_id = $1 AND session_status = $2
+             ORDER BY start_time DESC
+             LIMIT 1`,
+            [portId, SESSION_STATUS.ACTIVE]
+        );
+        return rows[0] || null;
+    } catch (error) {
+        console.error('Failed to fetch active session for port:', error);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.BACKEND, `Fetch active session failed for port ${portId}: ${error.message}`);
+        return null;
+    }
+}
+
+async function getLatestUserDeviceTelemetry(userId) {
+    if (!userId) return null;
+    try {
+        const { rows } = await pool.query(
+            `SELECT device_id, device_name, device_model, current_battery_level, is_charging, last_updated
+             FROM user_devices
+             WHERE user_id = $1
+             ORDER BY last_updated DESC
+             LIMIT 1`,
+            [userId]
+        );
+        return rows[0] || null;
+    } catch (error) {
+        console.error('Failed to fetch user device telemetry:', error);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.BACKEND, `Fetch device telemetry failed for ${userId}: ${error.message}`, userId);
+        return null;
+    }
+}
+
+function deviceTelemetryIsFresh(record) {
+    if (!record?.last_updated) return false;
+    const lastUpdated = new Date(record.last_updated);
+    if (Number.isNaN(lastUpdated.getTime())) return false;
+    const secondsSince = (Date.now() - lastUpdated.getTime()) / 1000;
+    return secondsSince <= USER_DEVICE_ONLINE_THRESHOLD_SECONDS;
+}
+
+function formatSecondsAgo(date) {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+        return 'unknown';
+    }
+    const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+    return `${Math.floor(seconds / 3600)}h`;
+}
+
+function buildDeviceNotificationContext({ telemetry, fallbackUsed, extraParts = [] }) {
+    const contextParts = [...extraParts];
+    if (telemetry?.device_name) {
+        const descriptor = telemetry.device_model ? `${telemetry.device_name} (${telemetry.device_model})` : telemetry.device_name;
+        contextParts.push(`Device: ${descriptor}`);
+    }
+    if (telemetry?.current_battery_level !== null && telemetry?.current_battery_level !== undefined) {
+        contextParts.push(`Reported level: ${Math.round(telemetry.current_battery_level)}%`);
+    }
+    if (telemetry?.last_updated) {
+        contextParts.push(`Telemetry updated ${formatSecondsAgo(new Date(telemetry.last_updated))} ago`);
+    }
+    if (fallbackUsed) {
+        contextParts.push('Device telemetry unavailable; using station sensors');
+    }
+    return contextParts.length > 0 ? contextParts.join(' • ') : null;
+}
+
+async function handleFullChargeReadyEvent({ deviceId, actualPortId, portNumber, reason }) {
+    try {
+        const session = await getActiveSessionForPort(actualPortId);
+        if (!session) {
+            logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.MQTT, `Full-charge ready event without active session for port ${actualPortId}`);
+            return;
+        }
+
+        const sessionId = session.session_id;
+        const currentState = fullChargeNotificationState.get(sessionId);
+        if (currentState?.fullSentAt) {
+            return;
+        }
+
+        const telemetry = await getLatestUserDeviceTelemetry(session.user_id);
+        const telemetryFresh = deviceTelemetryIsFresh(telemetry);
+        const meetsStrictConditions = telemetryFresh && telemetry?.is_charging;
+        const resolvedPortNumber = portNumber ?? 'unknown';
+
+        const content = meetsStrictConditions
+            ? `Your ${telemetry?.device_name || 'device'} on Port ${resolvedPortNumber} is fully charged. We'll disconnect in about a minute.`
+            : `Port ${resolvedPortNumber} sensors detected your charging session is complete. We'll disconnect in about a minute.`;
+
+        const context = buildDeviceNotificationContext({
+            telemetry,
+            fallbackUsed: !meetsStrictConditions,
+            extraParts: reason ? [`Reason: ${reason}`] : []
+        });
+
+        await createUserNotification({
+            userId: session.user_id,
+            type: 'success',
+            content,
+            context
+        });
+
+        fullChargeNotificationState.set(sessionId, {
+            userId: session.user_id,
+            portId: actualPortId,
+            portNumber,
+            deviceId,
+            fullSentAt: new Date(),
+            fallbackUsed: !meetsStrictConditions,
+            disconnectSent: false
+        });
+    } catch (error) {
+        console.error('handleFullChargeReadyEvent error:', error);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.MQTT, `Failed to process full-charge ready event: ${error.message}`);
+    }
+}
+
+async function handleFullChargeDisconnectEvent({ actualPortId, portNumber, reason }) {
+    try {
+        const session = await getActiveSessionForPort(actualPortId);
+        if (!session) {
+            logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.MQTT, `Full-charge disconnect event without active session for port ${actualPortId}`);
+            return;
+        }
+
+        const sessionId = session.session_id;
+        const currentState = fullChargeNotificationState.get(sessionId) || {};
+
+        if (currentState.disconnectSent) {
+            return;
+        }
+
+        const resolvedPortNumber = portNumber ?? 'unknown';
+        const elapsedSeconds = currentState.fullSentAt
+            ? Math.max(0, Math.round((Date.now() - currentState.fullSentAt.getTime()) / 1000))
+            : null;
+
+        const contextParts = [];
+        if (elapsedSeconds !== null) {
+            contextParts.push(`Auto-disconnected ${elapsedSeconds}s after full-charge alert`);
+        }
+        if (reason) {
+            contextParts.push(`Reason: ${reason}`);
+        }
+        if (!currentState.fullSentAt) {
+            contextParts.push('Sensor-based auto-disconnect');
+        }
+
+        await createUserNotification({
+            userId: session.user_id,
+            type: 'info',
+            content: `Charging session on Port ${resolvedPortNumber} has been disconnected automatically.`,
+            context: contextParts.length ? contextParts.join(' • ') : null
+        });
+
+        fullChargeNotificationState.set(sessionId, {
+            ...currentState,
+            disconnectSent: true
+        });
+    } catch (error) {
+        console.error('handleFullChargeDisconnectEvent error:', error);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.MQTT, `Failed to process full-charge disconnect event: ${error.message}`);
+    }
+}
+
 // --- Helper function to handle automatic port turn-off due to inactivity ---
 async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortId, sessionId) {
     const sessionKey = `${deviceId}_${internalPortNumber}`;
@@ -302,6 +509,7 @@ async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortI
                 delete activeChargerSessions[sessionKey];
                 delete activePortTimers[sessionKey];
                 console.log(`Inactivity: Removed session ${sessionId} from tracking maps for ${sessionKey}`);
+                fullChargeNotificationState.delete(sessionId);
             } else {
                 // If still active but timer expired, reset the timer
                 console.log(`Session ${sessionId} for ${sessionKey} is still active. Resetting inactivity timer.`);
@@ -392,6 +600,7 @@ async function finalizeSessionFromDeviceEvent({
         clearTimeout(activePortTimers[sessionKey].timerId);
         delete activePortTimers[sessionKey];
     }
+    fullChargeNotificationState.delete(sessionId);
 
     await pool.query(
         "UPDATE charging_port SET current_status = $1, is_occupied = false, last_status_update = NOW() WHERE port_id = $2",
@@ -3160,6 +3369,21 @@ async function handleMqttStatusMessage(payload, deviceId, actualPortId, isPremiu
     );
     console.log(`MQTT: Updated status for ${deviceId} Port ${payload.port_number}: ${mapped_current_status}, Charger: ${charger_state}`);
     logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.MQTT, `Status update for ${deviceId} Port ${payload.port_number}: ${mapped_current_status}, Charger: ${charger_state}`);
+
+    if (event_type === 'PORT_FULL_READY') {
+        await handleFullChargeReadyEvent({
+            deviceId,
+            actualPortId,
+            portNumber: port_number,
+            reason
+        });
+    } else if (event_type === 'PORT_AUTO_OFF_FULL' || (reason === 'FULL_CHARGE' && charger_state === CHARGER_STATES.OFF)) {
+        await handleFullChargeDisconnectEvent({
+            actualPortId,
+            portNumber: port_number,
+            reason
+        });
+    }
 
     if (Number.isInteger(port_number) && charger_state === CHARGER_STATES.OFF) {
         const endReason = reason || status || 'device_reported_off';
