@@ -5,7 +5,6 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { PayPalScriptProvider, PayPalButtons } from '@paypal/react-paypal-js';
 import { useAuth } from '../contexts/AuthContext';
 import { filterActivePlans } from '../utils/planUtils';
-import { SkeletonText, SkeletonButton } from '../components/SkeletonLoaders';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://solar-charger-backend.onrender.com';
 
@@ -105,18 +104,9 @@ function SubscriptionPage() {
 
     // Fetch all data concurrently on component mount/session change
     useEffect(() => {
-        const fetchAll = async () => {
-            try {
-                await Promise.all([
-                    fetchAvailablePlans(),
-                    fetchSubscriptionHistory()
-                ]);
-            } finally {
-                setLoading(false);
-            }
-        };
-        
-        fetchAll();
+        fetchAvailablePlans();
+        fetchSubscriptionHistory();
+        setLoading(false);
     }, [fetchAvailablePlans, fetchSubscriptionHistory]);
 
     // Handle plan selection for payment
@@ -236,32 +226,24 @@ function SubscriptionPage() {
         }
     };
 
-    // Show loading state with skeleton
+    // Show loading state
     if (loading) {
         return (
-            <div className="min-h-screen flex flex-col items-center p-4 text-gray-800 relative overflow-hidden page-content" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+            <div className="min-h-screen flex items-center justify-center relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
                 <div className="absolute inset-0 overflow-hidden pointer-events-none">
                     <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-float-slow" style={{ background: 'radial-gradient(circle, rgba(249, 210, 23, 0.25) 0%, rgba(249, 210, 23, 0.1) 50%, transparent 100%)' }}></div>
                     <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-float-slow-delay" style={{ background: 'radial-gradient(circle, rgba(56, 182, 255, 0.25) 0%, rgba(56, 182, 255, 0.1) 50%, transparent 100%)' }}></div>
                 </div>
-                <div className="w-full pt-24 pb-8 max-w-4xl mx-auto relative z-10">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/30" style={{
-                            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.15) 100%)'
-                        }}>
-                            <SkeletonText width="50%" height="28px" />
-                            <SkeletonText width="80%" height="16px" />
-                            <SkeletonText width="60%" height="20px" />
-                            <div className="mt-6"><SkeletonButton /></div>
-                        </div>
-                        <div className="backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/30" style={{
-                            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.15) 100%)'
-                        }}>
-                            <SkeletonText width="50%" height="28px" />
-                            <SkeletonText width="80%" height="16px" />
-                            <SkeletonText width="60%" height="20px" />
-                            <div className="mt-6"><SkeletonButton /></div>
-                        </div>
+                <div className="relative z-10 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/30" style={{
+                    background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+                    boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+                }}>
+                    <div className="flex flex-col items-center">
+                        <div className="animate-spin rounded-full h-16 w-16 border-4 border-t-transparent mb-4" style={{
+                            borderColor: '#38b6ff',
+                            borderTopColor: 'transparent'
+                        }}></div>
+                        <p className="text-lg font-semibold" style={{ color: '#000b3d' }}>Loading subscription plans...</p>
                     </div>
                 </div>
             </div>
@@ -269,7 +251,7 @@ function SubscriptionPage() {
     }
 
     return (
-        <div className="min-h-screen flex flex-col items-center p-4 text-gray-800 relative overflow-hidden page-content" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+        <div className="min-h-screen flex flex-col items-center p-4 text-gray-800 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
             {/* Animated Background Orbs */}
             <div className="absolute inset-0 overflow-hidden pointer-events-none">
                 <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-float-slow" style={{ background: 'radial-gradient(circle, rgba(249, 210, 23, 0.25) 0%, rgba(249, 210, 23, 0.1) 50%, transparent 100%)' }}></div>

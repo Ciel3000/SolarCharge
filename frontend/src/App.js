@@ -1,7 +1,7 @@
 // frontend/src/App.js
 // This is the main application component, handling routing and global state.
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { NotificationProvider } from './contexts/NotificationContext';
@@ -45,7 +45,6 @@ function AppContent() {
   const [stationData, setStationData] = useState(null);
   const [globalMessage, setGlobalMessage] = useState('');
   const [loadingTimeout, setLoadingTimeout] = useState(false);
-  const navigationTimeoutRef = useRef(null);
 
   // Effect to handle loading timeout
   useEffect(() => {
@@ -60,50 +59,35 @@ function AppContent() {
     }
   }, [isLoading]);
 
-  // Effect to handle navigation based on auth state changes (with debounce to prevent flicker)
+  // Effect to handle navigation based on auth state changes
   useEffect(() => {
     if (isLoading || isRecovering) {
       // Still loading auth state or recovering, don't navigate yet
       return;
     }
 
-    // Clear any existing timeout to debounce navigation
-    if (navigationTimeoutRef.current) {
-      clearTimeout(navigationTimeoutRef.current);
-    }
+    const currentPath = location.pathname;
 
-    // Set a timeout to handle navigation with debounce (prevents rapid redirects causing flicker)
-    navigationTimeoutRef.current = setTimeout(() => {
-      const currentPath = location.pathname;
-
-      // Redirect logic for different scenarios
-      if (session) {
-        // User is logged in
-        if (isAdmin) {
-          // Admin user redirects
-          if (['/login', '/signup', '/landing', '/', '/home'].includes(currentPath)) {
-            navigate('/admin/dashboard', { replace: true });
-          }
-        } else {
-          // Regular user redirects  
-          if (['/login', '/signup', '/landing', '/'].includes(currentPath)) {
-            navigate('/home', { replace: true });
-          }
+    // Redirect logic for different scenarios
+    if (session) {
+      // User is logged in
+      if (isAdmin) {
+        // Admin user redirects
+        if (['/login', '/signup', '/landing', '/', '/home'].includes(currentPath)) {
+          navigate('/admin/dashboard', { replace: true });
         }
       } else {
-        // User is not logged in
-        if (currentPath === '/') {
-          navigate('/landing', { replace: true });
+        // Regular user redirects  
+        if (['/login', '/signup', '/landing', '/'].includes(currentPath)) {
+          navigate('/home', { replace: true });
         }
       }
-    }, 300); // 300ms debounce
-
-    // Cleanup on unmount or dependency change
-    return () => {
-      if (navigationTimeoutRef.current) {
-        clearTimeout(navigationTimeoutRef.current);
+    } else {
+      // User is not logged in
+      if (currentPath === '/') {
+        navigate('/landing', { replace: true });
       }
-    };
+    }
   }, [session, isAdmin, isLoading, isRecovering, location.pathname, navigate]);
 
   // Effect to fetch public station data
@@ -314,7 +298,7 @@ function AppContent() {
       )}
 
       {/* Add top padding to content if navigation is shown */}
-      <div className={`${showNavigation ? "pt-16" : ""} page-content`}>
+      <div className={showNavigation ? "pt-16" : ""}>
         <PageVisibilityDebug />
         <Routes>
           {/* Default routes: Redirects handled by useEffect above for '/' */}

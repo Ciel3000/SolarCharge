@@ -3,7 +3,6 @@ import { useLocation, useNavigate } from 'react-router-dom'; // Add React Router
 import { useAuth } from '../contexts/AuthContext';
 import { openGoogleMaps } from '../utils/mapUtils';
 import { filterActivePlans } from '../utils/planUtils';
-import { SkeletonStationCard } from '../components/SkeletonLoaders';
 
 
 function HomePage({ navigateTo, message, stations: propStations, loadingStations: propLoadingStations }) {
@@ -468,7 +467,7 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
   }
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4 text-gray-800 relative overflow-hidden page-content" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+    <div className="min-h-screen flex flex-col items-center justify-center p-4 text-gray-800 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
       {/* Animated Background Orbs with brand colors */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         {/* Sun-colored orb */}
@@ -772,13 +771,12 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
               <p className="text-lg sm:text-xl" style={{ color: '#000b3d', opacity: 0.7 }}>Locate and use our solar-powered charging stations across the city</p>
             </div>
             {loadingStations ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                <SkeletonStationCard />
-                <SkeletonStationCard />
-                <SkeletonStationCard />
-                <SkeletonStationCard />
-                <SkeletonStationCard />
-                <SkeletonStationCard />
+              <div className="col-span-full text-center py-12">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-t-transparent mx-auto mb-4" style={{
+                  borderColor: '#38b6ff',
+                  borderTopColor: 'transparent'
+                }}></div>
+                <p style={{ color: '#000b3d', opacity: 0.7 }}>Loading stations...</p>
               </div>
             ) : stations.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

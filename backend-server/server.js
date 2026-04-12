@@ -526,8 +526,8 @@ async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortI
                     "UPDATE charging_session SET end_time = NOW(), session_status = $1, last_status_update = NOW(), cost = $2 WHERE session_id = $3",
                     [SESSION_STATUS.COMPLETED, sessionCost, sessionId] // sessionId instead of session.session_id
                 )
-console.log(`Marked session ${sessionId} as '${SESSION_STATUS.COMPLETED}' due to inactivity. Final Cost: ₱${sessionCost.toFixed(2)}`);
-logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Session ${sessionId} auto-completed due to inactivity. Cost: ₱${sessionCost.toFixed(2)}`);
+                console.log(`Marked session ${sessionId} as '${SESSION_STATUS.COMPLETED}' due to inactivity. Final Cost: ₱${sessionCost.toFixed(2)}`);
+                logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Session ${sessionId} auto-completed due to inactivity. Cost: ₱${sessionCost.toFixed(2)}`);
 
                 // Update user's daily consumption
                 const userResult = await pool.query(
@@ -1412,8 +1412,8 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                     "UPDATE charging_session SET end_time = NOW(), session_status = $1, last_status_update = NOW(), cost = $2 WHERE session_id = $3 AND session_status = $4",
                     [SESSION_STATUS.COMPLETED, sessionCost, currentSessionId, SESSION_STATUS.ACTIVE]
                 );
-console.log(`API: Ended charging session ${currentSessionId} for port ${actualPortId}. Energy consumed: ${energyConsumed.toFixed(3)} kWh, ${mAhConsumed.toFixed(0)} mAh. Cost: ₱${sessionCost.toFixed(2)}`);
-logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Session ${currentSessionId} ended for ${sessionKey}. Cost: ₱${sessionCost.toFixed(2)}`);
+                console.log(`API: Ended charging session ${currentSessionId} for port ${actualPortId}. Energy consumed: ${energyConsumed.toFixed(3)} kWh, ${mAhConsumed.toFixed(0)} mAh. Cost: ₱${sessionCost.toFixed(2)}`);
+                logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Session ${currentSessionId} ended for ${sessionKey}. Cost: ₱${sessionCost.toFixed(2)}`);
                 
                 // Update user's daily consumption
                 await pool.query(
