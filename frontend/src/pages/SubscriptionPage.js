@@ -34,6 +34,16 @@ const EmptyState = ({ icon, title, message, children }) => (
 
 function SubscriptionPage() {
     const { session, subscription } = useAuth();
+    const navigate = useNavigate();
+    const [currentSubscription, setCurrentSubscription] = useState(null);
+    const [availablePlans, setAvailablePlans] = useState([]);
+    const [subscriptionHistory, setSubscriptionHistory] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [selectedPlanForPayment, setSelectedPlanForPayment] = useState(null);
+    const [showPayPal, setShowPayPal] = useState(false);
+    const [feedback, setFeedback] = useState('');
+    const [paypalLoading, setPaypalLoading] = useState(false);
+    const [activeTab, setActiveTab] = useState('current');
 
     // Sync local subscription state with auth context
     useEffect(() => {
@@ -100,6 +110,26 @@ function SubscriptionPage() {
         setShowPayPal(true);
         setFeedback('');
     };
+
+    // Fetch user subscription from backend
+    const fetchUserSubscription = useCallback(async () => {
+        if (!session?.access_token) return;
+        
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/user/subscription`, {
+                headers: {
+                    'Authorization': `Bearer ${session.access_token}`
+                }
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                setCurrentSubscription(data.subscription);
+            }
+        } catch (err) {
+            console.error('Failed to fetch subscription:', err);
+        }
+    }, [session]);
     
     // Handle subscription cancellation
     const handleCancelSubscription = async () => {
