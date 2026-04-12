@@ -84,4 +84,13 @@ jspm_packages/
 
 # Temporary files
 tmp/
-temp/ 
+temp/
+
+# Personal/working files
+plans/
+newAPIs/
+dump/
+.kilo/
+*.backup
+*_backup
+database_schema.sql 
