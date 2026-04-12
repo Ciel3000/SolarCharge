@@ -2800,6 +2800,77 @@ app.post('/api/subscription/cancel', supabaseAuthMiddleware, async (req, res) =>
     }
 });
 
+// Create subscription (called after PayPal payment succeeds)
+app.post('/api/subscription/create', supabaseAuthMiddleware, async (req, res) => {
+    const { user_id } = req.user;
+    const { plan_id } = req.body;
+
+    if (!plan_id) {
+        return res.status(400).json({ error: 'Plan ID is required' });
+    }
+
+    try {
+        // Get the plan details
+        const planResult = await pool.query(
+            'SELECT * FROM subscription_plans WHERE plan_id = $1',
+            [plan_id]
+        );
+
+        if (planResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Plan not found' });
+        }
+
+        const plan = planResult.rows[0];
+
+        // Calculate end date based on plan duration
+        const startDate = new Date();
+        const endDate = new Date(startDate);
+        
+        switch (plan.duration_type?.toLowerCase()) {
+            case 'daily':
+                endDate.setDate(endDate.getDate() + plan.duration_value);
+                break;
+            case 'weekly':
+                endDate.setDate(endDate.getDate() + (plan.duration_value * 7));
+                break;
+            case 'monthly':
+                endDate.setMonth(endDate.getMonth() + plan.duration_value);
+                break;
+            case 'quarterly':
+                endDate.setMonth(endDate.getMonth() + (plan.duration_value * 3));
+                break;
+            case 'yearly':
+                endDate.setFullYear(endDate.getFullYear() + plan.duration_value);
+                break;
+            default:
+                endDate.setMonth(endDate.getMonth() + 1);
+        }
+
+        // Deactivate any existing active subscriptions
+        await pool.query(
+            `UPDATE user_subscription SET is_active = false, end_date = NOW()
+             WHERE user_id = $1 AND is_active = true`,
+            [user_id]
+        );
+
+        // Create new subscription
+        await pool.query(
+            `INSERT INTO user_subscription (user_id, plan_id, start_date, end_date, is_active)
+             VALUES ($1, $2, $3, $4, true)`,
+            [user_id, plan_id, startDate, endDate]
+        );
+
+        // Log the event
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Subscription created for user ${user_id} with plan ${plan_id}`, user_id);
+
+        res.status(201).json({ message: 'Subscription created successfully' });
+    } catch (error) {
+        console.error('Error creating subscription:', error.message);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error creating subscription: ${error.message}`, user_id);
+        res.status(500).json({ error: 'Failed to create subscription' });
+    }
+});
+
 // Get current user's monthly usage statistics
 app.get('/api/user/usage', supabaseAuthMiddleware, async (req, res) => {
     try {

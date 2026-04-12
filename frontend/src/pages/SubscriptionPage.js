@@ -172,15 +172,29 @@ function SubscriptionPage() {
             const order = await actions.order.capture();
             console.log('PayPal order captured:', order);
             
-            // Here you would typically send the order details to your backend
-            // to create the subscription in your database
-            
+            // Send subscription to backend
+            const response = await fetch(`${BACKEND_URL}/api/subscription/create`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${session.access_token}`,
+                },
+                body: JSON.stringify({
+                    plan_id: selectedPlanForPayment.plan_id,
+                }),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.error || 'Failed to create subscription');
+            }
+
             setFeedback('Payment successful! Your subscription has been activated.');
             setShowPayPal(false);
             setSelectedPlanForPayment(null);
             
-            // Refresh the page or update the subscription state
-            window.location.reload();
+            // Refresh subscription data
+            fetchUserSubscription();
             
         } catch (error) {
             console.error('PayPal capture error:', error);
@@ -188,7 +202,7 @@ function SubscriptionPage() {
         } finally {
             setPaypalLoading(false);
         }
-    }, []);
+    }, [selectedPlanForPayment, session]);
 
     const onPayPalError = useCallback((err) => {
         console.error('PayPal error:', err);
