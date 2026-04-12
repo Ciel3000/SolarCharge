@@ -3661,7 +3661,7 @@ function setupStaleSessionChecker() {
                     charging_port cp ON cs.port_id = cp.port_id
                 WHERE 
                     cs.session_status = $1
-                    AND cs.last_status_update < NOW() - INTERVAL '$2 seconds'`,
+                    AND cs.last_status_update < NOW() - (INTERVAL '1 second' * $2)`,
                 [SESSION_STATUS.ACTIVE, INACTIVITY_TIMEOUT_SECONDS * 2]
             );
             
