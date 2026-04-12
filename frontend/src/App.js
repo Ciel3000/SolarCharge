@@ -181,12 +181,21 @@ function AppContent() {
   const handleSignOut = async () => {
     console.log('handleSignOut called!');
     setGlobalMessage('');
+    
+    // If no session, just clear local storage and redirect
+    if (!session) {
+      localStorage.clear();
+      sessionStorage.clear();
+      navigate('/landing');
+      return;
+    }
+    
     try {
       console.log('Calling signOut...');
       
       const signOutPromise = signOut();
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Sign out timeout')), 5000) // Increased timeout
+        setTimeout(() => reject(new Error('Sign out timeout')), 5000)
       );
       
       const { error } = await Promise.race([signOutPromise, timeoutPromise]);
@@ -201,8 +210,8 @@ function AppContent() {
     } catch (error) {
       console.error('Sign out error:', error);
       
-      if (error.message === 'Sign out timeout') {
-        console.log('Sign out timed out, forcing manual logout...');
+      if (error.message === 'Sign out timeout' || error.message.includes('Auth session missing')) {
+        console.log('Sign out failed or timed out, forcing manual logout...');
         localStorage.clear();
         sessionStorage.clear();
         window.location.href = '/landing';
