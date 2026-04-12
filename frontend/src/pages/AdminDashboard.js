@@ -333,21 +333,21 @@ function AdminDashboard({ navigateTo, handleSignOut }) {
                   border: '1px solid rgba(56, 182, 255, 0.3)'
                 }}>
                   <p className="text-xs mb-1" style={{ color: '#000b3d', opacity: 0.7 }}>Today</p>
-                  <p className="text-lg font-bold" style={{ color: '#38b6ff' }}>₱{parseFloat(stats.revenue.today).toFixed(2)}</p>
+                  <p className="text-lg font-bold" style={{ color: '#38b6ff' }}>${parseFloat(stats.revenue.today).toFixed(2)}</p>
                 </div>
                 <div className="p-3 rounded-xl backdrop-blur-md" style={{
                   background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.1) 100%)',
                   border: '1px solid rgba(249, 210, 23, 0.3)'
                 }}>
                   <p className="text-xs mb-1" style={{ color: '#000b3d', opacity: 0.7 }}>Week</p>
-                  <p className="text-lg font-bold" style={{ color: '#f9d217' }}>₱{parseFloat(stats.revenue.week).toFixed(2)}</p>
+                  <p className="text-lg font-bold" style={{ color: '#f9d217' }}>${parseFloat(stats.revenue.week).toFixed(2)}</p>
                 </div>
                 <div className="p-3 rounded-xl backdrop-blur-md" style={{
                   background: 'linear-gradient(135deg, rgba(0, 11, 61, 0.2) 0%, rgba(0, 11, 61, 0.1) 100%)',
                   border: '1px solid rgba(0, 11, 61, 0.3)'
                 }}>
                   <p className="text-xs mb-1" style={{ color: '#000b3d', opacity: 0.7 }}>Month</p>
-                  <p className="text-lg font-bold" style={{ color: '#000b3d' }}>₱{parseFloat(stats.revenue.month).toFixed(2)}</p>
+                  <p className="text-lg font-bold" style={{ color: '#000b3d' }}>${parseFloat(stats.revenue.month).toFixed(2)}</p>
                 </div>
               </div>
             </div>

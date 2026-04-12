@@ -1,7 +1,7 @@
 // frontend/src/pages/StationsPage.js
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { openGoogleMaps } from '../utils/mapUtils';
+import { openGoogleMaps, generateGoogleMapsUrl } from '../utils/mapUtils';
 
 function StationsPage({ navigateTo, stations: propStations, loadingStations: propLoadingStations }) {
   const { session, subscription } = useAuth();
@@ -51,7 +51,7 @@ function StationsPage({ navigateTo, stations: propStations, loadingStations: pro
     } else if (session && stationsInitialized) {
       setInternalLoadingStations(false);
     }
-  }, [session, stationsInitialized, internalStations.length, propStations, stations.length]);
+  }, [session, stationsInitialized, internalStations.length, propStations]);
 
   // Calculate distance between two coordinates using Haversine formula
   const calculateDistance = (lat1, lon1, lat2, lon2) => {

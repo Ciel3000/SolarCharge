@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import Navigation from '../components/Navigation';
+import { formatCurrency } from '../utils/currencyUtils';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://solar-charger-backend.onrender.com';
 
@@ -174,7 +175,7 @@ function AdminRevenue({ navigateTo, handleSignOut }) {
               }}>
                 <h2 className="text-xl font-bold mb-2" style={{ color: '#000b3d' }}>Total Revenue</h2>
                 <p className="text-3xl font-bold mt-2" style={{ color: '#10b981' }}>
-                  ₱{parseFloat(revenueData.total || 0).toFixed(2)}
+                  {formatCurrency(revenueData.total || 0)}
                 </p>
               </div>
               
@@ -184,7 +185,7 @@ function AdminRevenue({ navigateTo, handleSignOut }) {
               }}>
                 <h2 className="text-xl font-bold mb-2" style={{ color: '#000b3d' }}>Current View Total</h2>
                 <p className="text-3xl font-bold mt-2" style={{ color: '#38b6ff' }}>
-                  ₱{calculateCurrentTotal().toFixed(2)}
+                  {formatCurrency(calculateCurrentTotal())}
                 </p>
                 <p className="text-sm mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>
                   {activeTab === 'daily' ? 'Last 7 days' : activeTab === 'weekly' ? 'Last 4 weeks' : 'Last 6 months'}
@@ -197,7 +198,7 @@ function AdminRevenue({ navigateTo, handleSignOut }) {
               }}>
                 <h2 className="text-xl font-bold mb-2" style={{ color: '#000b3d' }}>Current View Average</h2>
                 <p className="text-3xl font-bold mt-2" style={{ color: '#9333ea' }}>
-                  ₱{calculateCurrentAverage().toFixed(2)}
+                  {formatCurrency(calculateCurrentAverage())}
                 </p>
                 <p className="text-sm mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>
                   Per {activeTab === 'daily' ? 'day' : activeTab === 'weekly' ? 'week' : 'month'}
@@ -273,7 +274,7 @@ function AdminRevenue({ navigateTo, handleSignOut }) {
                           }}
                         >
                           <td className="py-3 px-4" style={{ color: '#000b3d' }}>{formatDate(item.date)}</td>
-                          <td className="py-3 px-4" style={{ color: '#000b3d' }}>₱{parseFloat(item.amount || 0).toFixed(2)}</td>
+                          <td className="py-3 px-4" style={{ color: '#000b3d' }}>{formatCurrency(parseFloat(item.amount || 0))}</td>
                           <td className="py-3 px-4" style={{ color: '#000b3d' }}>{item.sessions}</td>
                         </tr>
                       ))}

@@ -37,7 +37,7 @@ import AdminQuotaPricing from './pages/AdminQuotaPricing';
 // ---
 // AppContent component to house routing logic and context consumers
 function AppContent() {
-  const { session, isAdmin, isLoading, signOut, error, clearError, recoverSession, isRecovering } = useAuth();
+  const { session, isAdmin, isLoading, signOut, subscription, error, clearError, recoverSession, isRecovering } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -181,21 +181,12 @@ function AppContent() {
   const handleSignOut = async () => {
     console.log('handleSignOut called!');
     setGlobalMessage('');
-    
-    // If no session, just clear local storage and redirect
-    if (!session) {
-      localStorage.clear();
-      sessionStorage.clear();
-      navigate('/landing');
-      return;
-    }
-    
     try {
       console.log('Calling signOut...');
       
       const signOutPromise = signOut();
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Sign out timeout')), 5000)
+        setTimeout(() => reject(new Error('Sign out timeout')), 5000) // Increased timeout
       );
       
       const { error } = await Promise.race([signOutPromise, timeoutPromise]);
@@ -210,8 +201,8 @@ function AppContent() {
     } catch (error) {
       console.error('Sign out error:', error);
       
-      if (error.message === 'Sign out timeout' || error.message.includes('Auth session missing')) {
-        console.log('Sign out failed or timed out, forcing manual logout...');
+      if (error.message === 'Sign out timeout') {
+        console.log('Sign out timed out, forcing manual logout...');
         localStorage.clear();
         sessionStorage.clear();
         window.location.href = '/landing';
@@ -224,12 +215,10 @@ function AppContent() {
 
   // Determine if Navigation component should be shown
   const showNavigation = session 
-    ? !['/login', '/signup', '/landing', '/forgot-password', '/reset-password'].includes(location.pathname)
-    : !['/forgot-password', '/reset-password'].includes(location.pathname);
+    ? !['/login', '/signup', '/landing'].includes(location.pathname)
+    : ![].includes(location.pathname);
   
-  // eslint-disable-next-line no-unused-vars
   const showAdminNavigation = showNavigation && isAdmin;
-  // eslint-disable-next-line no-unused-vars
   const showUserNavigation = showNavigation && !isAdmin;
 
   // Show error message if there's an auth error
@@ -391,6 +380,11 @@ function AppContent() {
           />
 
           <Route
+            path="/signup"
+            element={<SignUpPage navigateTo={navigateTo} />}
+          />
+
+          <Route
             path="/forgot-password"
             element={<ForgotPasswordPage navigateTo={navigateTo} />}
           />
@@ -398,11 +392,6 @@ function AppContent() {
           <Route
             path="/reset-password"
             element={<ResetPasswordPage navigateTo={navigateTo} />}
-          />
-
-          <Route
-            path="/signup"
-            element={<SignUpPage navigateTo={navigateTo} />}
           />
 
           {/* User Protected Routes */}

@@ -4,8 +4,10 @@ import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../supabaseClient';
 import Navigation from '../components/Navigation';
 
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+
 function AdminPlans({ navigateTo, handleSignOut }) {
-  const { isAdmin, isLoading } = useAuth();
+  const { session, user, isAdmin, isLoading } = useAuth();
   
   const [plans, setPlans] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -58,7 +60,7 @@ function AdminPlans({ navigateTo, handleSignOut }) {
     } else {
       setLoading(false);
     }
-  }, [initialLoad, plans.length, fetchPlans]);
+  }, [initialLoad, plans.length]); // Remove function dependency to prevent re-runs
 
   // Handle form input changes
   const handleInputChange = (e) => {

@@ -17,7 +17,7 @@ export const NotificationProvider = ({ children }) => {
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+  const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://solar-charger-backend.onrender.com';
 
   // Fetch notifications
   const fetchNotifications = useCallback(async () => {
@@ -40,7 +40,7 @@ export const NotificationProvider = ({ children }) => {
     } finally {
       setLoading(false);
     }
-  }, [session, BACKEND_URL]);
+  }, [session]);
 
   // Fetch unread count
   const fetchUnreadCount = useCallback(async () => {
@@ -57,10 +57,10 @@ export const NotificationProvider = ({ children }) => {
         const data = await response.json();
         setUnreadCount(data.unreadCount);
       }
-} catch (error) {
+    } catch (error) {
       console.error('Error fetching unread count:', error);
     }
-  }, [session, BACKEND_URL]);
+  }, [session]);
 
   // Mark notification as read
   const markAsRead = useCallback(async (notificationId) => {
@@ -89,7 +89,7 @@ export const NotificationProvider = ({ children }) => {
     } catch (error) {
       console.error('Error marking notification as read:', error);
     }
-  }, [session, BACKEND_URL]);
+  }, [session]);
 
   // Mark all notifications as read
   const markAllAsRead = useCallback(async () => {
@@ -113,7 +113,7 @@ export const NotificationProvider = ({ children }) => {
     } catch (error) {
       console.error('Error marking all notifications as read:', error);
     }
-  }, [session, BACKEND_URL]);
+  }, [session]);
 
   // Delete notification
   const deleteNotification = useCallback(async (notificationId) => {
@@ -140,7 +140,7 @@ export const NotificationProvider = ({ children }) => {
     } catch (error) {
       console.error('Error deleting notification:', error);
     }
-  }, [session, notifications, BACKEND_URL]);
+  }, [session, notifications]);
 
   // Refresh notifications
   const refreshNotifications = useCallback(() => {

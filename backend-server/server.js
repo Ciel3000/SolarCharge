@@ -66,7 +66,7 @@ async function checkUserActiveSessions(user_id) {
 }
 
 // Default price per mAh if not found in station data (e.g., for ad-hoc sessions)
-const DEFAULT_PRICE_PER_MAH = 0.25; // Example: ₱0.25 per mAh
+const DEFAULT_PRICE_PER_MAH = 0.25; // Example: $0.25 per mAh
 
 const STALE_SESSION_CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -526,8 +526,8 @@ async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortI
                     "UPDATE charging_session SET end_time = NOW(), session_status = $1, last_status_update = NOW(), cost = $2 WHERE session_id = $3",
                     [SESSION_STATUS.COMPLETED, sessionCost, sessionId] // sessionId instead of session.session_id
                 )
-                console.log(`Marked session ${sessionId} as '${SESSION_STATUS.COMPLETED}' due to inactivity. Final Cost: ₱${sessionCost.toFixed(2)}`);
-                logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Session ${sessionId} auto-completed due to inactivity. Cost: ₱${sessionCost.toFixed(2)}`);
+                console.log(`Marked session ${sessionId} as '${SESSION_STATUS.COMPLETED}' due to inactivity. Final Cost: $${sessionCost.toFixed(2)}`);
+                logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Session ${sessionId} auto-completed due to inactivity. Cost: $${sessionCost.toFixed(2)}`);
 
                 // Update user's daily consumption
                 const userResult = await pool.query(
@@ -1412,8 +1412,8 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                     "UPDATE charging_session SET end_time = NOW(), session_status = $1, last_status_update = NOW(), cost = $2 WHERE session_id = $3 AND session_status = $4",
                     [SESSION_STATUS.COMPLETED, sessionCost, currentSessionId, SESSION_STATUS.ACTIVE]
                 );
-                console.log(`API: Ended charging session ${currentSessionId} for port ${actualPortId}. Energy consumed: ${energyConsumed.toFixed(3)} kWh, ${mAhConsumed.toFixed(0)} mAh. Cost: ₱${sessionCost.toFixed(2)}`);
-                logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Session ${currentSessionId} ended for ${sessionKey}. Cost: ₱${sessionCost.toFixed(2)}`);
+                console.log(`API: Ended charging session ${currentSessionId} for port ${actualPortId}. Energy consumed: ${energyConsumed.toFixed(3)} kWh, ${mAhConsumed.toFixed(0)} mAh. Cost: $${sessionCost.toFixed(2)}`);
+                logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Session ${currentSessionId} ended for ${sessionKey}. Cost: $${sessionCost.toFixed(2)}`);
                 
                 // Update user's daily consumption
                 await pool.query(
@@ -1826,16 +1826,17 @@ app.delete('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, asy
 
         // Note: The order is important due to foreign key constraints.
         // Delete related records before deleting the user.
+        // quota_extensions has FK to auth.users(id), not public.users
+        await client.query('DELETE FROM quota_extensions WHERE user_id = $1', [userId]);
         await client.query('DELETE FROM payment WHERE user_id = $1', [userId]);
         await client.query('DELETE FROM daily_energy_usage WHERE user_id = $1', [userId]);
         // Cascading deletes for sessions and their consumption data
         await client.query(`DELETE FROM consumption_data WHERE session_id IN (SELECT session_id FROM charging_session WHERE user_id = $1)`, [userId]);
         await client.query('DELETE FROM charging_session WHERE user_id = $1', [userId]);
         await client.query('DELETE FROM user_subscription WHERE user_id = $1', [userId]);
-        await client.query('DELETE FROM admin_profiles WHERE user_id = $1', [userId]);
-        await client.query('DELETE FROM user_devices WHERE user_id = $1', [userId]);
         await client.query('DELETE FROM notification WHERE user_id = $1', [userId]);
-        await client.query('DELETE FROM quota_extensions WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM user_devices WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM admin_profiles WHERE user_id = $1', [userId]);
 
         // Finally, delete the user from the public.users table
         const result = await client.query('DELETE FROM users WHERE user_id = $1', [userId]);
@@ -1854,7 +1855,7 @@ app.delete('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, asy
         await client.query('ROLLBACK');
         console.error('Delete user error:', err.message);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Delete user error for ${userId}: ${err.message}`, req.user.user_id);
-        res.status(500).json({ error: 'Server error' });
+        res.status(500).json({ error: `Error deleting user: ${err.message}` });
     } finally {
         client.release();
     }
@@ -2800,86 +2801,6 @@ app.post('/api/subscription/cancel', supabaseAuthMiddleware, async (req, res) =>
     }
 });
 
-// Create subscription (called after PayPal payment succeeds)
-app.post('/api/subscription/create', supabaseAuthMiddleware, async (req, res) => {
-    const { user_id } = req.user;
-    const { plan_id } = req.body;
-
-    console.log('API: /api/subscription/create called');
-    console.log('  user_id:', user_id);
-    console.log('  plan_id:', plan_id);
-
-    if (!plan_id) {
-        return res.status(400).json({ error: 'Plan ID is required' });
-    }
-
-    try {
-        // Get the plan details
-        const planResult = await pool.query(
-            'SELECT * FROM subscription_plans WHERE plan_id = $1',
-            [plan_id]
-        );
-
-        console.log('Plan query result:', planResult.rows.length);
-
-        if (planResult.rows.length === 0) {
-            return res.status(404).json({ error: 'Plan not found' });
-        }
-
-        const plan = planResult.rows[0];
-        console.log('Plan found:', plan.plan_name);
-
-        // Calculate end date based on plan duration
-        const startDate = new Date();
-        const endDate = new Date(startDate);
-        
-        switch (plan.duration_type?.toLowerCase()) {
-            case 'daily':
-                endDate.setDate(endDate.getDate() + plan.duration_value);
-                break;
-            case 'weekly':
-                endDate.setDate(endDate.getDate() + (plan.duration_value * 7));
-                break;
-            case 'monthly':
-                endDate.setMonth(endDate.getMonth() + plan.duration_value);
-                break;
-            case 'quarterly':
-                endDate.setMonth(endDate.getMonth() + (plan.duration_value * 3));
-                break;
-            case 'yearly':
-                endDate.setFullYear(endDate.getFullYear() + plan.duration_value);
-                break;
-            default:
-                endDate.setMonth(endDate.getMonth() + 1);
-        }
-
-        // Deactivate any existing active subscriptions
-        await pool.query(
-            `UPDATE user_subscription SET is_active = false, end_date = NOW()
-             WHERE user_id = $1 AND is_active = true`,
-            [user_id]
-        );
-
-        // Create new subscription
-        await pool.query(
-            `INSERT INTO user_subscription (user_id, plan_id, start_date, end_date, is_active)
-             VALUES ($1, $2, $3, $4, true)`,
-            [user_id, plan_id, startDate, endDate]
-        );
-        
-        console.log('Subscription inserted for user:', user_id, 'plan:', plan_id);
-
-        // Log the event
-        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Subscription created for user ${user_id} with plan ${plan_id}`, user_id);
-
-        res.status(201).json({ message: 'Subscription created successfully' });
-    } catch (error) {
-        console.error('Error creating subscription:', error.message);
-        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error creating subscription: ${error.message}`, user_id);
-        res.status(500).json({ error: 'Failed to create subscription' });
-    }
-});
-
 // Get current user's monthly usage statistics
 app.get('/api/user/usage', supabaseAuthMiddleware, async (req, res) => {
     try {
@@ -3780,7 +3701,7 @@ function setupStaleSessionChecker() {
                         "UPDATE charging_session SET end_time = NOW(), session_status = $1, last_status_update = NOW(), cost = $2 WHERE session_id = $3",
                         [SESSION_STATUS.COMPLETED, sessionCost, session.session_id] // Corrected variable name
                     );
-                    logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Session ${session.session_id} marked auto-completed by stale checker. Cost: ₱${sessionCost.toFixed(2)}`);
+                    logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Session ${session.session_id} marked auto-completed by stale checker. Cost: $${sessionCost.toFixed(2)}`);
                     
                     // Clean up any in-memory tracking
                     if (session.device_mqtt_id && session.port_number_in_device) {

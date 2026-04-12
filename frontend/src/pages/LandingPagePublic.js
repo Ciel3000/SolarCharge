@@ -6,7 +6,7 @@ import { generateGoogleMapsUrl } from '../utils/mapUtils';
 
 function LandingPage({ stations, loading, navigateTo }) {
   const { session, isAdmin } = useAuth(); // Get auth state
-  const [isMenuOpen, setIsMenuOpen] = useState(false); // eslint-disable-line no-unused-vars
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const location = useLocation(); // Get the location object to access state
   const navigate = useNavigate(); // Get navigate function
   
@@ -125,7 +125,6 @@ function LandingPage({ stations, loading, navigateTo }) {
   };
 
   // The rest of your LandingPagePublic.js component remains the same
-  // eslint-disable-next-line no-unused-vars
   const scrollToSection = (sectionId) => {
     const element = document.getElementById(sectionId);
     if (element) {

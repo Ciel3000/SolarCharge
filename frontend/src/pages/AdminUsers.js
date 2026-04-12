@@ -125,7 +125,7 @@ function AdminUsers({ navigateTo, handleSignOut }) {
         } else {
             setLoading(false);
         }
-    }, [initialLoad, users.length, fetchUsers, fetchAvailablePlans]);
+    }, [initialLoad, users.length]); // Remove function dependencies to prevent re-runs
 
     // When an admin selects a user to edit, populate the form with their data.
     // This includes their current subscription plan_id to pre-select the correct dropdown option.
@@ -224,7 +224,10 @@ function AdminUsers({ navigateTo, handleSignOut }) {
                     headers: { 'Authorization': `Bearer ${session.access_token}` }
                 });
                 
-                if (!res.ok) throw new Error(`Error deleting user: ${res.statusText}`);
+                if (!res.ok) {
+                    const errorData = await res.json().catch(() => ({}));
+                    throw new Error(errorData.error || `Error deleting user: ${res.statusText}`);
+                }
                 
                 await fetchUsers();
                 setSelectedUser(null);

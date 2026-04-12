@@ -25,7 +25,7 @@ function AdminSessions({ navigateTo, handleSignOut }) {
     } else {
       setLoading(false);
     }
-  }, [filters, initialLoad, sessions.length, fetchSessions]);
+  }, [filters, initialLoad, sessions.length]);
   
   async function fetchSessions() {
     try {
@@ -318,7 +318,7 @@ function AdminSessions({ navigateTo, handleSignOut }) {
                       { label: 'End Time', value: selectedSession.end_time ? formatDate(selectedSession.end_time) : 'Still Active' },
                       { label: 'Duration', value: formatDuration(selectedSession.duration_minutes) },
                       { label: 'Energy Consumed', value: `${selectedSession.energy_consumed_kwh} kWh` },
-                      { label: 'Cost', value: `₱${selectedSession.cost}` }
+                      { label: 'Cost', value: `$${selectedSession.cost}` }
                     ].map((item, idx) => (
                       <div key={idx} className="p-4 rounded-xl backdrop-blur-md" style={{
                         background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.1) 100%)',
@@ -393,7 +393,7 @@ function AdminSessions({ navigateTo, handleSignOut }) {
                           <td className="py-3 px-4 whitespace-nowrap" style={{ color: '#000b3d', opacity: 0.7 }}>{session.end_time ? formatDate(session.end_time) : '-'}</td>
                           <td className="py-3 px-4 whitespace-nowrap" style={{ color: '#000b3d' }}>{formatDuration(session.duration)}</td>
                           <td className="py-3 px-4 whitespace-nowrap" style={{ color: '#000b3d' }}>{session.energy} kWh</td>
-                          <td className="py-3 px-4 whitespace-nowrap" style={{ color: '#000b3d' }}>₱{session.cost}</td>
+                          <td className="py-3 px-4 whitespace-nowrap" style={{ color: '#000b3d' }}>${session.cost}</td>
                           <td className="py-3 px-4 whitespace-nowrap">
                             <span
                               className="px-2 py-1 rounded text-xs font-bold"

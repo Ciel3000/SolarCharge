@@ -34,23 +34,28 @@ const EmptyState = ({ icon, title, message, children }) => (
 
 function SubscriptionPage() {
     const { session, subscription } = useAuth();
+    const location = useLocation();
     const navigate = useNavigate();
-    const [currentSubscription, setCurrentSubscription] = useState(null);
-    const [availablePlans, setAvailablePlans] = useState([]);
-    const [subscriptionHistory, setSubscriptionHistory] = useState([]);
+    
     const [loading, setLoading] = useState(true);
+    const [feedback, setFeedback] = useState('');
+    const [availablePlans, setAvailablePlans] = useState([]);
+    const [paypalLoading, setPaypalLoading] = useState(false);
     const [selectedPlanForPayment, setSelectedPlanForPayment] = useState(null);
     const [showPayPal, setShowPayPal] = useState(false);
-    const [feedback, setFeedback] = useState('');
-    const [paypalLoading, setPaypalLoading] = useState(false);
-    const [activeTab, setActiveTab] = useState('current');
+    
+    // New state for subscription history
+    const [subscriptionHistory, setSubscriptionHistory] = useState([]);
+    const [activeTab, setActiveTab] = useState('current'); // 'current' or 'history'
 
-    // Sync local subscription state with auth context
+    // Check for messages passed via navigation state
+    const actionMessage = location.state?.message;
+
     useEffect(() => {
-        if (subscription) {
-            setCurrentSubscription(subscription);
+        if (actionMessage) {
+            setFeedback(actionMessage);
         }
-    }, [subscription]);
+    }, [actionMessage]);
 
     // Fetch available subscription plans
     const fetchAvailablePlans = useCallback(async () => {
@@ -110,26 +115,6 @@ function SubscriptionPage() {
         setShowPayPal(true);
         setFeedback('');
     };
-
-    // Fetch user subscription from backend
-    const fetchUserSubscription = useCallback(async () => {
-        if (!session?.access_token) return;
-        
-        try {
-            const response = await fetch(`${BACKEND_URL}/api/user/subscription`, {
-                headers: {
-                    'Authorization': `Bearer ${session.access_token}`
-                }
-            });
-
-            if (response.ok) {
-                const data = await response.json();
-                setCurrentSubscription(data.subscription);
-            }
-        } catch (err) {
-            console.error('Failed to fetch subscription:', err);
-        }
-    }, [session]);
     
     // Handle subscription cancellation
     const handleCancelSubscription = async () => {
@@ -186,45 +171,23 @@ function SubscriptionPage() {
             const order = await actions.order.capture();
             console.log('PayPal order captured:', order);
             
-            // Send subscription to backend
-            console.log('Creating subscription for plan:', selectedPlanForPayment?.plan_id);
+            // Here you would typically send the order details to your backend
+            // to create the subscription in your database
             
-            const response = await fetch(`${BACKEND_URL}/api/subscription/create`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${session.access_token}`,
-                },
-                body: JSON.stringify({
-                    plan_id: selectedPlanForPayment.plan_id,
-                }),
-            });
-
-            console.log('Subscription API response:', response.status);
-
-            if (!response.ok) {
-                const errorData = await response.json();
-                console.error('Subscription error:', errorData);
-                throw new Error(errorData.error || 'Failed to create subscription');
-            }
-
-            const result = await response.json();
-            console.log('Subscription created:', result);
-
             setFeedback('Payment successful! Your subscription has been activated.');
             setShowPayPal(false);
             setSelectedPlanForPayment(null);
             
-            // Refresh subscription data
-            fetchUserSubscription();
+            // Refresh the page or update the subscription state
+            window.location.reload();
             
         } catch (error) {
             console.error('PayPal capture error:', error);
-            setFeedback('Payment failed. Please try again. Error: ' + error.message);
+            setFeedback('Payment failed. Please try again.');
         } finally {
             setPaypalLoading(false);
         }
-    }, [selectedPlanForPayment, session]);
+    }, []);
 
     const onPayPalError = useCallback((err) => {
         console.error('PayPal error:', err);

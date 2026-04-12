@@ -47,7 +47,7 @@ function AdminLogs({ navigateTo, handleSignOut }) {
     } else {
       setLoading(false);
     }
-  }, [filters.range, filters.type, filters.source, initialLoad, logs.length, fetchLogs]); // Re-fetch when filters change
+  }, [filters.range, filters.type, filters.source, initialLoad, logs.length]); // Re-fetch when filters change
   
   async function fetchLogs() {
     try {
