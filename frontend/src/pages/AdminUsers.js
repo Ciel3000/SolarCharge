@@ -125,7 +125,7 @@ function AdminUsers({ navigateTo, handleSignOut }) {
         } else {
             setLoading(false);
         }
-    }, [initialLoad, users.length]); // Remove function dependencies to prevent re-runs
+    }, [initialLoad, users.length, fetchUsers, fetchAvailablePlans]);
 
     // When an admin selects a user to edit, populate the form with their data.
     // This includes their current subscription plan_id to pre-select the correct dropdown option.

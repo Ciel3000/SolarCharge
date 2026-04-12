@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 
 const SessionStatusIndicator = () => {
-  const { session, isSessionExpired, handleSessionTimeout } = useAuth();
+  const { session, handleSessionTimeout } = useAuth();
   const [timeRemaining, setTimeRemaining] = useState(null);
   const [showWarning, setShowWarning] = useState(false);
 

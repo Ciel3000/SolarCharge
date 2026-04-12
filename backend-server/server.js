@@ -1833,6 +1833,9 @@ app.delete('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, asy
         await client.query('DELETE FROM charging_session WHERE user_id = $1', [userId]);
         await client.query('DELETE FROM user_subscription WHERE user_id = $1', [userId]);
         await client.query('DELETE FROM admin_profiles WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM user_devices WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM notification WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM quota_extensions WHERE user_id = $1', [userId]);
 
         // Finally, delete the user from the public.users table
         const result = await client.query('DELETE FROM users WHERE user_id = $1', [userId]);

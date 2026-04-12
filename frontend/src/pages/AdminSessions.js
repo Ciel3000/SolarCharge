@@ -25,7 +25,7 @@ function AdminSessions({ navigateTo, handleSignOut }) {
     } else {
       setLoading(false);
     }
-  }, [filters, initialLoad, sessions.length]);
+  }, [filters, initialLoad, sessions.length, fetchSessions]);
   
   async function fetchSessions() {
     try {

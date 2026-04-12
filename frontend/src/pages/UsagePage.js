@@ -32,11 +32,42 @@ function UsagePage() {
     const [billing, setBilling] = useState([]);
     
     // Quota extension modal state
+    // eslint-disable-next-line no-unused-vars
     const [showQuotaModal, setShowQuotaModal] = useState(false);
     const [quotaPricing, setQuotaPricing] = useState(null);
     const [extensionAmount, setExtensionAmount] = useState(1000);
     const [extensionType, setExtensionType] = useState('direct_purchase');
     const [processingExtension, setProcessingExtension] = useState(false);
+
+    // Define calculateSubscriptionUsage BEFORE it's used
+    const calculateSubscriptionUsage = () => {
+        if (!subscription || !subscription.subscription_plans) return null;
+
+        const dailyLimit = subscription.subscription_plans.daily_mah_limit || 0;
+        const consumed = subscription.current_daily_mah_consumed || 0;
+        const borrowedToday = subscription.borrowed_mah_today || 0;
+        
+        const todayDailyLimit = dailyLimit;
+        const dailyConsumed = Math.min(consumed, todayDailyLimit);
+        const dailyPercentage = todayDailyLimit > 0 ? (dailyConsumed / todayDailyLimit) * 100 : 0;
+        
+        const extendedConsumed = Math.max(0, consumed - todayDailyLimit);
+        const extendedPercentage = borrowedToday > 0 ? (extendedConsumed / borrowedToday) * 100 : 0;
+        
+        const dailyQuotaRemaining = Math.max(0, todayDailyLimit - consumed);
+        const borrowedQuotaAvailable = consumed >= todayDailyLimit ? borrowedToday : 0;
+
+        return {
+            dailyLimit,
+            consumed,
+            dailyPercentage,
+            dailyQuotaRemaining,
+            borrowedQuotaAvailable,
+            percentageUsed: dailyPercentage,
+            remaining: dailyQuotaRemaining + borrowedQuotaAvailable,
+            extendedPercentage
+        };
+    };
 
     // Check for messages passed via navigation state
     const actionMessage = location.state?.message;
@@ -124,7 +155,7 @@ function UsagePage() {
         if (usageData && usageData.percentageUsed >= 100) {
             setShowQuotaModal(true);
         }
-    }, []);
+    }, [calculateSubscriptionUsage]);
 
     // Purchase quota extension
     const purchaseExtension = async () => {
@@ -203,65 +234,11 @@ function UsagePage() {
             month: 'short',
             day: 'numeric'
         });
-    };
-
-    // Helper function to get status color
-    const getStatusColor = (status) => {
-        switch (status?.toLowerCase()) {
-            case 'completed':
-            case 'paid':
-                return 'bg-green-100 text-green-800';
-            case 'pending':
-                return 'bg-yellow-100 text-yellow-800';
-            case 'failed':
-            case 'cancelled':
-                return 'bg-red-100 text-red-800';
-            default:
-                return 'bg-gray-100 text-gray-800';
-        }
-    };
-
+};
+    
     // Helper function to format status text
     const formatStatusText = (status) => {
         return status?.charAt(0).toUpperCase() + status?.slice(1).toLowerCase() || 'Unknown';
-    };
-
-    // Calculate subscription usage and remaining
-    const calculateSubscriptionUsage = () => {
-        if (!subscription || !subscription.subscription_plans) return null;
-
-        const dailyLimit = subscription.subscription_plans.daily_mah_limit || 0;
-        const consumed = subscription.current_daily_mah_consumed || 0;
-        const borrowedToday = subscription.borrowed_mah_today || 0;
-        const borrowedPending = subscription.borrowed_mah_pending || 0;
-        
-        // For today: use original daily limit (penalty only applies tomorrow)
-        const todayDailyLimit = dailyLimit;
-        
-        // Calculate how much of the daily limit is consumed
-        const dailyConsumed = Math.min(consumed, todayDailyLimit);
-        const dailyPercentage = todayDailyLimit > 0 ? (dailyConsumed / todayDailyLimit) * 100 : 0;
-        
-        // Calculate extended usage (consumption beyond daily limit)
-        const extendedConsumed = Math.max(0, consumed - todayDailyLimit);
-        const extendedPercentage = borrowedToday > 0 ? (extendedConsumed / borrowedToday) * 100 : 0;
-        
-        // Calculate remaining quota using the same logic as backend
-        const dailyQuotaRemaining = Math.max(0, todayDailyLimit - consumed);
-        const borrowedQuotaAvailable = consumed >= todayDailyLimit ? borrowedToday : 0;
-        const remaining = dailyQuotaRemaining + borrowedQuotaAvailable;
-
-        return {
-            dailyLimit: todayDailyLimit, // Show today's daily limit
-            originalDailyLimit: dailyLimit, // Keep original for reference
-            consumed,
-            borrowedToday,
-            borrowedPending,
-            remaining,
-            dailyPercentage,
-            extendedConsumed,
-            extendedPercentage
-        };
     };
 
     // Get usage status and suggestions
@@ -269,7 +246,7 @@ function UsagePage() {
         const usageData = calculateSubscriptionUsage();
         if (!usageData) return null;
 
-        const { dailyPercentage, remaining } = usageData;
+        const { dailyPercentage } = usageData;
 
         if (dailyPercentage >= 100) {
             return {
@@ -364,6 +341,7 @@ function UsagePage() {
     const calculateExtensionCost = () => {
         if (!quotaPricing) return { direct: 0, borrow: 0 };
         
+        // eslint-disable-next-line no-unused-vars
         const direct = quotaPricing.direct_purchase;
         const borrow = quotaPricing.borrow_next_day;
         

@@ -88,7 +88,7 @@ export const AuthProvider = ({ children }) => {
       console.error("AuthContext: Error checking admin status:", err);
       setIsAdmin(false);
     }
-  }, [handleSessionTimeout]);
+  }, []);
 
   // --- Helper to fetch user subscription and all plans ---
   const fetchSubscriptionAndPlans = useCallback(async (currentSession) => {
@@ -300,6 +300,7 @@ export const AuthProvider = ({ children }) => {
         clearTimeout(sessionTimeout);
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // --- Session monitoring effect ---
@@ -340,6 +341,7 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error("AuthContext: Error setting session timeout:", error);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, isSessionExpired, handleSessionTimeout]);
 
   // --- Page visibility change handler ---
@@ -355,6 +357,7 @@ export const AuthProvider = ({ children }) => {
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, isSessionExpired, handleSessionTimeout]);
 
   // Error recovery function

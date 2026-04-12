@@ -17,15 +17,12 @@ function StationPage({ station, navigateTo }) {
   const [loadingPort, setLoadingPort] = useState(null);
   const [stationData, setStationData] = useState(null);
   const [feedback, setFeedback] = useState('');
-  const [refreshKey, setRefreshKey] = useState(0);
   const [mapMessage, setMapMessage] = useState('');
   const mapMessageTimeoutRef = useRef(null);
   const [userActiveSessions, setUserActiveSessions] = useState(0);
   const [maxActiveSlots, setMaxActiveSlots] = useState(1);
 
   // Refs to store interval IDs
-  const statusIntervalRef = useRef(null);
-  const sessionIntervalRef = useRef(null);
   const isPageVisibleRef = useRef(true);
   const intervalsRef = useRef([]); // New ref for all intervals
   const realtimeSyncTimeoutRef = useRef(null);
@@ -110,7 +107,7 @@ function StationPage({ station, navigateTo }) {
       console.error('Error fetching charger device statuses:', error);
       setFeedback('Error loading port statuses.');
     }
-  }, []);
+  }, [handleSessionTimeout]);
 
   // Fetch active user sessions using existing endpoint
   const fetchActiveUserSessions = useCallback(async () => {
@@ -141,7 +138,7 @@ function StationPage({ station, navigateTo }) {
       console.error('Error fetching active user sessions:', err);
       setActiveSessions({});
     }
-  }, [user?.id, session?.access_token, devicePortMapping]);
+  }, [user?.id, session?.access_token, devicePortMapping, handleSessionTimeout]);
 
   // Get daily usage from subscription data
   const getDailyUsage = useCallback(() => {

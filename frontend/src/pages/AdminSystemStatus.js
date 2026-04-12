@@ -202,17 +202,6 @@ function AdminSystemStatus({ navigateTo, handleSignOut }) {
     }).format(date);
   };
   
-  // Get color for battery level - Updated to use brand colors
-  const getBatteryColor = (level) => {
-    if (level > 70) {
-      return '#10b981';
-    } else if (level > 40) {
-      return '#f9d217';
-    } else {
-      return '#ef4444';
-    }
-  };
-  
   // Get color for log type - Updated to use brand colors
   const getLogTypeColor = (logType) => {
     switch (logType) {

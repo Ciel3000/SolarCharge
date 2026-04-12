@@ -40,6 +40,7 @@ function SubscriptionPage() {
     const [loading, setLoading] = useState(true);
     const [feedback, setFeedback] = useState('');
     const [availablePlans, setAvailablePlans] = useState([]);
+    // eslint-disable-next-line no-unused-vars
     const [paypalLoading, setPaypalLoading] = useState(false);
     const [selectedPlanForPayment, setSelectedPlanForPayment] = useState(null);
     const [showPayPal, setShowPayPal] = useState(false);
