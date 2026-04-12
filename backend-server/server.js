@@ -2805,6 +2805,10 @@ app.post('/api/subscription/create', supabaseAuthMiddleware, async (req, res) =>
     const { user_id } = req.user;
     const { plan_id } = req.body;
 
+    console.log('API: /api/subscription/create called');
+    console.log('  user_id:', user_id);
+    console.log('  plan_id:', plan_id);
+
     if (!plan_id) {
         return res.status(400).json({ error: 'Plan ID is required' });
     }
@@ -2816,11 +2820,14 @@ app.post('/api/subscription/create', supabaseAuthMiddleware, async (req, res) =>
             [plan_id]
         );
 
+        console.log('Plan query result:', planResult.rows.length);
+
         if (planResult.rows.length === 0) {
             return res.status(404).json({ error: 'Plan not found' });
         }
 
         const plan = planResult.rows[0];
+        console.log('Plan found:', plan.plan_name);
 
         // Calculate end date based on plan duration
         const startDate = new Date();
@@ -2859,6 +2866,8 @@ app.post('/api/subscription/create', supabaseAuthMiddleware, async (req, res) =>
              VALUES ($1, $2, $3, $4, true)`,
             [user_id, plan_id, startDate, endDate]
         );
+        
+        console.log('Subscription inserted for user:', user_id, 'plan:', plan_id);
 
         // Log the event
         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Subscription created for user ${user_id} with plan ${plan_id}`, user_id);

@@ -34,29 +34,13 @@ const EmptyState = ({ icon, title, message, children }) => (
 
 function SubscriptionPage() {
     const { session, subscription } = useAuth();
-    const location = useLocation();
-    const navigate = useNavigate();
-    
-    const [loading, setLoading] = useState(true);
-    const [feedback, setFeedback] = useState('');
-    const [availablePlans, setAvailablePlans] = useState([]);
-    // eslint-disable-next-line no-unused-vars
-    const [paypalLoading, setPaypalLoading] = useState(false);
-    const [selectedPlanForPayment, setSelectedPlanForPayment] = useState(null);
-    const [showPayPal, setShowPayPal] = useState(false);
-    
-    // New state for subscription history
-    const [subscriptionHistory, setSubscriptionHistory] = useState([]);
-    const [activeTab, setActiveTab] = useState('current'); // 'current' or 'history'
 
-    // Check for messages passed via navigation state
-    const actionMessage = location.state?.message;
-
+    // Sync local subscription state with auth context
     useEffect(() => {
-        if (actionMessage) {
-            setFeedback(actionMessage);
+        if (subscription) {
+            setCurrentSubscription(subscription);
         }
-    }, [actionMessage]);
+    }, [subscription]);
 
     // Fetch available subscription plans
     const fetchAvailablePlans = useCallback(async () => {
@@ -173,6 +157,8 @@ function SubscriptionPage() {
             console.log('PayPal order captured:', order);
             
             // Send subscription to backend
+            console.log('Creating subscription for plan:', selectedPlanForPayment?.plan_id);
+            
             const response = await fetch(`${BACKEND_URL}/api/subscription/create`, {
                 method: 'POST',
                 headers: {
@@ -184,10 +170,16 @@ function SubscriptionPage() {
                 }),
             });
 
+            console.log('Subscription API response:', response.status);
+
             if (!response.ok) {
                 const errorData = await response.json();
+                console.error('Subscription error:', errorData);
                 throw new Error(errorData.error || 'Failed to create subscription');
             }
+
+            const result = await response.json();
+            console.log('Subscription created:', result);
 
             setFeedback('Payment successful! Your subscription has been activated.');
             setShowPayPal(false);
@@ -198,7 +190,7 @@ function SubscriptionPage() {
             
         } catch (error) {
             console.error('PayPal capture error:', error);
-            setFeedback('Payment failed. Please try again.');
+            setFeedback('Payment failed. Please try again. Error: ' + error.message);
         } finally {
             setPaypalLoading(false);
         }
