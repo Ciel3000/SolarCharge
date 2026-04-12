@@ -60,6 +60,8 @@ export const usePageVisibility = ({
 export const useIntervalWithVisibility = (callback, delay, enabled = true) => {
   const intervalRef = useRef(null);
   const isPageVisibleRef = useRef(true);
+  const lastCallTimeRef = useRef(0);
+  const GUARD_DELAY = 2000; // 2 second guard to prevent rapid calls
 
   const startInterval = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
@@ -73,8 +75,25 @@ export const useIntervalWithVisibility = (callback, delay, enabled = true) => {
     }
   }, []);
 
+  const safelyCallCallback = useCallback(() => {
+    const now = Date.now();
+    // Guard: prevent rapid calls within GUARD_DELAY
+    if (now - lastCallTimeRef.current < GUARD_DELAY) {
+      return;
+    }
+    lastCallTimeRef.current = now;
+    callback();
+  }, [callback]);
+
   useEffect(() => {
     if (!enabled) return;
+
+    // Check if page is currently visible before setting up
+    if (!document.hidden) {
+      isPageVisibleRef.current = true;
+      safelyCallCallback();
+      startInterval();
+    }
 
     const handleVisibilityChange = () => {
       if (document.hidden) {
@@ -83,14 +102,10 @@ export const useIntervalWithVisibility = (callback, delay, enabled = true) => {
         isPageVisibleRef.current = false;
         stopInterval();
       } else {
-        // Page is visible again - restart interval and call callback immediately
+        // Page is visible again - restart interval
         console.log('Interval visibility: Tab visible, restarting interval');
         isPageVisibleRef.current = true;
-        
-        // Immediately call callback for fresh data
-        callback();
-        
-        // Restart interval
+        safelyCallCallback();
         startInterval();
       }
     };
@@ -98,16 +113,12 @@ export const useIntervalWithVisibility = (callback, delay, enabled = true) => {
     // Add visibility change listener
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    // Initial setup
-    callback();
-    startInterval();
-
     // Cleanup
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       stopInterval();
     };
-  }, [callback, delay, enabled, startInterval, stopInterval]);
+  }, [enabled, safelyCallCallback, startInterval, stopInterval]);
 
   return {
     isPageVisible: isPageVisibleRef.current,

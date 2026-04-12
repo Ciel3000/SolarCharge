@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom'; // Add React Router hooks
 import { useAuth } from '../contexts/AuthContext';
 import { openGoogleMaps } from '../utils/mapUtils';
 import { filterActivePlans } from '../utils/planUtils';
+import { useIntervalWithVisibility } from '../utils/usePageVisibility';
 
 
 function HomePage({ navigateTo, message, stations: propStations, loadingStations: propLoadingStations }) {
@@ -135,33 +136,24 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
   const [usage, setUsage] = useState({ totalSessions: 0, totalDuration: 0, totalCost: 0, totalEnergyMAH: 0 });
   const [userDevices, setUserDevices] = useState([]);
 
-  useEffect(() => {
-    async function fetchUsageAnalytics() {
-      if (!session?.access_token) return;
-      try {
-        const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://solar-charger-backend.onrender.com';
-        const res = await fetch(`${BACKEND_URL}/api/user/usage`, {
-          headers: { Authorization: `Bearer ${session.access_token}` },
-        });
-        if (!res.ok) throw new Error('Failed to fetch usage data.');
-        const data = await res.json();
-        console.log('HomePage: Received usage data:', data);
-        setUsage(data);
-      } catch (err) {
-        console.error('HomePage: Error fetching usage analytics:', err.message);
-        setUsage({ totalSessions: 0, totalDuration: 0, totalCost: 0, totalEnergyMAH: 0 });
-      }
+  const fetchUsageAnalytics = useCallback(async () => {
+    if (!session?.access_token) return;
+    try {
+      const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://solar-charger-backend.onrender.com';
+      const res = await fetch(`${BACKEND_URL}/api/user/usage`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      if (!res.ok) throw new Error('Failed to fetch usage data.');
+      const data = await res.json();
+      console.log('HomePage: Received usage data:', data);
+      setUsage(data);
+    } catch (err) {
+      console.error('HomePage: Error fetching usage analytics:', err.message);
+      setUsage({ totalSessions: 0, totalDuration: 0, totalCost: 0, totalEnergyMAH: 0 });
     }
-    
-    // Initial fetch
-    fetchUsageAnalytics();
-    
-    // Set up interval to refresh usage data every 30 seconds
-    const usageInterval = setInterval(fetchUsageAnalytics, 30000);
-    
-    // Cleanup interval on unmount or session change
-    return () => clearInterval(usageInterval);
-  }, [session]);
+  }, [session?.access_token]);
+
+  useIntervalWithVisibility(fetchUsageAnalytics, 30000, !!session);
 
   // Function to detect device information
   const detectDeviceInfo = () => {
@@ -376,34 +368,6 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
     }
   }, [subscription, session]);
 
-  // Effect to update battery level periodically
-  useEffect(() => {
-    if (subscription && session && userDevices.length > 0) {
-      const updateBatteryLevel = async () => {
-        const chargingInfo = await getChargingStatus();
-      let updatedDevicesSnapshot = [];
-      setUserDevices(prevDevices => {
-        updatedDevicesSnapshot = prevDevices.map(device => ({
-          ...device,
-          isCharging: chargingInfo?.charging || false,
-          batteryLevel: chargingInfo?.batteryLevel
-        }));
-        return updatedDevicesSnapshot;
-      });
-
-      if (updatedDevicesSnapshot.length > 0) {
-        saveDeviceToDatabase(updatedDevicesSnapshot[0]);
-      }
-      };
-
-    updateBatteryLevel(); // Push immediate telemetry update
-      // Update battery level every 30 seconds
-      const batteryInterval = setInterval(updateBatteryLevel, 30000);
-      
-      return () => clearInterval(batteryInterval);
-    }
-  }, [subscription, session, userDevices.length]);
-
   // Function to save device information to database
   const saveDeviceToDatabase = async (device) => {
     try {
@@ -434,6 +398,28 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
       // Don't throw error, just continue without saving to database
     }
   };
+
+  // Effect to update battery level periodically using visibility-aware interval
+  const updateBatteryLevel = useCallback(async () => {
+    if (subscription && session && userDevices.length > 0) {
+      const chargingInfo = await getChargingStatus();
+      let updatedDevicesSnapshot = [];
+      setUserDevices(prevDevices => {
+        updatedDevicesSnapshot = prevDevices.map(device => ({
+          ...device,
+          isCharging: chargingInfo?.charging || false,
+          batteryLevel: chargingInfo?.batteryLevel
+        }));
+        return updatedDevicesSnapshot;
+      });
+
+      if (updatedDevicesSnapshot.length > 0) {
+        saveDeviceToDatabase(updatedDevicesSnapshot[0]);
+      }
+    }
+  }, [subscription, session, userDevices.length, saveDeviceToDatabase]);
+
+  useIntervalWithVisibility(updateBatteryLevel, 30000, subscription && session && userDevices.length > 0);
 
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-PH', {

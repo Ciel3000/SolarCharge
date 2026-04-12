@@ -36,6 +36,7 @@ export const AuthProvider = ({ children }) => {
   const [initialized, setInitialized] = useState(false);
   const [isRecovering, setIsRecovering] = useState(false); // Add recovery state
   const [sessionTimeout, setSessionTimeout] = useState(null); // Track session timeout
+  const [lastRecoveryAttempt, setLastRecoveryAttempt] = useState(0); // Debounce recovery attempts
 
   // --- Session timeout handler ---
   const handleSessionTimeout = useCallback(() => {
@@ -344,10 +345,24 @@ export const AuthProvider = ({ children }) => {
 
   // --- Page visibility change handler ---
   useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (!document.hidden && session && isSessionExpired(session)) {
-        console.log("AuthContext: Page became visible and session is expired");
-        handleSessionTimeout();
+    const handleVisibilityChange = async () => {
+      if (!document.hidden) {
+        const now = Date.now();
+        // Debounce: only recover if at least 2 seconds since last attempt
+        if (now - lastRecoveryAttempt < 2000) return;
+
+        setLastRecoveryAttempt(now);
+
+        if (session && isSessionExpired(session)) {
+          console.log("AuthContext: Page became visible and session is expired");
+          handleSessionTimeout();
+        } else if (session && !isRecovering) {
+          console.log("AuthContext: Page became visible, refreshing session...");
+          await recoverSession();
+        } else if (!session && !isRecovering) {
+          console.log("AuthContext: Page became visible, attempting session recovery...");
+          await recoverSession();
+        }
       }
     };
 
@@ -355,7 +370,7 @@ export const AuthProvider = ({ children }) => {
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [session, isSessionExpired, handleSessionTimeout]);
+  }, [session, isSessionExpired, handleSessionTimeout, recoverSession, isRecovering, lastRecoveryAttempt]);
 
   // Error recovery function
   const clearError = () => setError(null);
