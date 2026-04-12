@@ -216,9 +216,11 @@ export const AuthProvider = ({ children }) => {
           setUser(initialSession?.user || null);
           
           if (initialSession) {
-            // Run these sequentially to avoid race conditions
-            await checkAdminStatus(initialSession);
-            await fetchSubscriptionAndPlans(initialSession);
+            // Run queries in parallel
+            await Promise.all([
+              checkAdminStatus(initialSession),
+              fetchSubscriptionAndPlans(initialSession)
+            ]);
           }
           
           setLoading(false);
@@ -242,9 +244,11 @@ export const AuthProvider = ({ children }) => {
                 setError(null);
                 setSession(currentSession);
                 setUser(currentSession?.user || null);
-                // Run these sequentially
-                await checkAdminStatus(currentSession);
-                await fetchSubscriptionAndPlans(currentSession);
+                // Run queries in parallel
+                await Promise.all([
+                  checkAdminStatus(currentSession),
+                  fetchSubscriptionAndPlans(currentSession)
+                ]);
                 setLoading(false);
                 setInitialized(true);
                 break;
