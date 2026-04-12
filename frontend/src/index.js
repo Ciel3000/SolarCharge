@@ -1,6 +1,8 @@
+// frontend/src/index.js
+
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import './index.css'; // Import Tailwind CSS directives
+import './index.css'; 
 import App from './App';
 
 const root = ReactDOM.createRoot(document.getElementById('root'));

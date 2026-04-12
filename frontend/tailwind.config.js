@@ -21,6 +21,12 @@ module.exports = {
           700: '#15803d',
           800: '#166534',
           900: '#14532d',
+        },
+        'brand': {
+          'sun': '#f9d217',
+          'lightning': '#38b6ff',
+          'solar-panel': '#000b3d',
+          'background': '#f1f3e0',
         }
       }
     },

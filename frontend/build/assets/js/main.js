@@ -2,7 +2,7 @@
 
 // Global configuration
 const CONFIG = {
-  API_BASE_URL: 'http://localhost:5000/api',
+  API_BASE_URL: 'https://solar-charger-backend.onrender.com/api',
   UPDATE_INTERVAL: 5000, // 5 seconds
   DEBUG_MODE: false
 };

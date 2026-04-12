@@ -1,8 +1,10 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const { Pool } = require('pg');
 const mqtt = require('mqtt');
-require('dotenv').config(); // Load environment variables from .env file
+// Load .env from this folder so JWT/DB vars work even if node is started from the repo root
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const jwt = require('jsonwebtoken'); // For JWT decode/verify
 
 const app = express();
@@ -13,14 +15,58 @@ const PORT = process.env.PORT || 3001;
 const activeChargerSessions = {};
 // activePortTimers: Maps `${deviceId}_${portNumberInDevice}` -> { timerId: setTimeout_ID, lastConsumptionTime: Date.now() }
 const activePortTimers = {};
+// fullChargeNotificationState: Maps session_id -> { userId, portId, portNumber, fullSentAt, disconnectSent }
+const fullChargeNotificationState = new Map();
+
+// --- Session locking mechanism to prevent race conditions ---
+const sessionLocks = new Map(); // Maps sessionKey -> lock status
+
+// Helper function to acquire lock
+async function acquireSessionLock(sessionKey, timeoutMs = 5000) {
+  const startTime = Date.now();
+  
+  while (sessionLocks.has(sessionKey)) {
+    if (Date.now() - startTime > timeoutMs) {
+      throw new Error('Session lock timeout - port is busy');
+    }
+    await new Promise(resolve => setTimeout(resolve, 100)); // Wait 100ms
+  }
+  
+  sessionLocks.set(sessionKey, true);
+  return () => sessionLocks.delete(sessionKey); // Return unlock function
+}
 
 // --- Constants ---
-const INACTIVITY_TIMEOUT_SECONDS = 60; // 60 seconds for inactivity timeout
+const INACTIVITY_TIMEOUT_SECONDS = 300; // 5 minutes for inactivity timeout
+const DEVICE_STATUS_STALE_THRESHOLD_SECONDS = 45; // when device stops reporting
+const USER_DEVICE_ONLINE_THRESHOLD_SECONDS = 120; // consider mobile device online if updated within last 2 minutes
 const NOMINAL_CHARGING_VOLTAGE_DC = 12; // Volts DC. Adjust this based on your battery system.
 const MAX_REASONABLE_CONSUMPTION = 10000; // 10kW in watts, for consumption validation
 
-// Default price per kWh if not found in station data (e.g., for ad-hoc sessions)
-const DEFAULT_PRICE_PER_KWH = 0.25; // Example: $0.25 per kWh
+// Premium user slot limits - easily configurable
+// To change the slot limit, simply modify the value below:
+// - 1 = Users can only have 1 active session at a time (current setting)
+// - 2 = Users can have up to 2 active sessions at a time
+// - 3 = Users can have up to 3 active sessions at a time
+// - etc.
+const PREMIUM_USER_MAX_ACTIVE_SLOTS = 1; // Maximum number of active charging slots per premium user
+
+// --- Helper function to check user's active session count ---
+async function checkUserActiveSessions(user_id) {
+    try {
+        const result = await pool.query(
+            'SELECT COUNT(*) as active_count FROM charging_session WHERE user_id = $1 AND session_status = $2',
+            [user_id, SESSION_STATUS.ACTIVE]
+        );
+        return parseInt(result.rows[0].active_count) || 0;
+    } catch (error) {
+        console.error('Error checking user active sessions:', error);
+        return 0; // Return 0 on error to be safe
+    }
+}
+
+// Default price per mAh if not found in station data (e.g., for ad-hoc sessions)
+const DEFAULT_PRICE_PER_MAH = 0.25; // Example: ₱0.25 per mAh
 
 const STALE_SESSION_CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -43,11 +89,15 @@ const CHARGER_STATES = {
     UNKNOWN: 'UNKNOWN'
 };
 
+// **YOUR DEFINED ENUM VALUES FROM THE DATABASE**
 const PORT_STATUS = {
     AVAILABLE: 'available',
-    OCCUPIED: 'occupied',
-    FAULT: 'fault'
-    // Add other relevant statuses like 'charging', 'maintenance', etc.
+    CHARGING_FREE: 'charging_free',
+    CHARGING_PREMIUM: 'charging_premium',
+    MAINTENANCE: 'maintenance',
+    OFFLINE: 'offline',
+    OCCUPIED: 'occupied', // Use 'occupied' when a port is in use but not by the current user's active session, or if it's just 'ON'
+    FAULT: 'fault' // Your enum might not have this, but common
 };
 
 const LOG_TYPES = {
@@ -66,9 +116,13 @@ const LOG_SOURCES = {
 // Middleware
 const allowedOrigins = [
     'http://localhost:3000', // Your local frontend development server
+    /^http:\/\/localhost:\d+$/, // Any localhost port (for dev environments)
+    // Allow local network access (for testing from other devices)
+    /^http:\/\/192\.168\.\d+\.\d+:\d+$/, // Local network IPs
+    /^http:\/\/10\.\d+\.\d+\.\d+:\d+$/,  // 10.x.x.x network
+    /^http:\/\/172\.(1[6-9]|2[0-9]|3[0-1])\.\d+\.\d+:\d+$/, // 172.16-31.x.x network
     // !!! IMPORTANT: Add your deployed frontend URL here when it's ready !!!
-    // e.g., 'https://your-frontend-app.onrender.com',
-    // e.g., 'https://your-custom-domain.com'
+    'https://solar-charge-frontend.onrender.com'
 ];
 
 app.use(cors({
@@ -76,21 +130,68 @@ app.use(cors({
         if (!origin || allowedOrigins.includes(origin)) {
             callback(null, true);
         } else {
-            console.warn(`CORS: Blocking request from origin: ${origin}`);
-            callback(new Error('Not allowed by CORS'), false);
+            // Check if origin matches any of the regex patterns
+            const isAllowed = allowedOrigins.some(allowedOrigin => {
+                if (typeof allowedOrigin === 'string') {
+                    return allowedOrigin === origin;
+                } else if (allowedOrigin instanceof RegExp) {
+                    return allowedOrigin.test(origin);
+                }
+                return false;
+            });
+            
+            if (isAllowed) {
+                callback(null, true);
+            } else {
+                console.warn(`CORS: Blocking request from origin: ${origin}`);
+                callback(new Error('Not allowed by CORS'), false);
+            }
         }
     },
     credentials: true // Important if you're sending cookies or authorization headers
 }));
 app.use(express.json()); // Parses incoming JSON requests
 
+function resolveDatabaseUrl() {
+    const direct = process.env.DATABASE_URL && process.env.DATABASE_URL.trim();
+    if (direct) return direct;
+    const host = process.env.DB_HOST;
+    const user = process.env.DB_USER;
+    const password = process.env.DB_PASSWORD;
+    if (!host || !user || password === undefined || password === '') {
+        return undefined;
+    }
+    const port = process.env.DB_PORT || 5432;
+    const name = process.env.DB_NAME || 'postgres';
+    const enc = encodeURIComponent;
+    return `postgresql://${enc(user)}:${enc(password)}@${host}:${port}/${enc(name)}`;
+}
+
+const databaseUrl = resolveDatabaseUrl();
+if (!databaseUrl) {
+    console.warn('WARNING: Set DATABASE_URL or DB_HOST + DB_USER + DB_PASSWORD in backend-server/.env');
+}
+
+/** Supabase pooler XX000 when DB user project ref does not match the database (e.g. postgres.oldref). */
+let supabasePoolerTenantHintShown = false;
+function warnSupabasePoolerMismatchOnce(err) {
+    const msg = err && err.message ? String(err.message) : '';
+    if (supabasePoolerTenantHintShown || !msg.includes('Tenant or user not found')) return;
+    supabasePoolerTenantHintShown = true;
+    console.error(`
+[Database] Supabase pooler: "Tenant or user not found"
+Your connection username must be postgres.<project_ref> where <project_ref> is the ID in your Supabase URL.
+Example: https://abrrhepysnsqihmiivzv.supabase.co  →  user postgres.abrrhepysnsqihmiivzv (not an old project ref).
+Fix: Supabase Dashboard → Project Settings → Database → copy "Connection string" (URI).
+Use the password for that project. Database name is usually "postgres" unless you created another DB.
+`);
+}
+
 // --- Supabase PostgreSQL connection Pool ---
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: databaseUrl,
     ssl: {
-        // rejectUnauthorized: true for production for security if providing CA
-        rejectUnauthorized: process.env.NODE_ENV === 'production' && !!process.env.DB_CA_CERT,
-        ca: process.env.DB_CA_CERT // Provide the CA certificate content
+        rejectUnauthorized: false
     }
 });
 
@@ -102,14 +203,15 @@ async function logSystemEvent(logType, source, message, userId = null) {
             [logType, source, message, userId]
         );
     } catch (logErr) {
+        warnSupabasePoolerMismatchOnce(logErr);
         console.error('Failed to write to system_logs table:', logErr);
     }
 }
 
-
 // Test database connection
 pool.query('SELECT NOW()', (err, res) => {
     if (err) {
+        warnSupabasePoolerMismatchOnce(err);
         console.error('Database connection error:', err);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.BACKEND, `Database connection error: ${err.message}`);
     } else {
@@ -155,11 +257,14 @@ async function calculateSessionCost(sessionId, energyKWH) {
         if (sessionResult.rows.length > 0) {
             const stationId = sessionResult.rows[0].station_id;
             const stationPricing = await pool.query(
-                "SELECT price_per_kwh FROM charging_station WHERE station_id = $1",
+                "SELECT price_per_mah FROM charging_station WHERE station_id = $1",
                 [stationId]
             );
-            const pricePerKWH = stationPricing.rows[0]?.price_per_kwh || DEFAULT_PRICE_PER_KWH;
-            return energyKWH * pricePerKWH;
+            const pricePerMAH = stationPricing.rows[0]?.price_per_mah || DEFAULT_PRICE_PER_MAH;
+            // Convert kWh to mAh for pricing calculation
+            // Assuming 12V nominal voltage: mAh = kWh * 1000 / (12 * 1000) = kWh / 12
+            const energyMAH = energyKWH / 12;
+            return energyMAH * pricePerMAH;
         }
     } catch (error) {
         console.error(`Error calculating session cost for session ${sessionId}:`, error);
@@ -168,6 +273,209 @@ async function calculateSessionCost(sessionId, energyKWH) {
     return 0; // Default to 0 if calculation fails
 }
 
+async function createUserNotification({ userId, type = 'info', content, context = null }) {
+    if (!userId || !content) {
+        return;
+    }
+
+    const allowedTypes = ['info', 'success', 'warning', 'error'];
+    const normalizedType = allowedTypes.includes(type) ? type : 'info';
+
+    try {
+        await pool.query(
+            `INSERT INTO notification (user_id, notification_type, notification_context, notification_content)
+             VALUES ($1, $2::notification_type, $3, $4)`,
+            [userId, normalizedType, context || null, content]
+        );
+        logSystemEvent(
+            LOG_TYPES.INFO,
+            LOG_SOURCES.BACKEND,
+            `Notification (${normalizedType}) queued for user ${userId}: ${content.substring(0, 120)}`,
+            userId
+        );
+    } catch (error) {
+        console.error('Notification insert error:', error);
+        logSystemEvent(
+            LOG_TYPES.ERROR,
+            LOG_SOURCES.BACKEND,
+            `Failed to persist notification for user ${userId}: ${error.message}`,
+            userId
+        );
+    }
+}
+
+async function getActiveSessionForPort(portId) {
+    if (!portId) return null;
+    try {
+        const { rows } = await pool.query(
+            `SELECT session_id, user_id, station_id
+             FROM charging_session
+             WHERE port_id = $1 AND session_status = $2
+             ORDER BY start_time DESC
+             LIMIT 1`,
+            [portId, SESSION_STATUS.ACTIVE]
+        );
+        return rows[0] || null;
+    } catch (error) {
+        console.error('Failed to fetch active session for port:', error);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.BACKEND, `Fetch active session failed for port ${portId}: ${error.message}`);
+        return null;
+    }
+}
+
+async function getLatestUserDeviceTelemetry(userId) {
+    if (!userId) return null;
+    try {
+        const { rows } = await pool.query(
+            `SELECT device_id, device_name, device_model, current_battery_level, is_charging, last_updated
+             FROM user_devices
+             WHERE user_id = $1
+             ORDER BY last_updated DESC
+             LIMIT 1`,
+            [userId]
+        );
+        return rows[0] || null;
+    } catch (error) {
+        console.error('Failed to fetch user device telemetry:', error);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.BACKEND, `Fetch device telemetry failed for ${userId}: ${error.message}`, userId);
+        return null;
+    }
+}
+
+function deviceTelemetryIsFresh(record) {
+    if (!record?.last_updated) return false;
+    const lastUpdated = new Date(record.last_updated);
+    if (Number.isNaN(lastUpdated.getTime())) return false;
+    const secondsSince = (Date.now() - lastUpdated.getTime()) / 1000;
+    return secondsSince <= USER_DEVICE_ONLINE_THRESHOLD_SECONDS;
+}
+
+function formatSecondsAgo(date) {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+        return 'unknown';
+    }
+    const seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+    return `${Math.floor(seconds / 3600)}h`;
+}
+
+function buildDeviceNotificationContext({ telemetry, fallbackUsed, extraParts = [] }) {
+    const contextParts = [...extraParts];
+    if (telemetry?.device_name) {
+        const descriptor = telemetry.device_model ? `${telemetry.device_name} (${telemetry.device_model})` : telemetry.device_name;
+        contextParts.push(`Device: ${descriptor}`);
+    }
+    if (telemetry?.current_battery_level !== null && telemetry?.current_battery_level !== undefined) {
+        contextParts.push(`Reported level: ${Math.round(telemetry.current_battery_level)}%`);
+    }
+    if (telemetry?.last_updated) {
+        contextParts.push(`Telemetry updated ${formatSecondsAgo(new Date(telemetry.last_updated))} ago`);
+    }
+    if (fallbackUsed) {
+        contextParts.push('Device telemetry unavailable; using station sensors');
+    }
+    return contextParts.length > 0 ? contextParts.join(' • ') : null;
+}
+
+async function handleFullChargeReadyEvent({ deviceId, actualPortId, portNumber, reason }) {
+    try {
+        const session = await getActiveSessionForPort(actualPortId);
+        if (!session) {
+            logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.MQTT, `Full-charge ready event without active session for port ${actualPortId}`);
+            return;
+        }
+
+        const sessionId = session.session_id;
+        const currentState = fullChargeNotificationState.get(sessionId);
+        if (currentState?.fullSentAt) {
+            return;
+        }
+
+        const telemetry = await getLatestUserDeviceTelemetry(session.user_id);
+        const telemetryFresh = deviceTelemetryIsFresh(telemetry);
+        const meetsStrictConditions = telemetryFresh && telemetry?.is_charging;
+        const resolvedPortNumber = portNumber ?? 'unknown';
+
+        const content = meetsStrictConditions
+            ? `Your ${telemetry?.device_name || 'device'} on Port ${resolvedPortNumber} is fully charged. We'll disconnect in about a minute.`
+            : `Port ${resolvedPortNumber} sensors detected your charging session is complete. We'll disconnect in about a minute.`;
+
+        const context = buildDeviceNotificationContext({
+            telemetry,
+            fallbackUsed: !meetsStrictConditions,
+            extraParts: reason ? [`Reason: ${reason}`] : []
+        });
+
+        await createUserNotification({
+            userId: session.user_id,
+            type: 'success',
+            content,
+            context
+        });
+
+        fullChargeNotificationState.set(sessionId, {
+            userId: session.user_id,
+            portId: actualPortId,
+            portNumber,
+            deviceId,
+            fullSentAt: new Date(),
+            fallbackUsed: !meetsStrictConditions,
+            disconnectSent: false
+        });
+    } catch (error) {
+        console.error('handleFullChargeReadyEvent error:', error);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.MQTT, `Failed to process full-charge ready event: ${error.message}`);
+    }
+}
+
+async function handleFullChargeDisconnectEvent({ actualPortId, portNumber, reason }) {
+    try {
+        const session = await getActiveSessionForPort(actualPortId);
+        if (!session) {
+            logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.MQTT, `Full-charge disconnect event without active session for port ${actualPortId}`);
+            return;
+        }
+
+        const sessionId = session.session_id;
+        const currentState = fullChargeNotificationState.get(sessionId) || {};
+
+        if (currentState.disconnectSent) {
+            return;
+        }
+
+        const resolvedPortNumber = portNumber ?? 'unknown';
+        const elapsedSeconds = currentState.fullSentAt
+            ? Math.max(0, Math.round((Date.now() - currentState.fullSentAt.getTime()) / 1000))
+            : null;
+
+        const contextParts = [];
+        if (elapsedSeconds !== null) {
+            contextParts.push(`Auto-disconnected ${elapsedSeconds}s after full-charge alert`);
+        }
+        if (reason) {
+            contextParts.push(`Reason: ${reason}`);
+        }
+        if (!currentState.fullSentAt) {
+            contextParts.push('Sensor-based auto-disconnect');
+        }
+
+        await createUserNotification({
+            userId: session.user_id,
+            type: 'info',
+            content: `Charging session on Port ${resolvedPortNumber} has been disconnected automatically.`,
+            context: contextParts.length ? contextParts.join(' • ') : null
+        });
+
+        fullChargeNotificationState.set(sessionId, {
+            ...currentState,
+            disconnectSent: true
+        });
+    } catch (error) {
+        console.error('handleFullChargeDisconnectEvent error:', error);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.MQTT, `Failed to process full-charge disconnect event: ${error.message}`);
+    }
+}
 
 // --- Helper function to handle automatic port turn-off due to inactivity ---
 async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortId, sessionId) {
@@ -178,13 +486,14 @@ async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortI
     try {
         // Check if the session is still active in the DB (important if backend restarted)
         const sessionCheck = await pool.query(
-            "SELECT session_id, session_status, last_status_update, energy_consumed_kwh FROM charging_session WHERE session_id = $1",
+            "SELECT session_id, session_status, last_status_update, energy_consumed_kwh, energy_consumed_mah FROM charging_session WHERE session_id = $1",
             [sessionId]
         );
 
         if (sessionCheck.rows.length > 0 && sessionCheck.rows[0].session_status === SESSION_STATUS.ACTIVE) {
             const lastUpdate = sessionCheck.rows[0].last_status_update;
-            const energyConsumed = parseFloat(sessionCheck.rows[0].energy_consumed_kwh) || 0;
+                            const energyConsumed = parseFloat(sessionCheck.rows[0].energy_consumed_kwh) || 0;
+                const mAhConsumed = parseFloat(sessionCheck.rows[0].energy_consumed_mah) || 0;
             const now = new Date();
             
             // Calculate seconds since last activity
@@ -215,14 +524,30 @@ async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortI
                 // Mark session as auto_completed in DB
                 await pool.query(
                     "UPDATE charging_session SET end_time = NOW(), session_status = $1, last_status_update = NOW(), cost = $2 WHERE session_id = $3",
-                    [SESSION_STATUS.COMPLETED, sessionCost, sessionId] // <-- Use SESSION_STATUS.COMPLETED
+                    [SESSION_STATUS.COMPLETED, sessionCost, sessionId] // sessionId instead of session.session_id
                 )
-                console.log(`Marked session ${sessionId} as '${SESSION_STATUS.COMPLETED}' due to inactivity. Final Cost: $${sessionCost.toFixed(2)}`);
-                logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Session ${sessionId} auto-completed due to inactivity. Cost: $${sessionCost.toFixed(2)}`);
+console.log(`Marked session ${sessionId} as '${SESSION_STATUS.COMPLETED}' due to inactivity. Final Cost: ₱${sessionCost.toFixed(2)}`);
+logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Session ${sessionId} auto-completed due to inactivity. Cost: ₱${sessionCost.toFixed(2)}`);
+
+                // Update user's daily consumption
+                const userResult = await pool.query(
+                    "SELECT user_id FROM charging_session WHERE session_id = $1",
+                    [sessionId]
+                );
+                if (userResult.rows.length > 0) {
+                    const userId = userResult.rows[0].user_id;
+                    await pool.query(
+                        "UPDATE user_subscription SET current_daily_mah_consumed = COALESCE(current_daily_mah_consumed, 0) + $1 WHERE user_id = $2 AND is_active = true",
+                        [mAhConsumed, userId]
+                    );
+                    console.log(`Inactivity: Updated daily consumption for user ${userId} by ${mAhConsumed.toFixed(0)} mAh`);
+                }
 
                 // Clear from in-memory tracking
                 delete activeChargerSessions[sessionKey];
                 delete activePortTimers[sessionKey];
+                console.log(`Inactivity: Removed session ${sessionId} from tracking maps for ${sessionKey}`);
+                fullChargeNotificationState.delete(sessionId);
             } else {
                 // If still active but timer expired, reset the timer
                 console.log(`Session ${sessionId} for ${sessionKey} is still active. Resetting inactivity timer.`);
@@ -233,16 +558,100 @@ async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortI
                     ),
                     lastConsumptionTime: Date.now()
                 };
+                console.log(`Inactivity: Reset timer for ${sessionKey} for another ${INACTIVITY_TIMEOUT_SECONDS} seconds`);
             }
         } else {
             console.log(`Session ${sessionId} for ${sessionKey} was already inactive or not found. No auto turn-off needed.`);
             delete activeChargerSessions[sessionKey]; // Clean up if session was manually ended but timer persisted
             delete activePortTimers[sessionKey];
+            console.log(`Inactivity: Cleaned up tracking maps for ${sessionKey} (session was already inactive)`);
         }
     } catch (error) {
         console.error(`Error during inactivity turn-off for ${sessionKey}:`, error);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.BACKEND, `Error during inactivity turn-off for ${sessionKey}: ${error.message}`);
     }
+}
+
+async function finalizeSessionFromDeviceEvent({
+    deviceId,
+    portNumberInDevice,
+    actualPortId,
+    endReason = 'device_event',
+    source = LOG_SOURCES.MQTT
+}) {
+    if (!deviceId || !portNumberInDevice || !actualPortId) {
+        return false;
+    }
+
+    const sessionKey = `${deviceId}_${portNumberInDevice}`;
+    let sessionRow;
+    let sessionId = activeChargerSessions[sessionKey];
+
+    if (sessionId) {
+        const { rows } = await pool.query(
+            "SELECT session_id, user_id, energy_consumed_kwh, energy_consumed_mah FROM charging_session WHERE session_id = $1 AND session_status = $2",
+            [sessionId, SESSION_STATUS.ACTIVE]
+        );
+        if (rows.length > 0) {
+            sessionRow = rows[0];
+        } else {
+            sessionId = null;
+        }
+    }
+
+    if (!sessionId) {
+        const result = await pool.query(
+            "SELECT session_id, user_id, energy_consumed_kwh, energy_consumed_mah FROM charging_session WHERE port_id = $1 AND session_status = $2 ORDER BY start_time DESC LIMIT 1",
+            [actualPortId, SESSION_STATUS.ACTIVE]
+        );
+
+        if (result.rows.length === 0) {
+            return false;
+        }
+
+        sessionRow = result.rows[0];
+        sessionId = sessionRow.session_id;
+    }
+
+    const energyConsumed = parseFloat(sessionRow.energy_consumed_kwh) || 0;
+    const mAhConsumed = parseFloat(sessionRow.energy_consumed_mah) || 0;
+    const sessionCost = await calculateSessionCost(sessionId, energyConsumed);
+
+    const updateResult = await pool.query(
+        "UPDATE charging_session SET end_time = NOW(), session_status = $1, last_status_update = NOW(), cost = $2 WHERE session_id = $3 AND session_status = $4",
+        [SESSION_STATUS.COMPLETED, sessionCost, sessionId, SESSION_STATUS.ACTIVE]
+    );
+
+    if (updateResult.rowCount === 0) {
+        return false;
+    }
+
+    if (sessionRow.user_id) {
+        await pool.query(
+            "UPDATE user_subscription SET current_daily_mah_consumed = COALESCE(current_daily_mah_consumed, 0) + $1 WHERE user_id = $2 AND is_active = true",
+            [mAhConsumed, sessionRow.user_id]
+        );
+    }
+
+    delete activeChargerSessions[sessionKey];
+    if (activePortTimers[sessionKey]) {
+        clearTimeout(activePortTimers[sessionKey].timerId);
+        delete activePortTimers[sessionKey];
+    }
+    fullChargeNotificationState.delete(sessionId);
+
+    await pool.query(
+        "UPDATE charging_port SET current_status = $1, is_occupied = false, last_status_update = NOW() WHERE port_id = $2",
+        [PORT_STATUS.AVAILABLE, actualPortId]
+    );
+
+    logSystemEvent(
+        LOG_TYPES.INFO,
+        source,
+        `Auto-completed session ${sessionId} for ${sessionKey}. Reason: ${endReason}`
+    );
+
+    return true;
 }
 
 
@@ -265,7 +674,6 @@ mqttClient.on('connect', () => {
         else logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.MQTT, `Failed to subscribe to ${MQTT_TOPICS.STATION_GENERIC_STATUS}: ${err.message}`);
     });
 });
-
 // --- Main MQTT Message Processing Handler ---
 mqttClient.on('message', async (topic, message) => {
     console.log(`Received message on ${topic}: ${message.toString()}`);
@@ -292,6 +700,8 @@ mqttClient.on('message', async (topic, message) => {
             payload = JSON.parse(messageString);
         }
 
+        console.log(`MQTT: Parsed payload for ${topic}:`, JSON.stringify(payload, null, 2));
+
         // Extract the deviceId (which is the station's MQTT Client ID)
         const deviceId = topic.split('/')[2]; // e.g., ESP32_CHARGER_STATION_001
 
@@ -315,10 +725,11 @@ mqttClient.on('message', async (topic, message) => {
         // --- Find the actual port_id (UUID) from charging_port table ---
         // This query links the ESP32's ID and its internal port number to a unique DB port_id.
         const portIdResult = await pool.query(
-            'SELECT port_id FROM charging_port WHERE device_mqtt_id = $1 AND port_number_in_device = $2',
+            'SELECT port_id, is_premium FROM charging_port WHERE device_mqtt_id = $1 AND port_number_in_device = $2', // Fetch is_premium
             [deviceId, portNumberInDevice]
         );
         const actualPortId = portIdResult.rows[0]?.port_id; // Get the port_id UUID
+        const isPremiumPort = portIdResult.rows[0]?.is_premium; // Get is_premium
 
         if (!actualPortId) {
             console.warn(`MQTT: No charging_port found for device_id: ${deviceId} and port_number_in_device: ${portNumberInDevice}. Skipping message processing.`);
@@ -330,92 +741,92 @@ mqttClient.on('message', async (topic, message) => {
         const sessionKey = `${deviceId}_${portNumberInDevice}`;
         const currentSessionId = activeChargerSessions[sessionKey]; // Get session_id from in-memory map
 
+        console.log(`MQTT: Session tracking for ${sessionKey}: Session ID = ${currentSessionId}, Active sessions:`, Object.keys(activeChargerSessions));
+
         // --- Handle charger/usage topic (for consumption data and session management) ---
         if (topic.startsWith(MQTT_TOPICS.USAGE)) {
-            const { consumption, timestamp, charger_state } = payload;
-            const currentTimestamp = new Date(timestamp); // Convert milliseconds to Date object
+            const serverTimestamp = new Date();
+            const rawConsumption = Number(payload.consumption);
+            const consumptionAmps = Number.isFinite(rawConsumption) ? rawConsumption : 0;
+            const deviceTimestampMs = Number(payload.timestamp);
+            const hasDeviceTimestamp = Number.isFinite(deviceTimestampMs);
+            const charger_state = payload.charger_state;
 
-            if (charger_state === CHARGER_STATES.ON) { // Only insert consumption if charger is ON
-                if (currentSessionId) { // Only insert if an active session is tracked (created by API)
-                    // Validate consumption value to prevent negative or unreasonable readings
-                    const validatedConsumption = validateConsumption(consumption);
-                    
-                    if (validatedConsumption > 0) { // Only record if consumption is positive
-                        await pool.query(
-                            'INSERT INTO consumption_data (session_id, device_id, consumption_watts, timestamp, charger_state) VALUES ($1, $2, $3, TO_TIMESTAMP($4 / 1000.0), $5)',
-                            [currentSessionId, deviceId, validatedConsumption, timestamp, charger_state]
+            const consumptionWatts = consumptionAmps * NOMINAL_CHARGING_VOLTAGE_DC;
+            const validatedConsumption = validateConsumption(consumptionWatts);
+
+            console.log(
+                `MQTT: Processing usage message for ${sessionKey}. Charger state: ${charger_state}, ` +
+                `Consumption: ${consumptionAmps.toFixed(3)}A (~${validatedConsumption.toFixed(2)}W), Session ID: ${currentSessionId}`
+            );
+            console.log(
+                `MQTT: Normalized usage timestamp using server time ${serverTimestamp.toISOString()} ` +
+                `(device timestamp: ${hasDeviceTimestamp ? deviceTimestampMs : 'n/a'})`
+            );
+
+            // ALWAYS store consumption data regardless of session state
+            
+            if (validatedConsumption > 0) {
+                // Store consumption data with port_number for easier querying
+                await pool.query(
+                    'INSERT INTO consumption_data (session_id, device_id, port_number, consumption_watts, timestamp, charger_state) VALUES ($1, $2, $3, $4, $5, $6)',
+                    [currentSessionId, deviceId, portNumberInDevice, validatedConsumption, serverTimestamp, charger_state]
+                );
+                console.log(
+                    `MQTT: Stored consumption for ${deviceId} Port ${portNumberInDevice}: ` +
+                    `${validatedConsumption}W at ${serverTimestamp.toISOString()}`
+                );
+
+                // If we have an active session, update session totals
+                if (currentSessionId) {
+                    const intervalSeconds = 10; // ESP32 publishes every 10 seconds
+                    const kwhIncrement = (validatedConsumption * intervalSeconds) / (1000 * 3600); // Watts * seconds / (1000W/kW * 3600s/hr)
+
+                    // Calculate mAh Increment (assuming a nominal charging voltage, e.g., 12V for the battery)
+                    const currentAmps = validatedConsumption / NOMINAL_CHARGING_VOLTAGE_DC; // Amps = Watts / Volts
+                    const mAhIncrement = (currentAmps * 1000) * (intervalSeconds / 3600); // mAh = Amps * 1000 * (seconds / 3600)
+
+                    console.log(`MQTT: Energy increment for ${sessionKey}: ${kwhIncrement.toFixed(6)} kWh, ${mAhIncrement.toFixed(2)} mAh`);
+
+                    await pool.query(
+                        'UPDATE charging_session SET energy_consumed_kwh = COALESCE(energy_consumed_kwh, 0) + $1, energy_consumed_mah = COALESCE(energy_consumed_mah, 0) + $2, total_mah_consumed = COALESCE(total_mah_consumed, 0) + $3, last_status_update = $4 WHERE session_id = $5',
+                        [kwhIncrement, mAhIncrement, mAhIncrement, serverTimestamp, currentSessionId]
+                    );
+
+                    // Reset inactivity timer on new consumption data
+                    if (activePortTimers[sessionKey]) {
+                        clearTimeout(activePortTimers[sessionKey].timerId);
+                        activePortTimers[sessionKey].lastConsumptionTime = Date.now();
+                        activePortTimers[sessionKey].timerId = setTimeout(
+                            () => handleInactivityTurnOff(deviceId, portNumberInDevice, actualPortId, currentSessionId),
+                            INACTIVITY_TIMEOUT_SECONDS * 1000
                         );
-                        console.log(`MQTT: Stored consumption for ${deviceId} Port ${portNumberInDevice} in session ${currentSessionId}: ${validatedConsumption}W`);
-                        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.MQTT, `Consumption: ${validatedConsumption}W for session ${currentSessionId}`);
-
-                        const intervalSeconds = 10; // ESP32 publishes every 10 seconds
-                        const kwhIncrement = (validatedConsumption * intervalSeconds) / (1000 * 3600); // Watts * seconds / (1000W/kW * 3600s/hr)
-
-                        // --- Calculate mAh Increment (assuming a nominal charging voltage, e.g., 12V for the battery) ---
-                        const currentAmps = validatedConsumption / NOMINAL_CHARGING_VOLTAGE_DC; // Amps = Watts / Volts
-                        const mAhIncrement = (currentAmps * 1000) * (intervalSeconds / 3600); // mAh = Amps * 1000 * (seconds / 3600)
-
-                        await pool.query(
-                            'UPDATE charging_session SET energy_consumed_kwh = COALESCE(energy_consumed_kwh, 0) + $1, total_mah_consumed = COALESCE(total_mah_consumed, 0) + $2, last_status_update = $3 WHERE session_id = $4',
-                            [kwhIncrement, mAhIncrement, currentTimestamp, currentSessionId]
-                        );
-
-                        // --- Reset inactivity timer on new consumption data ---
-                        if (activePortTimers[sessionKey]) {
-                            clearTimeout(activePortTimers[sessionKey].timerId);
-                            activePortTimers[sessionKey].lastConsumptionTime = Date.now();
-                            activePortTimers[sessionKey].timerId = setTimeout(
+                        console.log(`MQTT: Timer reset for ${sessionKey} due to new consumption. Timer set for ${INACTIVITY_TIMEOUT_SECONDS} seconds.`);
+                    } else {
+                        console.warn(`MQTT: No active timer found for ${sessionKey} when consumption received. This might indicate a session tracking issue.`);
+                        // Try to reinitialize the timer if it's missing but we have a valid session
+                        activePortTimers[sessionKey] = {
+                            timerId: setTimeout(
                                 () => handleInactivityTurnOff(deviceId, portNumberInDevice, actualPortId, currentSessionId),
                                 INACTIVITY_TIMEOUT_SECONDS * 1000
-                            );
-                            console.log(`MQTT: Timer reset for ${sessionKey} due to new consumption.`);
-                        }
-                    } else {
-                        console.warn(`MQTT: Ignoring invalid consumption value (${consumption}W) for ${deviceId} Port ${portNumberInDevice}`);
-                        logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.MQTT, `Invalid consumption value (${consumption}W) for ${sessionKey}`);
+                            ),
+                            lastConsumptionTime: Date.now()
+                        };
+                        console.log(`MQTT: Reinitialized timer for ${sessionKey} due to missing timer.`);
                     }
                 } else {
-                    console.warn(`MQTT: Charger ON for ${deviceId} Port ${portNumberInDevice} but no active session found in memory. Consumption insert skipped.`);
-                    logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.MQTT, `Charger ON for ${sessionKey} but no active session tracked`);
+                    console.log(`MQTT: Consumption stored for ${deviceId} Port ${portNumberInDevice} but no active session. Data preserved for later linking.`);
                 }
-            } else if (charger_state === CHARGER_STATES.OFF) {
-                // No session ending here. Session ending is handled by API POST /control or inactivity timer.
-                console.log(`MQTT: Received OFF state for ${deviceId} Port ${portNumberInDevice}. Consumption not logged for OFF state.`);
+            } else {
+                console.warn(`MQTT: Ignoring invalid consumption value (${consumptionAmps}A) for ${deviceId} Port ${portNumberInDevice}`);
+                logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.MQTT, `Invalid consumption value (${consumptionAmps}A) for ${sessionKey}`);
             }
         }
 
         // --- Handle charger/status topic (for overall device/port status updates) ---
         else if (topic.startsWith(MQTT_TOPICS.STATUS)) {
-            const { status, charger_state, timestamp } = payload;
-            const currentTimestamp = new Date(timestamp);
-
-            console.log(`MQTT Status Payload Debug: deviceId=${deviceId}, portNumberInDevice=${portNumberInDevice}, status=${status}, charger_state=${charger_state}, timestamp=${timestamp}`);
-            
-            // Corrected INSERT for device_status_logs
-            await pool.query(
-                `INSERT INTO device_status_logs (device_id, port_id, status_message, charger_state, timestamp)
-                 VALUES ($1, $2, $3, $4, TO_TIMESTAMP($5 / 1000.0))`,
-                [deviceId, actualPortId, status, charger_state, timestamp]
-            );
-
-            // Corrected UPSERT for current_device_status
-            await pool.query(
-                `INSERT INTO current_device_status (device_id, port_id, status_message, charger_state, last_update)
-                 VALUES ($1, $2, $3, $4, TO_TIMESTAMP($5 / 1000.0))
-                 ON CONFLICT (device_id, port_id) DO UPDATE SET
-                    status_message = $3,
-                    charger_state = $4,
-                    last_update = TO_TIMESTAMP($5 / 1000.0)`,
-                [deviceId, actualPortId, status, charger_state, timestamp]
-            );
-            console.log(`MQTT: Updated status for ${deviceId} Port ${portNumberInDevice}: ${status}, Charger: ${charger_state}`);
-            logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.MQTT, `Status update for ${deviceId} Port ${portNumberInDevice}: ${status}, Charger: ${charger_state}`);
-
-            // Update charging_port table for real-time status display in the main schema
-            await pool.query(
-                'UPDATE charging_port SET current_status = $1, is_occupied = $2, last_status_update = $3 WHERE port_id = $4',
-                [status, (charger_state === CHARGER_STATES.ON), currentTimestamp, actualPortId]
-            );
+            // Pass the payload and newly fetched isPremiumPort to the dedicated handler
+            await handleMqttStatusMessage(payload, deviceId, actualPortId, isPremiumPort);
         }
 
         // --- Handle other existing station topics (if any) ---
@@ -429,18 +840,14 @@ mqttClient.on('message', async (topic, message) => {
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.MQTT, `Error processing message on topic "${topic}" with payload "${messageString}": ${error.message}`);
     }
 });
-
-
 mqttClient.on('error', (err) => {
     console.error('MQTT error:', err);
     logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.MQTT, `MQTT client error: ${err.message}`);
 });
-
 mqttClient.on('close', () => {
     console.log('MQTT client disconnected.');
     logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.MQTT, 'MQTT client disconnected.');
 });
-
 mqttClient.on('reconnect', () => {
     console.log('Reconnecting to EMQX Cloud...');
     logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.MQTT, 'Reconnecting to EMQX Cloud...');
@@ -452,6 +859,66 @@ mqttClient.on('reconnect', () => {
 // Basic test route
 app.get('/', (req, res) => {
     res.send('SolarCharge Backend is running!');
+});
+
+//GET all subscription plans
+app.get('/api/subscription/plans', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+    try {
+        // Use standard pg pool.query which returns a result object
+        const result = await pool.query(
+            `SELECT * FROM subscription_plans ORDER BY price ASC`
+        );
+        // The data is in result.rows
+        res.status(200).json(result.rows);
+    } catch (error) {
+        console.error('Error fetching subscription plans:', error.message);
+        res.status(500).json({ error: 'Internal Server Error: Could not fetch plans.' });
+    }
+});
+
+//Public endpoint to get all stations for the home page/map
+app.get('/api/stations', async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT 
+                s.station_id, 
+                s.station_name, 
+                s.location_description, 
+                s.latitude, 
+                s.longitude, 
+                s.is_active,
+                s.current_battery_level,
+                s.price_per_kwh,
+                COUNT(p.port_id) as total_ports,
+                COUNT(CASE WHEN p.current_status = 'available' THEN 1 END) as available_ports
+            FROM charging_station s
+            LEFT JOIN charging_port p ON s.station_id = p.station_id
+            GROUP BY s.station_id
+            ORDER BY s.station_name;
+        `);
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error fetching stations:', error.message);
+        res.status(500).json({ error: 'Failed to fetch stations' });
+    }
+});
+
+//Get a specific station by stationId
+app.get('/api/stations/:stationId', async (req, res) => {
+    const { stationId } = req.params;
+    try {
+        const result = await pool.query(
+            `SELECT * FROM charging_station WHERE station_id = $1`,
+            [stationId]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Station not found' });
+        }
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error(`Error fetching station ${stationId}:`, error.message);
+        res.status(500).json({ error: 'Failed to fetch station details' });
+    }
 });
 
 // Get consumption data for a specific device (station) AND internal port number
@@ -486,26 +953,28 @@ app.get('/api/devices/:deviceId/:portNumber/consumption', async (req, res) => {
 // Get all current device/port statuses
 app.get('/api/devices/status', async (req, res) => {
     try {
-        // JOIN current_device_status with charging_port to get port_number_in_device
-        // LEFT JOIN charging_session to get total_mah_consumed for active sessions
+        // Use LEFT JOIN to include all charging ports, even if they don't have status data yet
         const result = await pool.query(`
             SELECT
-                cds.device_id,
-                cds.port_id,
-                cds.status_message,
-                cds.charger_state,
-                cds.last_update,
+                cp.device_mqtt_id as device_id,
+                cp.port_id,
+                COALESCE(cds.status_message, 'online') as status_message,
+                COALESCE(cds.charger_state, 'OFF') as charger_state,
+                COALESCE(cds.last_update, NOW()) as last_update,
                 cp.port_number_in_device,
                 cs.total_mah_consumed,
-                cs.energy_consumed_kwh, -- Include KWH for active sessions
+                cs.energy_consumed_kwh,
                 cs.session_id
             FROM
-                current_device_status cds
-            JOIN
-                charging_port cp ON cds.port_id = cp.port_id
-            LEFT JOIN -- Use LEFT JOIN to include ports even if no active session
-                charging_session cs ON cds.port_id = cs.port_id AND cs.session_status = '${SESSION_STATUS.ACTIVE}'
-        `);
+                charging_port cp
+            LEFT JOIN
+                current_device_status cds ON cp.port_id = cds.port_id
+            LEFT JOIN
+                charging_session cs ON cp.port_id = cs.port_id AND cs.session_status = $1
+            ORDER BY
+                cp.device_mqtt_id, cp.port_number_in_device
+        `, [SESSION_STATUS.ACTIVE]);
+        
         res.json(result.rows);
     } catch (error) {
         console.error('Error fetching device status:', error);
@@ -513,6 +982,266 @@ app.get('/api/devices/status', async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch device status' });
     }
 });
+
+// Get all current device/port consumption data
+app.get('/api/devices/consumption', async (req, res) => {
+    try {
+        // Get consumption data for all devices and ports with current consumption calculation
+        const result = await pool.query(`
+            SELECT
+                cp.device_mqtt_id as device_id,
+                cp.port_number_in_device as port_number,
+                COALESCE(cs.total_mah_consumed, 0) as total_mah_consumed,
+                COALESCE(cs.energy_consumed_kwh, 0) as energy_consumed_kwh,
+                COALESCE(cs.last_status_update, NOW()) as timestamp,
+                -- Calculate current consumption from recent consumption_data
+                (SELECT AVG(sub.consumption_watts) 
+                 FROM (
+                     SELECT consumption_watts
+                     FROM consumption_data cd 
+                     WHERE cd.session_id = cs.session_id 
+                     AND cd.timestamp > NOW() - INTERVAL '1 minute'
+                     ORDER BY cd.timestamp DESC 
+                     LIMIT 6
+                 ) sub) as recent_consumption_watts
+            FROM
+                charging_port cp
+            LEFT JOIN
+                charging_session cs ON cp.port_id = cs.port_id AND cs.session_status = $1
+            ORDER BY
+                cp.device_mqtt_id, cp.port_number_in_device
+        `, [SESSION_STATUS.ACTIVE]);
+        
+        // Transform the data to include current consumption calculation
+        const consumptionData = result.rows.map(row => {
+            const totalMah = Number(row.total_mah_consumed) || 0;
+            const recentWatts = Number(row.recent_consumption_watts) || 0;
+            
+            // Calculate current consumption in mA: Watts / Voltage * 1000
+            const currentConsumption = recentWatts > 0 ? (recentWatts / NOMINAL_CHARGING_VOLTAGE_DC) * 1000 : 0;
+            
+            return {
+                device_id: row.device_id,
+                port_number: row.port_number,
+                total_mah: totalMah,
+                current_consumption: currentConsumption, // Current consumption rate in mA
+                energy_consumed_kwh: Number(row.energy_consumed_kwh) || 0,
+                timestamp: row.timestamp
+            };
+        });
+        
+        console.log('API: Device consumption data:', consumptionData);
+        res.json(consumptionData);
+    } catch (error) {
+        console.error('Error fetching device consumption:', error);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching all device consumption: ${error.message}`);
+        res.status(500).json({ error: 'Failed to fetch device consumption' });
+    }
+});
+
+app.get('/api/stations/:stationId/sync', async (req, res) => {
+    const { stationId } = req.params;
+    try {
+        await reconcileStationState(stationId);
+
+        const statusResult = await pool.query(`
+            SELECT
+                cp.device_mqtt_id as device_id,
+                cp.port_id,
+                COALESCE(cds.status_message, 'online') as status_message,
+                COALESCE(cds.charger_state, 'OFF') as charger_state,
+                COALESCE(cds.last_update, NOW()) as last_update,
+                cp.port_number_in_device,
+                cs.total_mah_consumed,
+                cs.energy_consumed_kwh,
+                cs.session_id
+            FROM charging_port cp
+            LEFT JOIN current_device_status cds ON cp.port_id = cds.port_id
+            LEFT JOIN charging_session cs ON cp.port_id = cs.port_id AND cs.session_status = $2
+            WHERE cp.station_id = $1
+            ORDER BY cp.device_mqtt_id, cp.port_number_in_device
+        `, [stationId, SESSION_STATUS.ACTIVE]);
+
+        const consumptionResult = await pool.query(`
+            SELECT
+                cp.device_mqtt_id as device_id,
+                cp.port_number_in_device as port_number,
+                COALESCE(cs.total_mah_consumed, 0) as total_mah_consumed,
+                COALESCE(cs.energy_consumed_kwh, 0) as energy_consumed_kwh,
+                COALESCE(cs.last_status_update, NOW()) as timestamp,
+                (SELECT AVG(sub.consumption_watts) 
+                 FROM (
+                     SELECT consumption_watts
+                     FROM consumption_data cd 
+                     WHERE cd.session_id = cs.session_id 
+                     AND cd.timestamp > NOW() - INTERVAL '1 minute'
+                     ORDER BY cd.timestamp DESC 
+                     LIMIT 6
+                 ) sub) as recent_consumption_watts
+            FROM charging_port cp
+            LEFT JOIN charging_session cs ON cp.port_id = cs.port_id AND cs.session_status = $2
+            WHERE cp.station_id = $1
+            ORDER BY cp.device_mqtt_id, cp.port_number_in_device
+        `, [stationId, SESSION_STATUS.ACTIVE]);
+
+        const consumptionData = consumptionResult.rows.map(row => {
+            const totalMah = Number(row.total_mah_consumed) || 0;
+            const recentWatts = Number(row.recent_consumption_watts) || 0;
+            const currentConsumption = recentWatts > 0 ? (recentWatts / NOMINAL_CHARGING_VOLTAGE_DC) * 1000 : 0;
+
+            return {
+                device_id: row.device_id,
+                port_number: row.port_number,
+                total_mah: totalMah,
+                current_consumption: currentConsumption,
+                energy_consumed_kwh: Number(row.energy_consumed_kwh) || 0,
+                timestamp: row.timestamp
+            };
+        });
+
+        const activeSessionsResult = await pool.query(
+            `SELECT session_id, user_id, port_id, station_id, start_time, energy_consumed_kwh, energy_consumed_mah
+             FROM charging_session
+             WHERE station_id = $1 AND session_status = $2`,
+            [stationId, SESSION_STATUS.ACTIVE]
+        );
+
+        res.json({
+            status: statusResult.rows,
+            consumption: consumptionData,
+            activeSessions: activeSessionsResult.rows
+        });
+    } catch (error) {
+        console.error(`Error syncing station ${stationId}:`, error);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error syncing station ${stationId}: ${error.message}`);
+        res.status(500).json({ error: 'Failed to sync station state' });
+    }
+});
+
+// --- Quota Validation Function ---
+async function checkUserQuota(user_id) {
+    try {
+        // Get user's active subscription and current usage
+        const { rows } = await pool.query(`
+            SELECT 
+                us.current_daily_mah_consumed,
+                us.borrowed_mah_today,
+                us.last_quota_reset,
+                sp.daily_mah_limit
+            FROM user_subscription us
+            JOIN subscription_plans sp ON us.plan_id = sp.plan_id
+            WHERE us.user_id = $1 AND us.is_active = true
+            ORDER BY us.created_at DESC LIMIT 1
+        `, [user_id]);
+
+        if (rows.length === 0) {
+            return { 
+                canCharge: false, 
+                reason: 'No active subscription found',
+                availableQuota: 0,
+                totalUsed: 0,
+                dailyLimit: 0,
+                borrowedToday: 0
+            };
+        }
+
+        const subscription = rows[0];
+        const dailyLimit = Number(subscription.daily_mah_limit) || 0;
+        const consumed = Number(subscription.current_daily_mah_consumed) || 0;
+        const borrowedToday = Number(subscription.borrowed_mah_today) || 0;
+        const lastQuotaReset = subscription.last_quota_reset;
+        
+        // DEBUG: Log quota values for troubleshooting
+        console.log(`🔍 DEBUG - Quota check for user ${user_id}:`, {
+            dailyLimit,
+            consumed,
+            borrowedToday,
+            lastQuotaReset: lastQuotaReset?.toISOString?.() || 'null'
+        });
+
+        // Check if we need to reset daily consumption (new day)
+        const now = new Date();
+        const lastResetDate = lastQuotaReset ? new Date(lastQuotaReset) : null;
+        const isNewDay = !lastResetDate || 
+            lastResetDate.getDate() !== now.getDate() || 
+            lastResetDate.getMonth() !== now.getMonth() || 
+            lastResetDate.getFullYear() !== now.getFullYear();
+
+        // Reset daily consumption if it's a new day
+        if (isNewDay && consumed > 0) {
+            await pool.query(`
+                UPDATE user_subscription 
+                SET current_daily_mah_consumed = 0, 
+                    last_quota_reset = NOW(),
+                    borrowed_mah_today = 0
+                WHERE user_id = $1 AND is_active = true
+            `, [user_id]);
+            
+            console.log(`Daily quota reset for user ${user_id}. Previous consumption: ${consumed} mAh`);
+            logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.SUBSCRIPTION, `Daily quota reset for user ${user_id}`, user_id);
+            
+            // Update consumed to 0 for this calculation
+            const updatedConsumed = 0;
+            
+            // Calculate available quota with proper logic
+            const dailyQuotaRemaining = Math.max(0, dailyLimit - updatedConsumed);
+            const borrowedQuotaAvailable = updatedConsumed >= dailyLimit ? borrowedToday : 0;
+            const availableQuota = Number(dailyQuotaRemaining) + Number(borrowedQuotaAvailable);
+            
+            // DEBUG: Log reset calculation
+            console.log(`🔍 DEBUG - After reset calculation for user ${user_id}:`, {
+                dailyQuotaRemaining,
+                borrowedQuotaAvailable,
+                availableQuota,
+                updatedConsumed
+            });
+
+            return {
+                canCharge: availableQuota > 0,
+                reason: availableQuota > 0 ? 'Quota available' : 'Daily quota reached. Please purchase an extension.',
+                availableQuota,
+                totalUsed: updatedConsumed,
+                dailyLimit,
+                borrowedToday
+            };
+        }
+
+        // Calculate available quota with proper logic
+        const dailyQuotaRemaining = Math.max(0, dailyLimit - consumed);
+        const borrowedQuotaAvailable = consumed >= dailyLimit ? borrowedToday : 0;
+        const availableQuota = Number(dailyQuotaRemaining) + Number(borrowedQuotaAvailable);
+
+        // DEBUG: Log calculation details
+        console.log(`🔍 DEBUG - Quota calculation for user ${user_id}:`, {
+            dailyQuotaRemaining,
+            borrowedQuotaAvailable,
+            availableQuota,
+            calculation: `${dailyLimit} - ${consumed} = ${dailyQuotaRemaining}, borrowed: ${borrowedQuotaAvailable}`
+        });
+
+        // User can charge if they have available quota
+        const canCharge = availableQuota > 0;
+
+        return {
+            canCharge,
+            reason: canCharge ? 'Quota available' : 'Daily quota reached. Please purchase an extension.',
+            availableQuota,
+            totalUsed: consumed,
+            dailyLimit,
+            borrowedToday
+        };
+    } catch (error) {
+        console.error('Error checking user quota:', error);
+        return { 
+            canCharge: false, 
+            reason: 'Error checking quota',
+            availableQuota: 0,
+            totalUsed: 0,
+            dailyLimit: 0,
+            borrowedToday: 0
+        };
+    }
+}
 
 // Send control command to a specific device (station) AND internal port number
 app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
@@ -528,12 +1257,13 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
     const internalPortNumber = parseInt(portNumber);
 
     try {
-        // Find the actual port_id (UUID) from charging_port table
+        // Find the actual port_id (UUID) and is_premium from charging_port table
         const portIdResult = await pool.query(
-            'SELECT port_id FROM charging_port WHERE device_mqtt_id = $1 AND port_number_in_device = $2',
+            'SELECT port_id, is_premium FROM charging_port WHERE device_mqtt_id = $1 AND port_number_in_device = $2',
             [deviceId, internalPortNumber]
         );
         const actualPortId = portIdResult.rows[0]?.port_id;
+        const isPremiumPort = portIdResult.rows[0]?.is_premium;
 
         if (!actualPortId) {
             console.warn(`API: Port not found for deviceId ${deviceId} and portNumber ${internalPortNumber}.`);
@@ -541,19 +1271,72 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
             return res.status(404).json({ error: `Port ${internalPortNumber} not found for device ${deviceId}.` });
         }
 
-        // Session Management Logic (Moved from MQTT handler to API handler)
+        // Session Management Logic with locking
         const sessionKey = `${deviceId}_${internalPortNumber}`;
-        let currentSessionId = activeChargerSessions[sessionKey];
+        
+        // Acquire lock before processing session management
+        let unlock;
+        try {
+            unlock = await acquireSessionLock(sessionKey);
+        } catch (lockError) {
+            console.error(`Failed to acquire session lock for ${sessionKey}:`, lockError);
+            logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Session lock timeout for ${sessionKey}: ${lockError.message}`);
+            return res.status(409).json({ 
+                error: 'Port is currently busy. Please try again in a moment.',
+                details: lockError.message 
+            });
+        }
+        
+        try {
+            let currentSessionId = activeChargerSessions[sessionKey];
 
-        if (command === CHARGER_STATES.ON) {
+            // Determine the port status to set in the DB
+            let newPortStatusForDb;
+            if (command === CHARGER_STATES.ON) {
+                newPortStatusForDb = isPremiumPort ? PORT_STATUS.CHARGING_PREMIUM : PORT_STATUS.CHARGING_FREE;
+            } else { // command === CHARGER_STATES.OFF
+                newPortStatusForDb = PORT_STATUS.AVAILABLE;
+            }
+
+            if (command === CHARGER_STATES.ON) {
             if (!user_id || !station_id) {
                 logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `Attempt to start session without user_id or station_id for ${sessionKey}`);
                 return res.status(400).json({ error: 'user_id and station_id are required to start a session.' });
             }
 
+            // Check user quota before allowing charging
+            const quotaCheck = await checkUserQuota(user_id);
+            if (!quotaCheck.canCharge) {
+                logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `User ${user_id} attempted to charge without available quota. Reason: ${quotaCheck.reason}`);
+                return res.status(403).json({ 
+                    error: quotaCheck.reason,
+                    quotaInfo: {
+                        availableQuota: quotaCheck.availableQuota,
+                        totalUsed: quotaCheck.totalUsed,
+                        dailyLimit: quotaCheck.dailyLimit,
+                        borrowedToday: quotaCheck.borrowedToday
+                    }
+                });
+            }
+
+            // Check user's active session count (slot limit)
+            const activeSessionCount = await checkUserActiveSessions(user_id);
+            if (activeSessionCount >= PREMIUM_USER_MAX_ACTIVE_SLOTS) {
+                const errorMessage = `You can only have ${PREMIUM_USER_MAX_ACTIVE_SLOTS} active charging session${PREMIUM_USER_MAX_ACTIVE_SLOTS > 1 ? 's' : ''} at a time. Please stop your current session before starting a new one.`;
+                logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `User ${user_id} attempted to start session but already has ${activeSessionCount} active sessions (limit: ${PREMIUM_USER_MAX_ACTIVE_SLOTS})`);
+                return res.status(409).json({ 
+                    error: errorMessage,
+                    slotInfo: {
+                        activeSessions: activeSessionCount,
+                        maxSlots: PREMIUM_USER_MAX_ACTIVE_SLOTS,
+                        limitReached: true
+                    }
+                });
+            }
+
             // Check if there's already an active session in DB for this port
             const existingActiveSession = await pool.query(
-                "SELECT session_id FROM charging_session WHERE port_id = $1 AND session_status = $2",
+                "SELECT session_id, user_id FROM charging_session WHERE port_id = $1 AND session_status = $2",
                 [actualPortId, SESSION_STATUS.ACTIVE]
             );
 
@@ -561,15 +1344,22 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                 // No active session found in DB, create a new one
                 const sessionResult = await pool.query(
                     'INSERT INTO charging_session (user_id, port_id, station_id, start_time, session_status, is_premium, energy_consumed_kwh, total_mah_consumed, last_status_update) VALUES ($1, $2, $3, NOW(), $4, $5, $6, $7, NOW()) RETURNING session_id',
-                    [user_id, actualPortId, station_id, SESSION_STATUS.ACTIVE, true, 0, 0] // Initialize energy and mAh consumed to 0
+                    [user_id, actualPortId, station_id, SESSION_STATUS.ACTIVE, isPremiumPort, 0, 0]
                 );
                 currentSessionId = sessionResult.rows[0].session_id;
                 activeChargerSessions[sessionKey] = currentSessionId;
                 console.log(`API: Started new charging session ${currentSessionId} for port ${actualPortId} (User: ${user_id})`);
                 logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `New charging session ${currentSessionId} started for ${sessionKey} by user ${user_id}`);
             } else {
-                // Session already active (e.g., backend restarted, or multiple ON commands)
+                // Session already active
                 currentSessionId = existingActiveSession.rows[0].session_id;
+                
+                // If the existing session is by a *different* user, it's occupied!
+                if (existingActiveSession.rows[0].user_id !== user_id) {
+                    logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `User ${user_id} tried to activate occupied port ${sessionKey}. Occupied by ${existingActiveSession.rows[0].user_id}.`);
+                    return res.status(409).json({ error: 'Port is currently occupied by another user.' });
+                }
+
                 activeChargerSessions[sessionKey] = currentSessionId; // Ensure in-memory map is updated
                 
                 // Update the last_status_update to reset inactivity timer
@@ -582,31 +1372,37 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                 logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Resuming active session ${currentSessionId} for ${sessionKey} by user ${user_id}`);
             }
 
-            // --- Start/Reset inactivity timer when charger is turned ON via API ---
+            // Start/Reset inactivity timer when charger is turned ON via API
             if (activePortTimers[sessionKey]) {
                 clearTimeout(activePortTimers[sessionKey].timerId);
+                console.log(`API: Cleared existing timer for ${sessionKey}`);
             }
             activePortTimers[sessionKey] = {
                 timerId: setTimeout(
                     () => handleInactivityTurnOff(deviceId, internalPortNumber, actualPortId, currentSessionId),
                     INACTIVITY_TIMEOUT_SECONDS * 1000
                 ),
-                lastConsumptionTime: Date.now() // Initialize last consumption time
+                lastConsumptionTime: Date.now()
             };
-            console.log(`API: Inactivity timer started for ${sessionKey}.`);
+            console.log(`API: Inactivity timer started for ${sessionKey}. Timer set for ${INACTIVITY_TIMEOUT_SECONDS} seconds. Session ID: ${currentSessionId}`);
 
         } else if (command === CHARGER_STATES.OFF) {
-            if (currentSessionId) {
-                // Get current consumption values before ending session
-                const sessionData = await pool.query(
-                    "SELECT energy_consumed_kwh, total_mah_consumed FROM charging_session WHERE session_id = $1",
-                    [currentSessionId]
-                );
-                
-                // --- REVISED LINES HERE ---
-                const energyConsumed = parseFloat(sessionData.rows[0]?.energy_consumed_kwh) || 0;
-                const mAhConsumed = parseFloat(sessionData.rows[0]?.total_mah_consumed) || 0;
-                // --- END REVISED LINES ---
+            // Check if the session is currently active by this user
+            const sessionCheck = await pool.query(
+                "SELECT session_id, user_id, energy_consumed_kwh, energy_consumed_mah FROM charging_session WHERE port_id = $1 AND session_status = $2",
+                [actualPortId, SESSION_STATUS.ACTIVE]
+            );
+
+            if (sessionCheck.rows.length > 0) {
+                const dbSession = sessionCheck.rows[0];
+                if (dbSession.user_id !== user_id) { // Ensure only the session owner can end it via API
+                    logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `User ${user_id} tried to end session ${dbSession.session_id} not owned by them.`);
+                    return res.status(403).json({ error: 'You can only end your own active session on this port.' });
+                }
+
+                currentSessionId = dbSession.session_id; // Set currentSessionId from DB
+                const energyConsumed = parseFloat(dbSession.energy_consumed_kwh) || 0;
+                const mAhConsumed = parseFloat(dbSession.energy_consumed_mah) || 0;
                 
                 // Calculate final cost
                 const sessionCost = await calculateSessionCost(currentSessionId, energyConsumed);
@@ -616,11 +1412,20 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                     "UPDATE charging_session SET end_time = NOW(), session_status = $1, last_status_update = NOW(), cost = $2 WHERE session_id = $3 AND session_status = $4",
                     [SESSION_STATUS.COMPLETED, sessionCost, currentSessionId, SESSION_STATUS.ACTIVE]
                 );
-                console.log(`API: Ended charging session ${currentSessionId} for port ${actualPortId}. Energy consumed: ${energyConsumed.toFixed(3)} kWh, ${mAhConsumed.toFixed(0)} mAh. Cost: $${sessionCost.toFixed(2)}`);
-                logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Session ${currentSessionId} ended for ${sessionKey}. Cost: $${sessionCost.toFixed(2)}`);
+console.log(`API: Ended charging session ${currentSessionId} for port ${actualPortId}. Energy consumed: ${energyConsumed.toFixed(3)} kWh, ${mAhConsumed.toFixed(0)} mAh. Cost: ₱${sessionCost.toFixed(2)}`);
+logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Session ${currentSessionId} ended for ${sessionKey}. Cost: ₱${sessionCost.toFixed(2)}`);
+                
+                // Update user's daily consumption
+                await pool.query(
+                    "UPDATE user_subscription SET current_daily_mah_consumed = COALESCE(current_daily_mah_consumed, 0) + $1 WHERE user_id = $2 AND is_active = true",
+                    [mAhConsumed, user_id]
+                );
+                console.log(`API: Updated daily consumption for user ${user_id} by ${mAhConsumed.toFixed(0)} mAh`);
+                
                 delete activeChargerSessions[sessionKey]; // Remove from tracking map
+                console.log(`API: Removed session ${currentSessionId} from tracking map for ${sessionKey}`);
 
-                // --- Clear inactivity timer when charger is turned OFF via API ---
+                // Clear inactivity timer when charger is turned OFF via API
                 if (activePortTimers[sessionKey]) {
                     clearTimeout(activePortTimers[sessionKey].timerId);
                     delete activePortTimers[sessionKey];
@@ -628,41 +1433,18 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                 }
 
             } else {
-                console.log(`API: Received OFF command for ${deviceId} Port ${internalPortNumber}, but no active session found to end in memory.`);
-                logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `OFF command for ${sessionKey} but no in-memory session. Checking DB...`);
-
-                // Check DB for active session if in-memory map is not definitive
-                const activeSessionCheck = await pool.query(
-                    "SELECT session_id, energy_consumed_kwh FROM charging_session WHERE port_id = $1 AND session_status = $2",
-                    [actualPortId, SESSION_STATUS.ACTIVE]
-                );
-                
-                if (activeSessionCheck.rows.length > 0) {
-                    const dbSessionId = activeSessionCheck.rows[0].session_id;
-                    // --- REVISED LINE HERE ---
-                    const energyConsumed = parseFloat(activeSessionCheck.rows[0].energy_consumed_kwh) || 0;
-                    // --- END REVISED LINE ---
-                    const sessionCost = await calculateSessionCost(dbSessionId, energyConsumed);
-
-                    // End the session found in DB
-                    await pool.query(
-                        "UPDATE charging_session SET end_time = NOW(), session_status = $1, last_status_update = NOW(), cost = $2 WHERE session_id = $3",
-                        [SESSION_STATUS.COMPLETED, sessionCost, dbSessionId]
-                    );
-                    console.log(`API: Ended charging session ${dbSessionId} found in DB for port ${actualPortId}. Cost: $${sessionCost.toFixed(2)}`);
-                    logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Session ${dbSessionId} ended (DB lookup) for ${sessionKey}. Cost: $${sessionCost.toFixed(2)}`);
-
-                    // Ensure timer is cleared if it somehow wasn't
-                    if (activePortTimers[sessionKey]) {
-                        clearTimeout(activePortTimers[sessionKey].timerId);
-                        delete activePortTimers[sessionKey];
-                    }
-                } else {
-                    console.warn(`API: No active session found in DB for ${sessionKey} either.`);
-                    logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `No active session found in DB for ${sessionKey} after OFF command.`);
-                }
+                console.log(`API: Received OFF command for ${deviceId} Port ${internalPortNumber}, but no active session found for user ${user_id}.`);
+                logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `OFF command for ${sessionKey} by user ${user_id} but no active session.`);
+                // If no session, still attempt to turn off the physical charger
             }
         }
+
+        // Update charging_port table for real-time status display in the main schema
+        await pool.query(
+            'UPDATE charging_port SET current_status = $1, is_occupied = $2, last_status_update = NOW() WHERE port_id = $3',
+            [newPortStatusForDb, (newPortStatusForDb === PORT_STATUS.CHARGING_FREE || newPortStatusForDb === PORT_STATUS.CHARGING_PREMIUM || newPortStatusForDb === PORT_STATUS.OCCUPIED), actualPortId]
+        );
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Port ${actualPortId} status set to '${newPortStatusForDb}' by API command '${command}'.`);
 
         // Publish MQTT command (payload remains the same for ESP32)
         const mqttPayload = JSON.stringify({ command: command, port_number: internalPortNumber });
@@ -680,46 +1462,21 @@ app.post('/api/devices/:deviceId/:portNumber/control', async (req, res) => {
                 deviceId, 
                 portNumber: internalPortNumber, 
                 command, 
-                sessionId: currentSessionId 
+                sessionId: currentSessionId
             });
         });
+
+        } finally {
+            // Always release the lock
+            unlock();
+        }
 
     } catch (error) {
         console.error('Error processing control command:', error);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error processing control command for ${deviceId}/${portNumber}: ${error.message}`);
-        res.status(500).json({ error: `Failed to process control command: ${error.message}` });
+        res.status(500).json({ error: 'Failed to process control command' });
     }
 });
-
-
-// --- Your Existing API Routes for overall application management ---
-// (These routes are for your 'stations', 'readings', 'users' tables from your diagram)
-// Example:
-/*
-app.get('/api/stations', async (req, res) => {
-    try {
-        const result = await pool.query('SELECT * FROM stations ORDER BY created_at DESC');
-        res.json(result.rows);
-    } catch (error) {
-        console.error('Error fetching stations:', error);
-        res.status(500).json({ error: 'Failed to fetch stations' });
-    }
-});
-app.get('/api/stations/:id', async (req, res) => { /* ... */ /* });
-app.post('/api/stations', async (req, res) => { /* ... */ /* });
-app.put('/api/stations/:id', async (req, res) => { /* ... */ /* });
-app.delete('/api/stations/:id', async (req, res) => { /* ... */ /* });
-
-app.get('/api/readings', async (req, res) => { /* ... */ /* });
-app.get('/api/stations/:id/readings', async (req, res) => { /* ... */ /* });
-app.post('/api/readings', async (req, res) => { /* ... */ /* });
-
-app.get('/api/users', async (req, res) => { /* ... */ /* });
-app.get('/api/users/:id', async (req, res) => { /* ... */ /* });
-app.post('/api/users', async (req, res) => { /* ... */ /* });
-app.put('/api/users/:id', async (req, res) => { /* ... */ /* });
-app.delete('/api/users/:id', async (req, res) => { /* ... */ /* });
-*/
 
 // --- Admin API Routes ---
 
@@ -799,6 +1556,7 @@ app.get('/api/admin/sessions/recent', supabaseAuthMiddleware, requireAdmin, asyn
                 cs.end_time,
                 EXTRACT(EPOCH FROM (COALESCE(cs.end_time, NOW()) - cs.start_time))/60 as duration,
                 cs.energy_consumed_kwh as energy,
+                cs.energy_consumed_mah as energy_mah,
                 cs.cost,
                 cs.session_status as status
             FROM 
@@ -885,189 +1643,327 @@ app.get('/api/admin/stations/battery', supabaseAuthMiddleware, requireAdmin, asy
     }
 });
 
-// Admin Users Management
-app.get('/api/admin/users', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
-    try {
-        const result = await pool.query(`
-            SELECT 
-                user_id, 
-                fname, 
-                lname, 
-                email, 
-                contact_number,
-                is_admin, 
-                created_at, 
-                last_login
-            FROM users
-            ORDER BY created_at DESC
-        `);
-        
-        res.json(result.rows);
-        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, 'Admin users list fetched successfully', req.user.user_id);
-    } catch (err) {
-        console.error('Admin users error:', err.message);
-        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Admin users error: ${err.message}`, req.user.user_id);
-        res.status(500).json({ error: 'Server error' });
-    }
-});
-
+//Create a new user
 app.post('/api/admin/users', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+    const { fname, lname, email, contact_number, is_admin, plan_id, password } = req.body;
+    // Note: Creating a Supabase Auth user from the backend requires admin privileges
+    // and is more complex. This example focuses on the public.users table.
+    // A complete solution would involve using the Supabase Admin SDK.
+    const client = await pool.connect();
     try {
-        const { fname, lname, email, contact_number, is_admin } = req.body;
-        
-        // In a real implementation, you'd also create the Supabase auth user
-        // For now, we'll just create the user in the database
-        const result = await pool.query(
+        await client.query('BEGIN');
+
+        // This is a placeholder for creating the auth.users entry.
+        // You would typically use a Supabase admin client for this.
+        // For now, we assume the user_id is created separately or you have a trigger.
+        // Let's assume a user_id is generated or passed in for this example.
+        // const { data: authUser, error: authError } = await supabase.auth.admin.createUser({ email, password, ... });
+        // if (authError) throw authError;
+        // const userId = authUser.user.id;
+
+        const newUserResult = await client.query(
             `INSERT INTO users (fname, lname, email, contact_number, is_admin, created_at)
              VALUES ($1, $2, $3, $4, $5, NOW())
-             RETURNING user_id, fname, lname, email, contact_number, is_admin, created_at`,
+             RETURNING user_id`,
             [fname, lname, email, contact_number, is_admin]
         );
-        
-        res.status(201).json(result.rows[0]);
-        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `New user ${result.rows[0].user_id} created by admin`, req.user.user_id);
+        const userId = newUserResult.rows[0].user_id;
+
+                    if (plan_id) {
+                // Get plan duration information
+                const planResult = await client.query(
+                    `SELECT duration_type, duration_value FROM subscription_plans WHERE plan_id = $1`,
+                    [plan_id]
+                );
+                
+                if (planResult.rows.length > 0) {
+                    const plan = planResult.rows[0];
+                    const endDate = new Date();
+                    
+                    // Calculate end date based on duration type and value
+                    switch (plan.duration_type) {
+                        case 'daily':
+                            endDate.setDate(endDate.getDate() + plan.duration_value);
+                            break;
+                        case 'weekly':
+                            endDate.setDate(endDate.getDate() + (plan.duration_value * 7));
+                            break;
+                        case 'monthly':
+                            endDate.setMonth(endDate.getMonth() + plan.duration_value);
+                            break;
+                        case 'quarterly':
+                            endDate.setMonth(endDate.getMonth() + (plan.duration_value * 3));
+                            break;
+                        case 'yearly':
+                            endDate.setFullYear(endDate.getFullYear() + plan.duration_value);
+                            break;
+                        default:
+                            // Fallback to monthly
+                            endDate.setMonth(endDate.getMonth() + 1);
+                    }
+                    
+                    await client.query(
+                        `INSERT INTO user_subscription (user_id, plan_id, start_date, end_date, is_active)
+                         VALUES ($1, $2, NOW(), $3, true)`,
+                        [userId, plan_id, endDate]
+                    );
+                }
+            }
+
+        await client.query('COMMIT');
+        res.status(201).json({ message: 'User created successfully', user_id: userId });
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `New user ${userId} created by admin`, req.user.user_id);
     } catch (err) {
+        await client.query('ROLLBACK');
         console.error('Create user error:', err.message);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Create user error: ${err.message}`, req.user.user_id);
         res.status(500).json({ error: 'Server error' });
+    } finally {
+        client.release();
     }
 });
 
+//Update a user
 app.put('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+    const { userId } = req.params;
+    const { fname, lname, contact_number, is_admin, plan_id } = req.body;
+    const client = await pool.connect();
+
     try {
-        const { userId } = req.params;
-        const { fname, lname, contact_number, is_admin } = req.body;
-        
-        const result = await pool.query(
-            `UPDATE users
-             SET fname = $1, lname = $2, contact_number = $3, is_admin = $4
-             WHERE user_id = $5
-             RETURNING user_id, fname, lname, email, contact_number, is_admin, created_at`,
+        await client.query('BEGIN');
+
+        // 1. Update user details
+        await client.query(
+            `UPDATE users SET fname = $1, lname = $2, contact_number = $3, is_admin = $4, updated_at = NOW()
+             WHERE user_id = $5`,
             [fname, lname, contact_number, is_admin, userId]
         );
-        
-        if (result.rows.length === 0) {
-            logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `Attempt to update non-existent user ${userId}`, req.user.user_id);
-            return res.status(404).json({ error: 'User not found' });
+
+        // 2. Get user's current active subscription
+        const currentSubResult = await client.query(
+            `SELECT user_subscription_id, plan_id FROM user_subscription
+             WHERE user_id = $1 AND is_active = true`,
+            [userId]
+        );
+        const currentSub = currentSubResult.rows[0];
+        const currentPlanId = currentSub?.plan_id;
+        const newPlanId = plan_id || null; // Handle empty string from form
+
+        // 3. Check if subscription needs to change
+        if (currentPlanId !== newPlanId) {
+            // Deactivate old subscription if it exists
+            if (currentSub) {
+                await client.query(
+                    `UPDATE user_subscription SET is_active = false, end_date = NOW()
+                     WHERE user_subscription_id = $1`,
+                    [currentSub.user_subscription_id]
+                );
+            }
+            // Add new subscription if a new plan was selected
+            if (newPlanId) {
+                // Get plan duration information
+                const planResult = await client.query(
+                    `SELECT duration_type, duration_value FROM subscription_plans WHERE plan_id = $1`,
+                    [newPlanId]
+                );
+                
+                if (planResult.rows.length > 0) {
+                    const plan = planResult.rows[0];
+                    const endDate = new Date();
+                    
+                    // Calculate end date based on duration type and value
+                    switch (plan.duration_type) {
+                        case 'daily':
+                            endDate.setDate(endDate.getDate() + plan.duration_value);
+                            break;
+                        case 'weekly':
+                            endDate.setDate(endDate.getDate() + (plan.duration_value * 7));
+                            break;
+                        case 'monthly':
+                            endDate.setMonth(endDate.getMonth() + plan.duration_value);
+                            break;
+                        case 'quarterly':
+                            endDate.setMonth(endDate.getMonth() + (plan.duration_value * 3));
+                            break;
+                        case 'yearly':
+                            endDate.setFullYear(endDate.getFullYear() + plan.duration_value);
+                            break;
+                        default:
+                            // Fallback to monthly
+                            endDate.setMonth(endDate.getMonth() + 1);
+                    }
+                    
+                    await client.query(
+                        `INSERT INTO user_subscription (user_id, plan_id, start_date, end_date, is_active)
+                         VALUES ($1, $2, NOW(), $3, true)`,
+                        [userId, newPlanId, endDate]
+                    );
+                }
+            }
         }
-        
-        res.json(result.rows[0]);
+
+        await client.query('COMMIT');
+        res.json({ message: 'User updated successfully' });
         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User ${userId} updated by admin`, req.user.user_id);
     } catch (err) {
+        await client.query('ROLLBACK');
         console.error('Update user error:', err.message);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Update user error for ${userId}: ${err.message}`, req.user.user_id);
         res.status(500).json({ error: 'Server error' });
-    }
-});
-
-app.delete('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
-    try {
-        const { userId } = req.params;
-        
-        // Check if user exists
-        const userCheck = await pool.query('SELECT user_id FROM users WHERE user_id = $1', [userId]);
-        if (userCheck.rows.length === 0) {
-            logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.API, `Attempt to delete non-existent user ${userId}`, req.user.user_id);
-            return res.status(404).json({ error: 'User not found' });
-        }
-        
-        // Delete user
-        await pool.query('DELETE FROM users WHERE user_id = $1', [userId]);
-        
-        res.json({ message: 'User deleted successfully' });
-        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User ${userId} deleted by admin`, req.user.user_id);
-    } catch (err) {
-        console.error('Delete user error:', err.message);
-        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Delete user error for ${userId}: ${err.message}`, req.user.user_id);
-        res.status(500).json({ error: 'Server error' });
+    } finally {
+        client.release();
     }
 });
 
 // Admin Stations Management
+
+//Delete a user
+app.delete('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+    const { userId } = req.params;
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        // Note: The order is important due to foreign key constraints.
+        // Delete related records before deleting the user.
+        await client.query('DELETE FROM payment WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM daily_energy_usage WHERE user_id = $1', [userId]);
+        // Cascading deletes for sessions and their consumption data
+        await client.query(`DELETE FROM consumption_data WHERE session_id IN (SELECT session_id FROM charging_session WHERE user_id = $1)`, [userId]);
+        await client.query('DELETE FROM charging_session WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM user_subscription WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM admin_profiles WHERE user_id = $1', [userId]);
+
+        // Finally, delete the user from the public.users table
+        const result = await client.query('DELETE FROM users WHERE user_id = $1', [userId]);
+        
+        // You would also need to delete the user from auth.users using the admin SDK
+        // await supabase.auth.admin.deleteUser(userId);
+
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        await client.query('COMMIT');
+        res.json({ message: 'User deleted successfully' });
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User ${userId} deleted by admin`, req.user.user_id);
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error('Delete user error:', err.message);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Delete user error for ${userId}: ${err.message}`, req.user.user_id);
+        res.status(500).json({ error: 'Server error' });
+    } finally {
+        client.release();
+    }
+});
+
+//Get all stations
 app.get('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     try {
         const result = await pool.query(`
             SELECT 
-                station_id, 
-                station_name, 
-                location_description, 
-                latitude, 
-                longitude,
-                solar_panel_wattage,
-                battery_capacity_kwh,
-                current_battery_level,
-                is_active,
-                created_at,
-                last_maintenance_date,
-                price_per_kwh, -- Include price_per_kwh
-                (SELECT COUNT(*) FROM charging_port WHERE station_id = s.station_id AND is_premium = false) as num_free_ports,
-                (SELECT COUNT(*) FROM charging_port WHERE station_id = s.station_id AND is_premium = true) as num_premium_ports
+                s.station_id, 
+                s.station_name, 
+                s.location_description, 
+                s.latitude, 
+                s.longitude,
+                s.solar_panel_wattage,
+                s.battery_capacity_mah,
+                s.current_battery_level,
+                s.is_active,
+                s.created_at,
+                s.last_maintenance_date,
+                s.price_per_mah,
+                COALESCE(s.device_mqtt_id, cp.device_mqtt_id, 'ESP32_CHARGER_STATION_001') as device_mqtt_id,
+                s.num_free_ports,
+                s.num_premium_ports,
+                COUNT(cp.port_id) as available_premium_ports
             FROM 
                 charging_station s
+            LEFT JOIN charging_port cp ON s.station_id = cp.station_id AND cp.is_premium = true
+            GROUP BY 
+                s.station_id, s.station_name, s.location_description, s.latitude, s.longitude,
+                s.solar_panel_wattage, s.battery_capacity_mah, s.current_battery_level,
+                s.is_active, s.created_at, s.last_maintenance_date, s.price_per_mah,
+                s.device_mqtt_id, cp.device_mqtt_id, s.num_free_ports, s.num_premium_ports
             ORDER BY 
-                created_at DESC
+                s.created_at DESC
         `);
         
         res.json(result.rows);
         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, 'Admin stations list fetched successfully', req.user.user_id);
     } catch (err) {
         console.error('Admin stations error:', err.message);
+        console.error('Full error:', err);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Admin stations error: ${err.message}`, req.user.user_id);
-        res.status(500).json({ error: 'Server error' });
+        res.status(500).json({ error: `Server error: ${err.message}` });
     }
 });
 
+//Create a new station
 app.post('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     try {
+        console.log('Received request body:', req.body);
+        console.log('User ID:', req.user.user_id);
+        
         const { 
             station_name, 
             location_description, 
             latitude, 
             longitude,
             solar_panel_wattage,
-            battery_capacity_kwh,
+            battery_capacity_mah,
+            device_mqtt_id,
             num_free_ports,
             num_premium_ports,
             is_active,
             current_battery_level,
-            price_per_kwh // New field
+            price_per_mah // New field
         } = req.body;
+        
+        console.log('Extracted values:', {
+            station_name, 
+            location_description, 
+            latitude, 
+            longitude,
+            solar_panel_wattage,
+            battery_capacity_mah,
+            device_mqtt_id,
+            num_free_ports,
+            num_premium_ports,
+            is_active,
+            current_battery_level,
+            price_per_mah
+        });
         
         const client = await pool.connect();
         
         try {
             await client.query('BEGIN');
             
+            console.log('About to insert station with values:', [station_name, location_description, latitude, longitude, solar_panel_wattage, 
+                 battery_capacity_mah, is_active, current_battery_level, price_per_mah, device_mqtt_id, num_free_ports, num_premium_ports]);
+            
             // Insert station
             const stationResult = await client.query(
                 `INSERT INTO charging_station 
                  (station_name, location_description, latitude, longitude, solar_panel_wattage, 
-                  battery_capacity_kwh, is_active, current_battery_level, created_at, price_per_kwh)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9)
+                  battery_capacity_mah, is_active, current_battery_level, created_at, price_per_mah, device_mqtt_id, num_free_ports, num_premium_ports)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11, $12)
                  RETURNING station_id`,
                 [station_name, location_description, latitude, longitude, solar_panel_wattage, 
-                 battery_capacity_kwh, is_active, current_battery_level, price_per_kwh]
+                 battery_capacity_mah, is_active, current_battery_level, price_per_mah, device_mqtt_id, num_free_ports, num_premium_ports]
             );
             
             const stationId = stationResult.rows[0].station_id;
             
-            // Create free ports
-            for (let i = 0; i < num_free_ports; i++) {
-                await client.query(
-                    `INSERT INTO charging_port 
-                     (station_id, port_number_in_device, is_premium, is_occupied, current_status, device_mqtt_id)
-                     VALUES ($1, $2, false, false, '${PORT_STATUS.AVAILABLE}', $3)`,
-                    [stationId, i + 1, `ESP32_CHARGER_STATION_${stationId.substring(0, 3)}`]
-                );
-            }
-            
-            // Create premium ports
+            // Create premium ports only (since system can only detect premium ports)
             for (let i = 0; i < num_premium_ports; i++) {
                 await client.query(
                     `INSERT INTO charging_port 
                      (station_id, port_number_in_device, is_premium, is_occupied, current_status, device_mqtt_id)
                      VALUES ($1, $2, true, false, '${PORT_STATUS.AVAILABLE}', $3)`,
-                    [stationId, num_free_ports + i + 1, `ESP32_CHARGER_STATION_${stationId.substring(0, 3)}`]
+                    [stationId, i + 1, device_mqtt_id]
                 );
             }
             
@@ -1083,11 +1979,14 @@ app.post('/api/admin/stations', supabaseAuthMiddleware, requireAdmin, async (req
         }
     } catch (err) {
         console.error('Create station error:', err.message);
+        console.error('Full error details:', err);
+        console.error('Request body:', req.body);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Create station error: ${err.message}`, req.user.user_id);
-        res.status(500).json({ error: 'Server error' });
+        res.status(500).json({ error: `Server error: ${err.message}` });
     }
 });
 
+//Update a station
 app.put('/api/admin/stations/:stationId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     try {
         const { stationId } = req.params;
@@ -1097,21 +1996,24 @@ app.put('/api/admin/stations/:stationId', supabaseAuthMiddleware, requireAdmin, 
             latitude, 
             longitude,
             solar_panel_wattage,
-            battery_capacity_kwh,
+            battery_capacity_mah,
+            device_mqtt_id,
+            num_free_ports,
+            num_premium_ports,
             is_active,
             current_battery_level,
-            price_per_kwh // New field
+            price_per_mah // New field
         } = req.body;
         
         const result = await pool.query(
             `UPDATE charging_station
              SET station_name = $1, location_description = $2, latitude = $3, longitude = $4,
-                 solar_panel_wattage = $5, battery_capacity_kwh = $6, is_active = $7, 
-                 current_battery_level = $8, price_per_kwh = $9
-             WHERE station_id = $10
+                 solar_panel_wattage = $5, battery_capacity_mah = $6, is_active = $7, 
+                 current_battery_level = $8, price_per_mah = $9, device_mqtt_id = $10, num_free_ports = $11, num_premium_ports = $12
+             WHERE station_id = $13
              RETURNING station_id`,
             [station_name, location_description, latitude, longitude, solar_panel_wattage,
-             battery_capacity_kwh, is_active, current_battery_level, price_per_kwh, stationId]
+             battery_capacity_mah, is_active, current_battery_level, price_per_mah, device_mqtt_id, num_free_ports, num_premium_ports, stationId]
         );
         
         if (result.rows.length === 0) {
@@ -1128,6 +2030,7 @@ app.put('/api/admin/stations/:stationId', supabaseAuthMiddleware, requireAdmin, 
     }
 });
 
+//Delete a station
 app.delete('/api/admin/stations/:stationId', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     try {
         const { stationId } = req.params;
@@ -1252,6 +2155,7 @@ app.get('/api/admin/sessions', supabaseAuthMiddleware, requireAdmin, async (req,
                 cs.end_time,
                 EXTRACT(EPOCH FROM (COALESCE(cs.end_time, NOW()) - cs.start_time))/60 as duration,
                 cs.energy_consumed_kwh as energy,
+                cs.energy_consumed_mah as energy_mah,
                 cs.cost,
                 cs.session_status as status
             FROM 
@@ -1278,6 +2182,7 @@ app.get('/api/admin/sessions', supabaseAuthMiddleware, requireAdmin, async (req,
     }
 });
 
+//Get revenue reports
 app.get('/api/admin/revenue', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     try {
         const { range = 'week' } = req.query;
@@ -1355,6 +2260,7 @@ app.get('/api/admin/revenue', supabaseAuthMiddleware, requireAdmin, async (req, 
     }
 });
 
+//Get usage reports
 app.get('/api/admin/usage', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
     try {
         const { range = 'week' } = req.query; // 'range' is currently not used in these specific queries, but kept for consistency
@@ -1365,6 +2271,7 @@ app.get('/api/admin/usage', supabaseAuthMiddleware, requireAdmin, async (req, re
                 s.station_name,
                 COUNT(cs.session_id) as sessions,
                 SUM(cs.energy_consumed_kwh) as energy,
+                SUM(cs.energy_consumed_mah) as energy_mah,
                 SUM(EXTRACT(EPOCH FROM (COALESCE(cs.end_time, NOW()) - cs.start_time))/60) as duration
             FROM 
                 charging_session cs
@@ -1528,6 +2435,7 @@ app.get('/api/sessions/:sessionId/consumption', async (req, res) => {
             `SELECT 
                 cs.session_id, 
                 cs.energy_consumed_kwh, 
+                cs.energy_consumed_mah,
                 cs.total_mah_consumed,
                 cs.start_time,
                 cs.end_time,
@@ -1593,6 +2501,7 @@ app.get('/api/sessions/:sessionId/consumption', async (req, res) => {
             status: session.session_status,
             duration_minutes: durationMinutes,
             energy_consumed_kwh: parseFloat(session.energy_consumed_kwh || 0).toFixed(3),
+            energy_consumed_mah: Math.round(session.energy_consumed_mah || 0),
             total_mah_consumed: Math.round(session.total_mah_consumed || 0),
             cost: parseFloat(session.cost || 0).toFixed(2), // Format cost
             avg_power_watts: Math.round(avgPower),
@@ -1611,6 +2520,18 @@ app.get('/api/sessions/:sessionId/consumption', async (req, res) => {
     }
 });
 
+// Get slot limit configuration for frontend
+app.get('/api/config/slot-limits', async (req, res) => {
+    try {
+        res.json({
+            premiumUserMaxActiveSlots: PREMIUM_USER_MAX_ACTIVE_SLOTS
+        });
+    } catch (error) {
+        console.error('Error getting slot limits config:', error);
+        res.status(500).json({ error: 'Failed to get slot limits configuration' });
+    }
+});
+
 // Get all active charging sessions
 app.get('/api/sessions/active', async (req, res) => {
     try {
@@ -1625,6 +2546,7 @@ app.get('/api/sessions/active', async (req, res) => {
                 cst.station_name,
                 cs.start_time,
                 cs.energy_consumed_kwh,
+                cs.energy_consumed_mah,
                 cs.total_mah_consumed,
                 cs.is_premium,
                 cs.last_status_update,
@@ -1638,9 +2560,10 @@ app.get('/api/sessions/active', async (req, res) => {
             JOIN 
                 charging_station cst ON cs.station_id = cst.station_id
             WHERE 
-                cs.session_status = '${SESSION_STATUS.ACTIVE}'
+                cs.session_status = $1
             ORDER BY 
-                cs.start_time DESC`
+                cs.start_time DESC`,
+            [SESSION_STATUS.ACTIVE]
         );
         
         // Format the response
@@ -1655,6 +2578,7 @@ app.get('/api/sessions/active', async (req, res) => {
             start_time: session.start_time,
             duration_minutes: Math.round(session.duration_minutes),
             energy_consumed_kwh: parseFloat(session.energy_consumed_kwh || 0).toFixed(3),
+            energy_consumed_mah: Math.round(session.energy_consumed_mah || 0),
             total_mah_consumed: Math.round(session.total_mah_consumed || 0),
             is_premium: session.is_premium,
             last_update: session.last_status_update
@@ -1674,24 +2598,26 @@ app.get('/api/user/subscription', supabaseAuthMiddleware, async (req, res) => {
     try {
         const { user_id } = req.user; // Get user_id from the authenticated request
 
-        // Fetch current active subscription for the user
+        // Fetch current active subscription for the user (check both is_active and end_date)
         const subscriptionResult = await pool.query(`
             SELECT
                 us.user_subscription_id,
                 us.start_date,
                 us.end_date,
                 us.is_active as status, -- Rename to status for frontend clarity
-                us.current_daily_mwh_consumed,
+                us.current_daily_mah_consumed,
                 sp.plan_id,
                 sp.plan_name,
                 sp.description,
                 sp.price,
-                sp.daily_mwh_limit,
+                sp.daily_mah_limit,
                 sp.max_session_duration_hours,
                 sp.fast_charging_access,
                 sp.priority_access,
                 sp.cooldown_percentage,
-                sp.cooldown_time_hour
+                sp.cooldown_time_hour,
+                sp.duration_type,
+                sp.duration_value
             FROM
                 user_subscription us
             JOIN
@@ -1699,6 +2625,7 @@ app.get('/api/user/subscription', supabaseAuthMiddleware, async (req, res) => {
             WHERE
                 us.user_id = $1
                 AND us.is_active = TRUE
+                AND us.end_date > NOW()
             ORDER BY us.start_date DESC
             LIMIT 1;
         `, [user_id]);
@@ -1727,7 +2654,7 @@ app.get('/api/user/subscription', supabaseAuthMiddleware, async (req, res) => {
         // Process subscription features for frontend display (e.g., create a list of strings)
         if (subscription) {
             const features = [];
-            if (subscription.daily_mwh_limit) features.push(`${subscription.daily_mwh_limit} MWh daily limit`);
+            if (subscription.daily_mah_limit) features.push(`${subscription.daily_mah_limit} mAh daily limit`);
             if (subscription.max_session_duration_hours) features.push(`${subscription.max_session_duration_hours} hour max session`);
             if (subscription.fast_charging_access) features.push('Fast Charging Access');
             if (subscription.priority_access) features.push('Priority Access');
@@ -1736,10 +2663,19 @@ app.get('/api/user/subscription', supabaseAuthMiddleware, async (req, res) => {
             }
             subscription.features = features;
 
+            // Calculate duration display text
+            if (subscription.duration_type && subscription.duration_value) {
+                const durationText = getDurationDisplayText(subscription.duration_type, subscription.duration_value);
+                subscription.duration_display = durationText;
+            }
+
             // Add a simulated 'next_billing_date' if not directly in DB
-            // Assuming monthly billing from start_date
-            const startDate = new Date(subscription.start_date);
-            subscription.next_billing_date = new Date(startDate.setMonth(startDate.getMonth() + 1));
+            // Calculate based on actual duration type and value
+            if (subscription.duration_type && subscription.duration_value) {
+                const startDate = new Date(subscription.start_date);
+                const nextBillingDate = calculateNextBillingDate(startDate, subscription.duration_type, subscription.duration_value);
+                subscription.next_billing_date = nextBillingDate;
+            }
         }
 
 
@@ -1749,6 +2685,115 @@ app.get('/api/user/subscription', supabaseAuthMiddleware, async (req, res) => {
         console.error('API Error fetching user subscription data:', err);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching subscription for user ${req.user?.user_id}: ${err.message}`);
         res.status(500).json({ error: 'Failed to fetch subscription data.' });
+    }
+});
+
+// Get all user subscriptions including discontinued/expired ones
+app.get('/api/user/subscription-history', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user; // Get user_id from the authenticated request
+
+        // Fetch ALL subscriptions for the user (active and inactive)
+        const subscriptionHistoryResult = await pool.query(`
+            SELECT
+                us.user_subscription_id,
+                us.start_date,
+                us.end_date,
+                us.is_active,
+                us.current_daily_mah_consumed,
+                us.created_at,
+                us.updated_at,
+                sp.plan_id,
+                sp.plan_name,
+                sp.description,
+                sp.price,
+                sp.daily_mah_limit,
+                sp.max_session_duration_hours,
+                sp.fast_charging_access,
+                sp.priority_access,
+                sp.cooldown_percentage,
+                sp.cooldown_time_hour,
+                sp.duration_type,
+                sp.duration_value,
+                CASE 
+                    WHEN us.is_active = false THEN 'Discontinued'
+                    WHEN us.end_date <= NOW() THEN 'Expired'
+                    WHEN us.is_active = true AND us.end_date > NOW() THEN 'Active'
+                    ELSE 'Unknown'
+                END as subscription_status
+            FROM
+                user_subscription us
+            JOIN
+                subscription_plans sp ON us.plan_id = sp.plan_id
+            WHERE
+                us.user_id = $1
+            ORDER BY us.start_date DESC;
+        `, [user_id]);
+
+        const subscriptionHistory = subscriptionHistoryResult.rows || [];
+
+        // Add duration display for each subscription
+        subscriptionHistory.forEach(subscription => {
+            if (subscription.duration_type && subscription.duration_value) {
+                let durationText = '';
+                if (subscription.duration_value === 1) {
+                    durationText = subscription.duration_type.slice(0, -2); // Remove 'ly' from 'monthly'
+                } else {
+                    durationText = `${subscription.duration_value} ${subscription.duration_type}`;
+                }
+                subscription.duration_display = durationText;
+            }
+        });
+
+        res.json({ 
+            subscription_history: subscriptionHistory,
+            total_subscriptions: subscriptionHistory.length,
+            active_subscriptions: subscriptionHistory.filter(sub => sub.subscription_status === 'Active').length,
+            discontinued_subscriptions: subscriptionHistory.filter(sub => sub.subscription_status === 'Discontinued').length,
+            expired_subscriptions: subscriptionHistory.filter(sub => sub.subscription_status === 'Expired').length
+        });
+        
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User ${user_id} fetched subscription history.`);
+    } catch (err) {
+        console.error('API Error fetching user subscription history:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching subscription history for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to fetch subscription history.' });
+    }
+});
+
+// Allows a user to cancel their own subscription
+app.post('/api/subscription/cancel', supabaseAuthMiddleware, async (req, res) => {
+    const { user_id } = req.user; // Get user_id from the verified JWT
+
+    try {
+        // Find the user's current active subscription
+        const { rows } = await pool.query(
+            `SELECT user_subscription_id FROM user_subscription
+             WHERE user_id = $1 AND is_active = true`,
+            [user_id]
+        );
+
+        const activeSubscription = rows[0];
+
+        if (!activeSubscription) {
+            return res.status(404).json({ error: 'No active subscription found to cancel.' });
+        }
+
+        // Deactivate the subscription by setting is_active to false and end_date to now
+        await pool.query(
+            `UPDATE user_subscription
+             SET is_active = false, end_date = NOW()
+             WHERE user_subscription_id = $1`,
+            [activeSubscription.user_subscription_id]
+        );
+
+        res.status(200).json({ message: 'Subscription cancelled successfully.' });
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User ${user_id} cancelled their subscription.`, user_id);
+
+    } catch (error) {
+        console.error(`Error cancelling subscription for user ${user_id}:`, error.message);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error cancelling subscription: ${error.message}`, user_id);
+        res.status(500).json({ error: 'Internal Server Error: Could not cancel subscription.' });
     }
 });
 
@@ -1768,6 +2813,7 @@ app.get('/api/user/usage', supabaseAuthMiddleware, async (req, res) => {
                 COUNT(session_id) as total_sessions,
                 COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(end_time, NOW()) - start_time))/60), 0) as total_duration_minutes,
                 COALESCE(SUM(energy_consumed_kwh), 0) as total_energy_kwh,
+                COALESCE(SUM(energy_consumed_mah), 0) as total_energy_mah,
                 COALESCE(SUM(cost), 0) as total_cost
             FROM
                 charging_session
@@ -1787,17 +2833,168 @@ app.get('/api/user/usage', supabaseAuthMiddleware, async (req, res) => {
 
         const usageData = usageResult.rows[0];
 
-        res.json({
+        const responseData = {
             totalSessions: parseInt(usageData.total_sessions || 0),
             totalDuration: parseFloat(usageData.total_duration_minutes || 0).toFixed(0), // Round to nearest minute
             totalEnergyKWH: parseFloat(usageData.total_energy_kwh || 0).toFixed(2), // 2 decimal places
+            totalEnergyMAH: parseFloat(usageData.total_energy_mah || 0).toFixed(2), // 2 decimal places
             totalCost: parseFloat(usageData.total_cost || 0).toFixed(2) // 2 decimal places
-        });
+        };
+
+        console.log(`API: User ${user_id} usage data:`, responseData);
+        console.log(`API: Raw database data:`, usageData);
+        res.json(responseData);
         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User ${user_id} fetched usage data.`);
     } catch (err) {
         console.error('API Error fetching user usage data:', err);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching usage for user ${req.user?.user_id}: ${err.message}`);
         res.status(500).json({ error: 'Failed to fetch usage data.' });
+    }
+});
+
+// Debug endpoint to check raw charging session data
+app.get('/api/user/usage/debug', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        
+        // Get all charging sessions for this user
+        const debugResult = await pool.query(`
+            SELECT 
+                session_id,
+                start_time,
+                end_time,
+                session_status,
+                energy_consumed_kwh,
+                energy_consumed_mah,
+                total_mah_consumed,
+                cost
+            FROM charging_session
+            WHERE user_id = $1
+            ORDER BY start_time DESC
+            LIMIT 10
+        `, [user_id]);
+        
+        console.log(`Debug: Raw charging sessions for user ${user_id}:`, debugResult.rows);
+        res.json({
+            user_id,
+            total_sessions: debugResult.rows.length,
+            sessions: debugResult.rows
+        });
+    } catch (err) {
+        console.error('Debug API Error:', err);
+        res.status(500).json({ error: 'Failed to fetch debug data.' });
+    }
+});
+
+// Get user devices
+app.get('/api/user/devices', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        
+        const result = await pool.query(`
+            SELECT 
+                device_id,
+                device_type,
+                device_name,
+                device_model,
+                battery_capacity_mah,
+                current_battery_level,
+                is_charging,
+                last_updated,
+                created_at
+            FROM user_devices 
+            WHERE user_id = $1
+            ORDER BY last_updated DESC
+        `, [user_id]);
+        
+        res.json(result.rows);
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User devices fetched for ${user_id}`);
+    } catch (err) {
+        console.error('API Error fetching user devices:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching devices for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to fetch device data.' });
+    }
+});
+
+// Manual endpoint to check and fix expired subscriptions (for testing)
+app.post('/api/admin/fix-expired-subscriptions', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+    try {
+        console.log('Manual check for expired subscriptions...');
+        
+        // Find and deactivate expired subscriptions
+        const expiredSubscriptions = await pool.query(
+            `UPDATE user_subscription 
+             SET is_active = false 
+             WHERE is_active = true 
+             AND end_date <= NOW()
+             RETURNING user_subscription_id, user_id, end_date, start_date`
+        );
+        
+        if (expiredSubscriptions.rows.length > 0) {
+            console.log(`Deactivated ${expiredSubscriptions.rows.length} expired subscriptions:`, expiredSubscriptions.rows);
+            res.json({ 
+                message: `Deactivated ${expiredSubscriptions.rows.length} expired subscriptions`,
+                deactivated: expiredSubscriptions.rows 
+            });
+        } else {
+            res.json({ 
+                message: 'No expired subscriptions found',
+                deactivated: []
+            });
+        }
+        
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Admin manually checked expired subscriptions`);
+    } catch (error) {
+        console.error('Error checking expired subscriptions:', error);
+        res.status(500).json({ error: 'Failed to check expired subscriptions' });
+    }
+});
+
+// Update user device information
+app.post('/api/user/devices', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        const { device_type, device_name, device_model, battery_capacity_mah, current_battery_level, is_charging } = req.body;
+        
+        // Check if device already exists for this user
+        const existingDevice = await pool.query(`
+            SELECT device_id FROM user_devices 
+            WHERE user_id = $1 AND device_type = $2 AND device_name = $3
+        `, [user_id, device_type, device_name]);
+        
+        if (existingDevice.rows.length > 0) {
+            // Update existing device
+            const result = await pool.query(`
+                UPDATE user_devices 
+                SET 
+                    device_model = $1,
+                    battery_capacity_mah = $2,
+                    current_battery_level = $3,
+                    is_charging = $4,
+                    last_updated = NOW(),
+                    updated_at = NOW()
+                WHERE device_id = $5
+                RETURNING *
+            `, [device_model, battery_capacity_mah, current_battery_level, is_charging, existingDevice.rows[0].device_id]);
+            
+            res.json(result.rows[0]);
+        } else {
+            // Create new device
+            const result = await pool.query(`
+                INSERT INTO user_devices 
+                (user_id, device_type, device_name, device_model, battery_capacity_mah, current_battery_level, is_charging)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+                RETURNING *
+            `, [user_id, device_type, device_name, device_model, battery_capacity_mah, current_battery_level, is_charging]);
+            
+            res.json(result.rows[0]);
+        }
+        
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `User device updated for ${user_id}`);
+    } catch (err) {
+        console.error('API Error updating user device:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error updating device for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to update device data.' });
     }
 });
 
@@ -1840,24 +3037,30 @@ app.get('/api/admin/users', supabaseAuthMiddleware, requireAdmin, async (req, re
     try {
         const result = await pool.query(`
             SELECT 
-                user_id, 
-                fname, 
-                lname, 
-                email, 
-                contact_number,
-                is_admin, 
-                created_at, 
-                last_login
-            FROM users
-            ORDER BY created_at DESC
+                u.user_id, u.fname, u.lname, u.email, u.contact_number, u.is_admin, u.created_at, u.last_login,
+                sub.plan_id,
+                sp.plan_name
+            FROM users u
+            LEFT JOIN user_subscription sub ON u.user_id = sub.user_id AND sub.is_active = true
+            LEFT JOIN subscription_plans sp ON sub.plan_id = sp.plan_id
+            ORDER BY u.created_at DESC
         `);
         
-        res.json(result.rows);
+        // Format the response to nest subscription data as the frontend expects
+        const formattedUsers = result.rows.map(user => ({
+            ...user,
+            subscription: user.plan_id ? {
+                plan_id: user.plan_id,
+                plan_name: user.plan_name
+            } : null
+        }));
+
+        res.json(formattedUsers);
         logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, 'Admin users list fetched successfully', req.user.user_id);
-    } catch (err) { // <--- This catch block is triggered
-        console.error('Admin users error:', err.message); // <--- THIS IS THE KEY!
+    } catch (err) {
+        console.error('Admin users error:', err.message);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Admin users error: ${err.message}`, req.user.user_id);
-        res.status(500).json({ error: 'Server error' }); // Sends the generic error to frontend
+        res.status(500).json({ error: 'Server error' });
     }
 });
 
@@ -1878,6 +3081,130 @@ app.get('/api/user/profile', supabaseAuthMiddleware, async (req, res) => {
     }
 });
 
+// --- Notification endpoints ---
+// Get user notifications
+app.get('/api/user/notifications', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        const { limit = 50, offset = 0 } = req.query;
+        
+        const result = await pool.query(`
+            SELECT 
+                notification_id,
+                notification_type,
+                notification_context,
+                notification_content,
+                is_read,
+                created_at
+            FROM notification 
+            WHERE user_id = $1
+            ORDER BY created_at DESC
+            LIMIT $2 OFFSET $3
+        `, [user_id, parseInt(limit), parseInt(offset)]);
+        
+        res.json(result.rows);
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Notifications fetched for user ${user_id}`);
+    } catch (err) {
+        console.error('API Error fetching notifications:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching notifications for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to fetch notifications.' });
+    }
+});
+
+// Get unread notification count
+app.get('/api/user/notifications/unread-count', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        
+        const result = await pool.query(`
+            SELECT COUNT(*) as unread_count
+            FROM notification 
+            WHERE user_id = $1 AND is_read = false
+        `, [user_id]);
+        
+        res.json({ unreadCount: parseInt(result.rows[0].unread_count) });
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Unread notification count fetched for user ${user_id}`);
+    } catch (err) {
+        console.error('API Error fetching unread count:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching unread count for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to fetch unread count.' });
+    }
+});
+
+// Mark notification as read
+app.put('/api/user/notifications/:notificationId/read', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        const { notificationId } = req.params;
+        
+        const result = await pool.query(`
+            UPDATE notification 
+            SET is_read = true, updated_at = NOW()
+            WHERE notification_id = $1 AND user_id = $2
+            RETURNING *
+        `, [notificationId, user_id]);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Notification not found' });
+        }
+        
+        res.json(result.rows[0]);
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Notification marked as read for user ${user_id}`);
+    } catch (err) {
+        console.error('API Error marking notification as read:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error marking notification as read for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to mark notification as read.' });
+    }
+});
+
+// Mark all notifications as read
+app.put('/api/user/notifications/mark-all-read', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        
+        const result = await pool.query(`
+            UPDATE notification 
+            SET is_read = true, updated_at = NOW()
+            WHERE user_id = $1 AND is_read = false
+            RETURNING notification_id
+        `, [user_id]);
+        
+        res.json({ 
+            message: 'All notifications marked as read',
+            updatedCount: result.rows.length 
+        });
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `All notifications marked as read for user ${user_id}`);
+    } catch (err) {
+        console.error('API Error marking all notifications as read:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error marking all notifications as read for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to mark all notifications as read.' });
+    }
+});
+
+// Delete notification
+app.delete('/api/user/notifications/:notificationId', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        const { notificationId } = req.params;
+        
+        const result = await pool.query(`
+            DELETE FROM notification 
+            WHERE notification_id = $1 AND user_id = $2
+            RETURNING notification_id
+        `, [notificationId, user_id]);
+        
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Notification not found' });
+        }
+        
+        res.json({ message: 'Notification deleted successfully' });
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Notification deleted for user ${user_id}`);
+    } catch (err) {
+        console.error('API Error deleting notification:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error deleting notification for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to delete notification.' });
+    }
+});
 
 // Error handling middleware (catches unhandled errors in async routes)
 app.use((err, req, res, next) => {
@@ -1886,14 +3213,18 @@ app.use((err, req, res, next) => {
     res.status(500).json({ error: 'Something went wrong!' });
 });
 
-// 404 handler for unmatched routes
-app.use('*', (req, res) => {
-    res.status(404).json({ error: 'Route not found' });
+// Debug endpoint - returns env loaded status
+app.get('/api/debug/env', (req, res) => {
+    res.json({
+        SUPABASE_JWKS_URL: process.env.SUPABASE_JWKS_URL || 'NOT SET',
+        SUPABASE_JWT_SECRET: process.env.SUPABASE_JWT_SECRET ? 'SET' : 'NOT SET'
+    });
 });
 
 // Start server
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+    console.log(`ENV - JWKS: ${process.env.SUPABASE_JWKS_URL || 'NOT SET'}, SECRET: ${process.env.SUPABASE_JWT_SECRET ? 'SET' : 'NOT SET'}`);
     logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Server started on port ${PORT}`);
 });
 
@@ -1915,6 +3246,7 @@ process.on('SIGINT', () => { // Handles Ctrl+C
     });
 });
 
+//Graceful shutdown handlers
 process.on('SIGTERM', () => { // Handles termination signals from Render
     console.log('Shutting down server (SIGTERM)...');
     logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, 'Server shutting down (SIGTERM)').finally(() => {
@@ -1933,62 +3265,68 @@ process.on('SIGTERM', () => { // Handles termination signals from Render
 });
 
 // --- Supabase JWT Authentication Middleware ---
-// Helper to get JWKS and verify JWT
 const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
-let cachedJwks = null;
-let cachedJwksAt = 0;
-async function getSupabaseJwks() {
-    if (cachedJwks && Date.now() - cachedJwksAt < 60 * 60 * 1000) return cachedJwks;
-    try {
-        const res = await fetch(SUPABASE_JWKS_URL);
-        if (!res.ok) throw new Error(`Failed to fetch JWKS: ${res.statusText}`);
-        const { keys } = await res.json();
-        cachedJwks = keys;
-        cachedJwksAt = Date.now();
-        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.AUTH, 'Successfully fetched Supabase JWKS');
-        return keys;
-    } catch (err) {
-        console.error('Failed to fetch JWKS:', err.message);
-        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.AUTH, `Failed to fetch Supabase JWKS: ${err.message}`);
-        throw err;
+const SUPABASE_JWKS_URL = process.env.SUPABASE_JWKS_URL;
+
+/** Reused RemoteJWKSet (jose caches keys internally). */
+let supabaseRemoteJwkSet = null;
+
+async function getSupabaseRemoteJwkSet() {
+    if (!SUPABASE_JWKS_URL) return null;
+    if (!supabaseRemoteJwkSet) {
+        const jose = await import('jose');
+        supabaseRemoteJwkSet = jose.createRemoteJWKSet(new URL(SUPABASE_JWKS_URL));
     }
+    return supabaseRemoteJwkSet;
 }
-function getKeyFromJwks(kid, jwks) {
-    return jwks.find(k => k.kid === kid);
-}
-function certToPEM(cert) {
-    // Convert x5c to PEM format
-    let pem = cert.match(/.{1,64}/g).join('\n');
-    pem = `-----BEGIN CERTIFICATE-----\n${pem}\n-----END CERTIFICATE-----\n`;
-    return pem;
-}
+
+// Verify Supabase JWT (ES256/RS256 via JWKS, or legacy HS256)
 async function verifySupabaseJWT(token) {
-     if (!SUPABASE_JWT_SECRET) {
-        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.AUTH, 'SUPABASE_JWT_SECRET environment variable is not set!');
-        throw new Error('Server misconfiguration: JWT secret is missing for HS256 verification.');
+    const decoded = jwt.decode(token, { complete: true });
+    if (!decoded?.header?.alg) {
+        throw new Error('Invalid token: missing algorithm');
     }
 
-    try {
-        // For HS256, you directly use the shared secret for verification
-        // The `kid` is not used in symmetric (HS256) verification against a JWKS.
-        return jwt.verify(token, SUPABASE_JWT_SECRET, { algorithms: ['HS256'] });
-    } catch (error) {
-        // Re-throw the error after logging for consistency
-        console.error('JWT verification error with HS256:', error.message);
-        throw error;
+    const alg = decoded.header.alg;
+    console.log('JWT verify: alg:', alg, 'JWKS_URL:', SUPABASE_JWKS_URL ? 'set' : 'not set', 'SECRET:', SUPABASE_JWT_SECRET ? 'set' : 'not set');
+
+    const jose = await import('jose');
+
+    if (alg === 'ES256' || alg === 'RS256') {
+        if (!SUPABASE_JWKS_URL) {
+            throw new Error('SUPABASE_JWKS_URL is required for ES256/RS256 tokens (current Supabase projects). Set it to https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json');
+        }
+        const JWKS = await getSupabaseRemoteJwkSet();
+        const { payload } = await jose.jwtVerify(token, JWKS);
+        console.log('JWT verified (asymmetric): sub=', payload?.sub);
+        return payload;
     }
+
+    if (alg === 'HS256') {
+        if (!SUPABASE_JWT_SECRET) {
+            throw new Error('SUPABASE_JWT_SECRET is required for HS256 (legacy) tokens');
+        }
+        const payload = jwt.verify(token, SUPABASE_JWT_SECRET, { algorithms: ['HS256'] });
+        console.log('JWT verified (HS256): sub=', payload?.sub);
+        return payload;
+    }
+
+    throw new Error(`Unsupported JWT algorithm: ${alg}`);
 }
 
 // Express middleware
 async function supabaseAuthMiddleware(req, res, next) {
     try {
         const auth = req.headers['authorization'];
+        console.log('Auth middleware called, auth present:', !!auth);
         if (!auth || !auth.startsWith('Bearer ')) {
             logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.AUTH, 'Missing or invalid Authorization header');
             return res.status(401).json({ error: 'Missing or invalid Authorization header' });
         }
         const token = auth.replace('Bearer ', '');
+        console.log('Token start:', token.substring(0, 50), '...');
         const payload = await verifySupabaseJWT(token);
+        console.log('JWT verified OK, user_id:', payload?.sub);
         req.user = {
             user_id: payload.sub,
             email: payload.email,
@@ -2021,16 +3359,24 @@ async function requireAdmin(req, res, next) {
     }
 }
 
-async function handleMqttStatusMessage(payload, deviceId, actualPortId) {
-    const { status, charger_state, timestamp } = payload;
+// Helper function to handle MQTT status messages and update DB
+async function handleMqttStatusMessage(payload, deviceId, actualPortId, isPremiumPort) {
+    const { status, charger_state, timestamp, port_number, event_type, reason } = payload;
     const currentTimestamp = new Date(timestamp);
 
     let mapped_current_status;
-    if (charger_state === CHARGER_STATES.ON) {
-        mapped_current_status = PORT_STATUS.OCCUPIED;
+
+    // Logic to map MQTT status/charger_state to DB enum (port_status)
+    if (status === 'offline') {
+        mapped_current_status = PORT_STATUS.OFFLINE;
+    } else if (charger_state === CHARGER_STATES.ON) {
+        // When the charger is ON, it's either free or premium charging
+        mapped_current_status = isPremiumPort ? PORT_STATUS.CHARGING_PREMIUM : PORT_STATUS.CHARGING_FREE;
     } else if (charger_state === CHARGER_STATES.OFF) {
+        // When the charger is OFF and not offline, it's available
         mapped_current_status = PORT_STATUS.AVAILABLE;
     } else {
+        // Default or unknown states
         mapped_current_status = PORT_STATUS.AVAILABLE;
     }
 
@@ -2052,14 +3398,102 @@ async function handleMqttStatusMessage(payload, deviceId, actualPortId) {
         [deviceId, actualPortId, status, charger_state, timestamp]
     );
 
-    // This is the line that needs correcting:
+    // This is the critical update to charging_port's current_status
     await pool.query(
         'UPDATE charging_port SET current_status = $1, is_occupied = $2, last_status_update = $3 WHERE port_id = $4',
-        [mapped_current_status, (charger_state === CHARGER_STATES.ON), currentTimestamp, actualPortId] // <-- CHANGE `status` to `mapped_current_status` here
+        [
+            mapped_current_status,
+            // is_occupied is true if the port is in a 'charging' or 'occupied' state
+            (mapped_current_status === PORT_STATUS.CHARGING_FREE ||
+             mapped_current_status === PORT_STATUS.CHARGING_PREMIUM ||
+             mapped_current_status === PORT_STATUS.OCCUPIED),
+            currentTimestamp,
+            actualPortId
+        ]
     );
     console.log(`MQTT: Updated status for ${deviceId} Port ${payload.port_number}: ${mapped_current_status}, Charger: ${charger_state}`);
     logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.MQTT, `Status update for ${deviceId} Port ${payload.port_number}: ${mapped_current_status}, Charger: ${charger_state}`);
+
+    if (event_type === 'PORT_FULL_READY') {
+        await handleFullChargeReadyEvent({
+            deviceId,
+            actualPortId,
+            portNumber: port_number,
+            reason
+        });
+    } else if (event_type === 'PORT_AUTO_OFF_FULL' || (reason === 'FULL_CHARGE' && charger_state === CHARGER_STATES.OFF)) {
+        await handleFullChargeDisconnectEvent({
+            actualPortId,
+            portNumber: port_number,
+            reason
+        });
+    }
+
+    if (Number.isInteger(port_number) && charger_state === CHARGER_STATES.OFF) {
+        const endReason = reason || status || 'device_reported_off';
+        const eventSource = event_type ? `${LOG_SOURCES.MQTT}:${event_type}` : LOG_SOURCES.MQTT;
+        await finalizeSessionFromDeviceEvent({
+            deviceId,
+            portNumberInDevice: port_number,
+            actualPortId,
+            endReason,
+            source: eventSource
+        });
+    }
 }
+
+async function reconcileStationState(stationId) {
+    if (!stationId) return;
+
+    const { rows: ports } = await pool.query(
+        `SELECT 
+            cp.port_id,
+            cp.device_mqtt_id,
+            cp.port_number_in_device,
+            cds.charger_state,
+            cds.last_update AS status_last_update
+        FROM charging_port cp
+        LEFT JOIN current_device_status cds ON cp.port_id = cds.port_id
+        WHERE cp.station_id = $1`,
+        [stationId]
+    );
+
+    for (const port of ports) {
+        if (!port.port_number_in_device || !port.device_mqtt_id) continue;
+
+        const activeSessionResult = await pool.query(
+            "SELECT session_id, last_status_update FROM charging_session WHERE port_id = $1 AND session_status = $2",
+            [port.port_id, SESSION_STATUS.ACTIVE]
+        );
+
+        if (activeSessionResult.rows.length === 0) {
+            continue;
+        }
+
+        const lastUpdate = port.status_last_update ? new Date(port.status_last_update) : null;
+        const secondsSinceUpdate = lastUpdate ? (Date.now() - lastUpdate.getTime()) / 1000 : Number.POSITIVE_INFINITY;
+        const sessionLastUpdate = activeSessionResult.rows[0].last_status_update ? new Date(activeSessionResult.rows[0].last_status_update) : null;
+        const secondsSinceSessionUpdate = sessionLastUpdate ? (Date.now() - sessionLastUpdate.getTime()) / 1000 : Number.POSITIVE_INFINITY;
+        const isStale = secondsSinceUpdate > DEVICE_STATUS_STALE_THRESHOLD_SECONDS;
+        const sessionInactiveLongEnough = secondsSinceSessionUpdate > DEVICE_STATUS_STALE_THRESHOLD_SECONDS;
+
+        if (isStale && sessionInactiveLongEnough) {
+            try {
+                await finalizeSessionFromDeviceEvent({
+                    deviceId: port.device_mqtt_id,
+                    portNumberInDevice: port.port_number_in_device,
+                    actualPortId: port.port_id,
+                    endReason: 'stale_status_sync',
+                    source: 'sync_reconciliation'
+                });
+            } catch (error) {
+                console.error(`Sync: Failed to finalize session for ${port.device_mqtt_id}_${port.port_number_in_device}:`, error);
+                logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.BACKEND, `Sync reconcile failed for port ${port.port_id}: ${error.message}`);
+            }
+        }
+    }
+}
+
 // Helper function to validate consumption readings
 function validateConsumption(consumption) {
     // If consumption is null, undefined, NaN, or negative, return 0
@@ -2077,7 +3511,125 @@ function validateConsumption(consumption) {
     return consumption;
 }
 
+// Helper function to get duration display text
+function getDurationDisplayText(durationType, durationValue) {
+    switch (durationType) {
+        case 'daily':
+            return durationValue === 1 ? '1 Day' : `${durationValue} Days`;
+        case 'weekly':
+            return durationValue === 1 ? '1 Week' : `${durationValue} Weeks`;
+        case 'monthly':
+            return durationValue === 1 ? '1 Month' : `${durationValue} Months`;
+        case 'quarterly':
+            return durationValue === 1 ? '3 Months' : `${durationValue * 3} Months`;
+        case 'yearly':
+            return durationValue === 1 ? '1 Year' : `${durationValue} Years`;
+        default:
+            return '1 Month';
+    }
+}
 
+// Helper function to calculate next billing date
+function calculateNextBillingDate(startDate, durationType, durationValue) {
+    const nextDate = new Date(startDate);
+    
+    switch (durationType) {
+        case 'daily':
+            nextDate.setDate(nextDate.getDate() + durationValue);
+            break;
+        case 'weekly':
+            nextDate.setDate(nextDate.getDate() + (durationValue * 7));
+            break;
+        case 'monthly':
+            nextDate.setMonth(nextDate.getMonth() + durationValue);
+            break;
+        case 'quarterly':
+            nextDate.setMonth(nextDate.getMonth() + (durationValue * 3));
+            break;
+        case 'yearly':
+            nextDate.setFullYear(nextDate.getFullYear() + durationValue);
+            break;
+        default:
+            nextDate.setMonth(nextDate.getMonth() + 1);
+    }
+    
+    return nextDate;
+}
+
+
+// --- Periodic check for expired subscriptions ---
+// This function will run every hour to check for expired subscriptions and deactivate them
+function setupExpiredSubscriptionChecker() {
+    setInterval(async () => {
+        try {
+            console.log('Checking for expired subscriptions...');
+            logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, 'Running expired subscription checker');
+            
+            // Find and deactivate expired subscriptions
+            const expiredSubscriptions = await pool.query(
+                `UPDATE user_subscription 
+                 SET is_active = false 
+                 WHERE is_active = true 
+                 AND end_date <= NOW()
+                 RETURNING user_subscription_id, user_id, end_date`
+            );
+            
+            if (expiredSubscriptions.rows.length > 0) {
+                console.log(`Deactivated ${expiredSubscriptions.rows.length} expired subscriptions:`, expiredSubscriptions.rows);
+                logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Deactivated ${expiredSubscriptions.rows.length} expired subscriptions`);
+            } else {
+                console.log('No expired subscriptions found');
+            }
+        } catch (error) {
+            console.error('Error checking expired subscriptions:', error);
+            logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.BACKEND, `Error checking expired subscriptions: ${error.message}`);
+        }
+    }, 60 * 60 * 1000); // Run every hour
+}
+
+// Background job to apply borrowed amounts as penalties the next day
+function setupBorrowedAmountProcessor() {
+    setInterval(async () => {
+        try {
+            console.log('Processing borrowed amounts for next day penalties...');
+            logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, 'Running borrowed amount processor');
+            
+            // Get all users with pending borrowed amounts from yesterday
+            const { rows } = await pool.query(`
+                SELECT user_subscription_id, user_id, borrowed_mah_pending, borrowed_mah_today
+                FROM user_subscription 
+                WHERE borrowed_mah_pending > 0 
+                AND last_borrow_date < CURRENT_DATE
+                AND is_active = true
+            `);
+            
+            for (const row of rows) {
+                // Calculate total deduction: borrowed amount + penalty
+                const totalDeduction = row.borrowed_mah_today + row.borrowed_mah_pending;
+                
+                // Apply the deduction by reducing the daily limit (stored as borrowed_mah_pending for next day)
+                await pool.query(`
+                    UPDATE user_subscription 
+                    SET borrowed_mah_pending = $1,
+                        borrowed_mah_today = 0,
+                        updated_at = NOW()
+                    WHERE user_subscription_id = $2
+                `, [totalDeduction, row.user_subscription_id]);
+                
+                console.log(`Applied ${totalDeduction} mAh deduction (${row.borrowed_mah_today} borrowed + ${row.borrowed_mah_pending} penalty) for user ${row.user_id}`);
+                logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.SUBSCRIPTION, 
+                    `Applied ${totalDeduction} mAh deduction for borrowed amount`, row.user_id);
+            }
+            
+            if (rows.length > 0) {
+                console.log(`Processed ${rows.length} borrowed amount penalties`);
+            }
+        } catch (error) {
+            console.error('Error processing borrowed amounts:', error);
+            logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.BACKEND, `Error processing borrowed amounts: ${error.message}`);
+        }
+    }, 60 * 60 * 1000); // Check every hour
+}
 
 // --- Periodic check for stale sessions ---
 // This function will run every 5 minutes to check for any active sessions
@@ -2104,8 +3656,9 @@ function setupStaleSessionChecker() {
                 JOIN 
                     charging_port cp ON cs.port_id = cp.port_id
                 WHERE 
-                    cs.session_status = '${SESSION_STATUS.ACTIVE}'
-                    AND cs.last_status_update < NOW() - INTERVAL '${INACTIVITY_TIMEOUT_SECONDS * 2} seconds'`,
+                    cs.session_status = $1
+                    AND cs.last_status_update < NOW() - INTERVAL '$2 seconds'`,
+                [SESSION_STATUS.ACTIVE, INACTIVITY_TIMEOUT_SECONDS * 2]
             );
             
             if (staleSessions.rows.length > 0) {
@@ -2142,9 +3695,9 @@ function setupStaleSessionChecker() {
                     // Mark the session as auto-completed in the database
                     await pool.query(
                         "UPDATE charging_session SET end_time = NOW(), session_status = $1, last_status_update = NOW(), cost = $2 WHERE session_id = $3",
-                        [SESSION_STATUS.COMPLETED, sessionCost, sessionId]
+                        [SESSION_STATUS.COMPLETED, sessionCost, session.session_id] // Corrected variable name
                     );
-                    logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Session ${session.session_id} marked auto-completed by stale checker. Cost: $${sessionCost.toFixed(2)}`);
+                    logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Session ${session.session_id} marked auto-completed by stale checker. Cost: ₱${sessionCost.toFixed(2)}`);
                     
                     // Clean up any in-memory tracking
                     if (session.device_mqtt_id && session.port_number_in_device) {
@@ -2175,5 +3728,505 @@ function setupStaleSessionChecker() {
     console.log(`Stale session checker set up to run every ${STALE_SESSION_CHECK_INTERVAL_MS / 1000 / 60} minutes.`);
 }
 
-// Call this function after the database connection is established
+// Call these functions after the database connection is established
 setupStaleSessionChecker();
+setupExpiredSubscriptionChecker();
+setupBorrowedAmountProcessor();
+setupDailyQuotaReset();
+
+// Get active sessions for a specific user
+app.get('/api/sessions/active/user', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { user_id } = req.user;
+        
+        const result = await pool.query(`
+            SELECT 
+                cs.session_id,
+                cs.start_time,
+                cs.total_mah_consumed,
+                cs.energy_consumed_kwh,
+                cp.port_number_in_device,
+                cp.device_mqtt_id,
+                s.station_name,
+                s.station_id
+            FROM charging_session cs
+            JOIN charging_port cp ON cs.port_id = cp.port_id
+            JOIN charging_station s ON cs.station_id = s.station_id
+            WHERE cs.user_id = $1 AND cs.session_status = $2
+            ORDER BY cs.start_time DESC
+        `, [user_id, SESSION_STATUS.ACTIVE]);
+        
+        res.json(result.rows);
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Active sessions fetched for user ${user_id}`);
+    } catch (err) {
+        console.error('Error fetching active user sessions:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching active sessions for user ${req.user?.user_id}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to fetch active sessions' });
+    }
+});
+
+// Get consumption data for a specific station and port
+app.get('/api/stations/:stationId/consumption', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { stationId } = req.params;
+        
+        const result = await pool.query(`
+            SELECT 
+                cp.port_number_in_device,
+                cp.device_mqtt_id,
+                COALESCE(cs.total_mah_consumed, 0) as total_mah,
+                COALESCE(cs.energy_consumed_kwh, 0) as energy_kwh,
+                cs.session_status,
+                cs.last_status_update as timestamp,
+                -- Get real-time current consumption from latest consumption_data
+                (SELECT cd.consumption_watts 
+                 FROM consumption_data cd 
+                 WHERE cd.device_id = cp.device_mqtt_id 
+                 AND cd.port_number = cp.port_number_in_device
+                 ORDER BY cd.timestamp DESC 
+                 LIMIT 1) as current_consumption_watts
+            FROM charging_port cp
+            LEFT JOIN charging_session cs ON cp.port_id = cs.port_id 
+                AND cs.session_status = 'active'
+            WHERE cp.station_id = $1 AND cp.is_premium = true
+            ORDER BY cp.port_number_in_device
+        `, [stationId]);
+        
+        // Transform the data to include current consumption calculation
+        const consumptionData = result.rows.map(row => {
+            const currentWatts = Number(row.current_consumption_watts) || 0;
+            const currentConsumption = currentWatts > 0 ? (currentWatts / NOMINAL_CHARGING_VOLTAGE_DC) * 1000 : 0;
+            
+            return {
+                port_number: row.port_number_in_device,
+                device_id: row.device_mqtt_id,
+                total_mah: Number(row.total_mah) || 0,
+                current_consumption: currentConsumption,
+                energy_kwh: Number(row.energy_kwh) || 0,
+                session_status: row.session_status,
+                timestamp: row.timestamp
+            };
+        });
+        
+        res.json(consumptionData);
+        logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Station consumption data fetched for ${stationId}`);
+    } catch (err) {
+        console.error('Error fetching station consumption:', err);
+        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Error fetching consumption for station ${stationId}: ${err.message}`);
+        res.status(500).json({ error: 'Failed to fetch consumption data' });
+    }
+});
+
+// Quota Extension Pricing Management
+app.get('/api/quota/pricing', async (req, res) => {
+    try {
+        const { rows } = await pool.query(`
+            SELECT extension_type, price_per_mah, base_fee, penalty_percentage, 
+                   min_purchase_mah, max_purchase_mah, is_active
+            FROM quota_extension_pricing 
+            WHERE is_active = true
+            ORDER BY extension_type
+        `);
+        
+        const pricing = {};
+        rows.forEach(row => {
+            pricing[row.extension_type] = {
+                price_per_mah: parseFloat(row.price_per_mah),
+                base_fee: parseFloat(row.base_fee),
+                penalty_percentage: parseFloat(row.penalty_percentage),
+                min_purchase_mah: parseFloat(row.min_purchase_mah),
+                max_purchase_mah: parseFloat(row.max_purchase_mah),
+                is_active: row.is_active
+            };
+        });
+        
+        res.json(pricing);
+    } catch (error) {
+        console.error('Error fetching quota pricing:', error);
+        res.status(500).json({ error: 'Failed to fetch pricing configuration' });
+    }
+});
+
+// Admin: Get quota pricing configuration
+app.get('/api/admin/quota/pricing', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+    try {
+        console.log('Admin quota pricing request from user:', req.user.user_id);
+        
+        const { rows } = await pool.query(`
+            SELECT extension_type, price_per_mah, base_fee, penalty_percentage, 
+                   min_purchase_mah, max_purchase_mah, is_active
+            FROM quota_extension_pricing 
+            ORDER BY extension_type
+        `);
+        
+        console.log('Database query result:', rows);
+        
+        const pricing = {};
+        rows.forEach(row => {
+            pricing[row.extension_type] = {
+                price_per_mah: parseFloat(row.price_per_mah),
+                base_fee: parseFloat(row.base_fee),
+                penalty_percentage: parseFloat(row.penalty_percentage),
+                min_purchase_mah: parseFloat(row.min_purchase_mah),
+                max_purchase_mah: parseFloat(row.max_purchase_mah),
+                is_active: row.is_active
+            };
+        });
+        
+        console.log('Sending pricing response:', pricing);
+        res.json(pricing);
+    } catch (error) {
+        console.error('Error fetching admin quota pricing:', error);
+        res.status(500).json({ error: 'Failed to fetch pricing configuration' });
+    }
+});
+
+// Admin: Update quota pricing configuration
+app.put('/api/admin/quota/pricing', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+    try {
+        const { direct_purchase, borrow_next_day } = req.body;
+        const adminUserId = req.user.id;
+        
+        // Update direct purchase pricing
+        if (direct_purchase) {
+            await pool.query(`
+                UPDATE quota_extension_pricing 
+                SET price_per_mah = $1, min_purchase_mah = $2, max_purchase_mah = $3, is_active = $4, updated_at = NOW()
+                WHERE extension_type = 'direct_purchase'
+            `, [
+                direct_purchase.price_per_mah,
+                direct_purchase.min_purchase_mah,
+                direct_purchase.max_purchase_mah,
+                direct_purchase.is_active
+            ]);
+        }
+        
+        // Update borrow next day pricing
+        if (borrow_next_day) {
+            await pool.query(`
+                UPDATE quota_extension_pricing 
+                SET base_fee = $1, penalty_percentage = $2, min_purchase_mah = $3, max_purchase_mah = $4, is_active = $5, updated_at = NOW()
+                WHERE extension_type = 'borrow_next_day'
+            `, [
+                borrow_next_day.base_fee,
+                borrow_next_day.penalty_percentage,
+                borrow_next_day.min_purchase_mah,
+                borrow_next_day.max_purchase_mah,
+                borrow_next_day.is_active
+            ]);
+        }
+        
+        // Log pricing change
+        await pool.query(`
+            INSERT INTO quota_pricing_history 
+            (admin_user_id, extension_type, old_price_per_mah, new_price_per_mah, 
+             old_base_fee, new_base_fee, old_penalty_percentage, new_penalty_percentage,
+             old_min_purchase_mah, new_min_purchase_mah, old_max_purchase_mah, new_max_purchase_mah)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        `, [
+            adminUserId,
+            'pricing_update',
+            null, null, null, null, null, null, null, null, null, null
+        ]);
+        
+        res.json({ message: 'Pricing updated successfully' });
+    } catch (error) {
+        console.error('Error updating quota pricing:', error);
+        res.status(500).json({ error: 'Failed to update pricing configuration' });
+    }
+});
+
+// User: Purchase quota extension
+app.post('/api/quota/purchase-extension', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { extensionType, amountMah, paymentMethod } = req.body;
+        const userId = req.user.user_id; // Fixed: should be user_id, not id
+        
+        console.log('Quota extension request:', { userId, extensionType, amountMah, paymentMethod });
+        console.log('User object:', req.user);
+        
+        // Get current pricing
+        const { rows: pricingRows } = await pool.query(`
+            SELECT * FROM quota_extension_pricing WHERE extension_type = $1 AND is_active = true
+        `, [extensionType]);
+        
+        if (pricingRows.length === 0) {
+            return res.status(400).json({ error: 'Extension type not available' });
+        }
+        
+        const pricing = pricingRows[0];
+        
+        // Validate amount
+        if (amountMah < pricing.min_purchase_mah || amountMah > pricing.max_purchase_mah) {
+            return res.status(400).json({ 
+                error: `Amount must be between ${pricing.min_purchase_mah} and ${pricing.max_purchase_mah} mAh` 
+            });
+        }
+        
+        // Calculate cost
+        let totalCost = 0;
+        let penaltyFee = 0;
+        
+        if (extensionType === 'direct_purchase') {
+            // Dynamic pricing based on admin configuration
+            const configuredAmount = pricing.extension_amount_mah || 1000;
+            const configuredPrice = pricing.price_per_transaction || 10;
+            
+            if (amountMah !== configuredAmount) {
+                return res.status(400).json({ 
+                    error: `Direct purchase is fixed at ${configuredAmount} mAh for ₱${configuredPrice}` 
+                });
+            }
+            totalCost = configuredPrice;
+        } else if (extensionType === 'borrow_next_day') {
+            // For borrow next day: base fee + penalty percentage on the borrowed amount
+            totalCost = parseFloat(pricing.base_fee);
+            penaltyFee = amountMah * (parseFloat(pricing.penalty_percentage) / 100);
+            totalCost += penaltyFee;
+        }
+        
+        // Get user's active subscription
+        const { rows: subscriptionRows } = await pool.query(`
+            SELECT user_subscription_id FROM user_subscription 
+            WHERE user_id = $1 AND is_active = true
+            ORDER BY created_at DESC LIMIT 1
+        `, [userId]);
+        
+        console.log('Subscription query result:', { userId, subscriptionRows });
+        
+        if (subscriptionRows.length === 0) {
+            return res.status(400).json({ error: 'No active subscription found' });
+        }
+        
+        const subscriptionId = subscriptionRows[0].user_subscription_id;
+        
+        // Handle extension logic based on type
+        if (extensionType === 'borrow_next_day') {
+            // Update user subscription to track borrowed amount (penalty only stored for tomorrow)
+            await pool.query(`
+                UPDATE user_subscription 
+                SET borrowed_mah_today = COALESCE(borrowed_mah_today, 0) + $1,
+                    borrowed_mah_pending = COALESCE(borrowed_mah_pending, 0) + $2,
+                    last_borrow_date = CURRENT_DATE,
+                    updated_at = NOW()
+                WHERE user_subscription_id = $3
+            `, [amountMah, penaltyFee, subscriptionId]);
+        } else if (extensionType === 'direct_purchase') {
+            // For direct purchase, create pending extension that requires PayPal payment
+            
+            // Get the PayPal link from pricing configuration
+            const { rows: pricingRows } = await pool.query(`
+                SELECT paypal_link FROM quota_extension_pricing 
+                WHERE extension_type = 'direct_purchase' AND is_active = true
+                ORDER BY created_at DESC LIMIT 1
+            `);
+            
+            const paypalLink = pricingRows.length > 0 ? pricingRows[0].paypal_link : null;
+            
+            if (!paypalLink) {
+                return res.status(400).json({ error: 'PayPal link not configured for direct purchase' });
+            }
+            
+            // Create extension record with pending status (using database auto-generated id)
+            const { rows: extensionRows } = await pool.query(`
+                INSERT INTO quota_extensions 
+                (user_id, subscription_id, extension_type, purchased_amount_mah, 
+                 price_per_mah, base_fee, penalty_fee, total_cost, payment_status, payment_reference)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                RETURNING id
+            `, [
+                userId, subscriptionId, extensionType, amountMah,
+                0, 0, 0, totalCost, // No price_per_mah, base_fee, penalty_fee for direct purchase
+                'pending', 'paypal'
+            ]);
+            
+            res.json({
+                extensionId: extensionRows[0].id,
+                totalCost: totalCost,
+                paypalLink: paypalLink,
+                requiresPayment: true,
+                message: 'Extension request created. Please complete PayPal payment to activate your quota extension.'
+            });
+            return;
+        }
+        
+        // Create extension record
+        const { rows: extensionRows } = await pool.query(`
+            INSERT INTO quota_extensions 
+            (user_id, subscription_id, extension_type, purchased_amount_mah, 
+             price_per_mah, base_fee, penalty_fee, total_cost, payment_status, payment_reference)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            RETURNING id
+        `, [
+            userId, subscriptionId, extensionType, amountMah,
+            pricing.price_per_mah, pricing.base_fee, penaltyFee, totalCost,
+            'pending', paymentMethod
+        ]);
+        
+        res.json({
+            extensionId: extensionRows[0].id,
+            totalCost: totalCost,
+            message: extensionType === 'borrow_next_day' 
+                ? `Borrowed ${amountMah} mAh for today. ${penaltyFee} mAh penalty will be applied tomorrow.`
+                : `Successfully purchased ${amountMah} mAh extension. Your daily quota has been increased.`
+        });
+        
+    } catch (error) {
+        console.error('Error creating quota extension:', error);
+        res.status(500).json({ error: 'Failed to create extension request' });
+    }
+});
+
+// User: Check current quota status
+app.get('/api/user/quota-status', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const userId = req.user.user_id;
+        const quotaCheck = await checkUserQuota(userId);
+        
+        res.json({
+            canCharge: quotaCheck.canCharge,
+            reason: quotaCheck.reason,
+            quotaInfo: {
+                availableQuota: quotaCheck.availableQuota,
+                totalUsed: quotaCheck.totalUsed,
+                dailyLimit: quotaCheck.dailyLimit,
+                borrowedToday: quotaCheck.borrowedToday
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching quota status:', error);
+        res.status(500).json({ error: 'Failed to fetch quota status' });
+    }
+});
+
+// User: Check extension status
+app.get('/api/quota/extension-status/:extensionId', supabaseAuthMiddleware, async (req, res) => {
+    try {
+        const { extensionId } = req.params;
+        const userId = req.user.user_id; // Fixed: should be user_id, not id
+        
+        const { rows } = await pool.query(`
+            SELECT * FROM quota_extensions 
+            WHERE id = $1 AND user_id = $2
+        `, [extensionId, userId]);
+        
+        if (rows.length === 0) {
+            return res.status(404).json({ error: 'Extension not found' });
+        }
+        
+        res.json(rows[0]);
+    } catch (error) {
+        console.error('Error fetching extension status:', error);
+        res.status(500).json({ error: 'Failed to fetch extension status' });
+    }
+});
+
+// Admin: Get all extension requests
+app.get('/api/admin/quota/extensions', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+    try {
+        const { rows } = await pool.query(`
+            SELECT qe.*, up.email as user_email, sp.plan_name
+            FROM quota_extensions qe
+            LEFT JOIN user_profiles up ON qe.user_id = up.user_id
+            LEFT JOIN user_subscription us ON qe.subscription_id = us.user_subscription_id
+            LEFT JOIN subscription_plans sp ON us.plan_id = sp.plan_id
+            ORDER BY qe.created_at DESC
+        `);
+        
+        res.json(rows);
+    } catch (error) {
+        console.error('Error fetching admin extensions:', error);
+        res.status(500).json({ error: 'Failed to fetch extensions' });
+    }
+});
+
+// Admin: Confirm payment for extension
+app.put('/api/admin/quota/extensions/:extensionId/confirm-payment', supabaseAuthMiddleware, requireAdmin, async (req, res) => {
+    try {
+        const { extensionId } = req.params;
+        const { paymentReference } = req.body;
+        
+        // Get extension details first
+        const { rows: extensionRows } = await pool.query(`
+            SELECT * FROM quota_extensions WHERE id = $1
+        `, [extensionId]);
+        
+        if (extensionRows.length === 0) {
+            return res.status(404).json({ error: 'Extension not found' });
+        }
+        
+        const extension = extensionRows[0];
+        
+        // Update extension status to completed
+        await pool.query(`
+            UPDATE quota_extensions 
+            SET payment_status = 'completed', payment_reference = $1, updated_at = NOW()
+            WHERE id = $2
+        `, [paymentReference, extensionId]);
+        
+        // Apply the extension to user's subscription for direct purchase
+        if (extension.extension_type === 'direct_purchase') {
+            await pool.query(`
+                UPDATE user_subscription 
+                SET borrowed_mah_today = COALESCE(borrowed_mah_today, 0) + $1,
+                    updated_at = NOW()
+                WHERE user_subscription_id = $2
+            `, [extension.purchased_amount_mah, extension.subscription_id]);
+        }
+        
+        res.json({ 
+            success: true, 
+            message: 'Payment confirmed and extension applied successfully' 
+        });
+    } catch (error) {
+        console.error('Error confirming payment:', error);
+        res.status(500).json({ error: 'Failed to confirm payment' });
+    }
+});
+
+// 404 handler for unmatched routes (must be at the end)
+app.use('*', (req, res) => {
+    res.status(404).json({ error: 'Route not found' });
+});
+
+// Background job to reset daily consumption for all users at midnight
+function setupDailyQuotaReset() {
+    setInterval(async () => {
+        try {
+            const now = new Date();
+            // Only run at midnight (00:00)
+            if (now.getHours() === 0 && now.getMinutes() === 0) {
+                console.log('Running daily quota reset for all users...');
+                logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, 'Running daily quota reset');
+                
+                // Reset daily consumption for all active users
+                const { rows } = await pool.query(`
+                    UPDATE user_subscription 
+                    SET current_daily_mah_consumed = 0, 
+                        last_quota_reset = NOW(),
+                        borrowed_mah_today = 0
+                    WHERE is_active = true 
+                    AND (current_daily_mah_consumed > 0 OR borrowed_mah_today > 0)
+                    RETURNING user_subscription_id, user_id, current_daily_mah_consumed, borrowed_mah_today
+                `);
+                
+                if (rows.length > 0) {
+                    console.log(`Reset daily quota for ${rows.length} users`);
+                    logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Reset daily quota for ${rows.length} users`);
+                    
+                    // Log individual resets for debugging
+                    rows.forEach(row => {
+                        console.log(`Reset user ${row.user_id}: consumed=${row.current_daily_mah_consumed} mAh, borrowed=${row.borrowed_mah_today} mAh`);
+                    });
+                } else {
+                    console.log('No users needed daily quota reset');
+                }
+            }
+        } catch (error) {
+            console.error('Error during daily quota reset:', error);
+            logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.BACKEND, `Error during daily quota reset: ${error.message}`);
+        }
+    }, 60 * 1000); // Check every minute
+}
+
+// --- Periodic check for expired subscriptions ---

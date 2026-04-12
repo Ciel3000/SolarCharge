@@ -1,15 +1,27 @@
-
+// src/supabaseClient.js
 import { createClient } from '@supabase/supabase-js';
 
-// Supabase Project URL and Public Key (anon key)
-// IMPORTANT: Replace these with your actual Supabase project URL and anon key.
-// For production, these should be loaded from environment variables.
-const supabaseUrl = process.env.REACT_APP_SUPABASE_URL || 'https://bhiitpltxlcgefugftre.supabase.co'; // e.g., 'https://abcde12345.supabase.co'
-const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJoaWl0cGx0eGxjZ2VmdWdmdHJlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTE0MTU3MjIsImV4cCI6MjA2Njk5MTcyMn0.FtpPRGIP5gXIIo84gyB-DJq2npGxrEDmvd2mEPvmxzo'; // e.g., 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
+// *** ABSOLUTELY ESSENTIAL DEBUG LOGS - DO NOT REMOVE ***
+console.log('--- SUPABASE CLIENT DEBUG START ---');
+console.log('Current directory (from process.cwd if available):', typeof process !== 'undefined' && process.cwd ? process.cwd() : 'N/A');
+console.log('Attempting to read environment variables...');
+console.log('Full process.env object:', typeof process !== 'undefined' && process.env ? process.env : 'process.env is undefined/not accessible');
 
-// Create a single Supabase client for your application
+const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
+const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
+
+console.log('Value of REACT_APP_SUPABASE_URL (read from env):', supabaseUrl);
+console.log('Value of REACT_APP_SUPABASE_ANON_KEY (read from env, first 5 chars):', supabaseAnonKey ? supabaseAnonKey.substring(0, 5) + '...' : 'N/A');
+console.log('--- SUPABASE CLIENT DEBUG END ---');
+// ******************************************************
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  console.error('ERROR: Supabase URL or Anon Key is missing. Check .env in root and ensure REACT_APP_ prefix.');
+  console.error('supabaseUrl:', supabaseUrl);
+  console.error('supabaseAnonKey:', supabaseAnonKey ? 'SET' : 'NOT SET');
+  throw new Error('Supabase credentials are not set. Please check your .env file.');
+}
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-console.log('Supabase client initialized.');
-console.log('Supabase URL:', supabaseUrl);
-console.log('Supabase Anon Key (first 5 chars):', supabaseAnonKey ? supabaseAnonKey.substring(0, 5) + '...' : 'N/A');
+console.log('Supabase client creation attempted.');
