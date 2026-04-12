@@ -14,6 +14,8 @@ import HomePage from './pages/HomePage';
 import LandingPage from './pages/LandingPagePublic';
 import LoginPage from './pages/LoginPage';
 import SignUpPage from './pages/SignUpPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import SubscriptionPage from './pages/SubscriptionPage';
 import UsagePage from './pages/UsagePage';
 import StationPage from './pages/StationPage';
@@ -35,7 +37,7 @@ import AdminQuotaPricing from './pages/AdminQuotaPricing';
 // ---
 // AppContent component to house routing logic and context consumers
 function AppContent() {
-  const { session, isAdmin, isLoading, signOut, subscription, error, clearError, recoverSession, isRecovering } = useAuth();
+  const { session, isAdmin, isLoading, signOut, error, clearError, recoverSession, isRecovering } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -213,10 +215,12 @@ function AppContent() {
 
   // Determine if Navigation component should be shown
   const showNavigation = session 
-    ? !['/login', '/signup', '/landing'].includes(location.pathname)
-    : ![].includes(location.pathname);
+    ? !['/login', '/signup', '/landing', '/forgot-password', '/reset-password'].includes(location.pathname)
+    : !['/forgot-password', '/reset-password'].includes(location.pathname);
   
+  // eslint-disable-next-line no-unused-vars
   const showAdminNavigation = showNavigation && isAdmin;
+  // eslint-disable-next-line no-unused-vars
   const showUserNavigation = showNavigation && !isAdmin;
 
   // Show error message if there's an auth error
@@ -375,6 +379,16 @@ function AppContent() {
           <Route
             path="/login"
             element={<LoginPage navigateTo={navigateTo} message={globalMessage} />}
+          />
+
+          <Route
+            path="/forgot-password"
+            element={<ForgotPasswordPage navigateTo={navigateTo} />}
+          />
+
+          <Route
+            path="/reset-password"
+            element={<ResetPasswordPage navigateTo={navigateTo} />}
           />
 
           <Route
