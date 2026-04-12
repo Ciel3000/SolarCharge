@@ -4,6 +4,27 @@ import { supabase } from '../supabaseClient';
 
 const AuthContext = createContext(null);
 
+/** JWT payloads are base64url; atob() expects base64 and fails on many real tokens without this. */
+function decodeJwtPayload(accessToken) {
+  if (!accessToken || typeof accessToken !== 'string') return null;
+  const parts = accessToken.split('.');
+  if (parts.length < 2) return null;
+  try {
+    let base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const pad = base64.length % 4;
+    if (pad) base64 += '='.repeat(4 - pad);
+    return JSON.parse(atob(base64));
+  } catch (e) {
+    console.error('AuthContext: JWT payload decode failed:', e);
+    return null;
+  }
+}
+
+const getBackendBaseUrl = () => {
+  const raw = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
+  return String(raw).replace(/\/$/, '');
+};
+
 export const AuthProvider = ({ children }) => {
   const [session, setSession] = useState(null);
   const [user, setUser] = useState(null);
@@ -31,16 +52,10 @@ export const AuthProvider = ({ children }) => {
   // --- Check if session is expired ---
   const isSessionExpired = useCallback((currentSession) => {
     if (!currentSession?.access_token) return true;
-    
-    try {
-      // Decode JWT token to check expiration
-      const payload = JSON.parse(atob(currentSession.access_token.split('.')[1]));
-      const currentTime = Math.floor(Date.now() / 1000);
-      return payload.exp < currentTime;
-    } catch (error) {
-      console.error("AuthContext: Error checking session expiration:", error);
-      return true; // Assume expired if we can't decode
-    }
+    const payload = decodeJwtPayload(currentSession.access_token);
+    if (!payload || typeof payload.exp !== 'number') return true;
+    const currentTime = Math.floor(Date.now() / 1000);
+    return payload.exp < currentTime;
   }, []);
 
   // --- Helper to check admin status by calling backend API ---
@@ -50,16 +65,21 @@ export const AuthProvider = ({ children }) => {
       return;
     }
     try {
-      const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/me`, {
+      const res = await fetch(`${getBackendBaseUrl()}/api/me`, {
         headers: { Authorization: `Bearer ${currentSession.access_token}` },
       });
 
       if (res.ok) {
         const userData = await res.json();
         setIsAdmin(userData.is_admin);
+        setError(null);
       } else if (res.status === 401) {
-        console.error("AuthContext: Unauthorized - session may be expired");
-        handleSessionTimeout();
+        // Supabase session can be valid while the API rejects the token (wrong JWKS/JWT secret, or old deployed backend).
+        console.error('AuthContext: Backend returned 401 for /api/me — check REACT_APP_BACKEND_URL and backend SUPABASE_JWKS_URL');
+        setIsAdmin(false);
+        setError(
+          'The API server could not verify your login. On localhost, run the backend (port 3001) and set the same Supabase project in backend SUPABASE_JWKS_URL as in your frontend .env.'
+        );
       } else {
         console.error("AuthContext: Failed to fetch /api/me status:", res.status, await res.text());
         setIsAdmin(false);
@@ -300,7 +320,8 @@ export const AuthProvider = ({ children }) => {
 
     // Calculate time until session expires
     try {
-      const payload = JSON.parse(atob(session.access_token.split('.')[1]));
+      const payload = decodeJwtPayload(session.access_token);
+      if (!payload || typeof payload.exp !== 'number') return;
       const currentTime = Math.floor(Date.now() / 1000);
       const timeUntilExpiry = (payload.exp - currentTime) * 1000; // Convert to milliseconds
       

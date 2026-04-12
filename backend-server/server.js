@@ -1,8 +1,10 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const { Pool } = require('pg');
 const mqtt = require('mqtt');
-require('dotenv').config(); // Load environment variables from .env file
+// Load .env from this folder so JWT/DB vars work even if node is started from the repo root
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const jwt = require('jsonwebtoken'); // For JWT decode/verify
 
 const app = express();
@@ -114,6 +116,7 @@ const LOG_SOURCES = {
 // Middleware
 const allowedOrigins = [
     'http://localhost:3000', // Your local frontend development server
+    /^http:\/\/localhost:\d+$/, // Any localhost port (for dev environments)
     // Allow local network access (for testing from other devices)
     /^http:\/\/192\.168\.\d+\.\d+:\d+$/, // Local network IPs
     /^http:\/\/10\.\d+\.\d+\.\d+:\d+$/,  // 10.x.x.x network
@@ -149,13 +152,46 @@ app.use(cors({
 }));
 app.use(express.json()); // Parses incoming JSON requests
 
+function resolveDatabaseUrl() {
+    const direct = process.env.DATABASE_URL && process.env.DATABASE_URL.trim();
+    if (direct) return direct;
+    const host = process.env.DB_HOST;
+    const user = process.env.DB_USER;
+    const password = process.env.DB_PASSWORD;
+    if (!host || !user || password === undefined || password === '') {
+        return undefined;
+    }
+    const port = process.env.DB_PORT || 5432;
+    const name = process.env.DB_NAME || 'postgres';
+    const enc = encodeURIComponent;
+    return `postgresql://${enc(user)}:${enc(password)}@${host}:${port}/${enc(name)}`;
+}
+
+const databaseUrl = resolveDatabaseUrl();
+if (!databaseUrl) {
+    console.warn('WARNING: Set DATABASE_URL or DB_HOST + DB_USER + DB_PASSWORD in backend-server/.env');
+}
+
+/** Supabase pooler XX000 when DB user project ref does not match the database (e.g. postgres.oldref). */
+let supabasePoolerTenantHintShown = false;
+function warnSupabasePoolerMismatchOnce(err) {
+    const msg = err && err.message ? String(err.message) : '';
+    if (supabasePoolerTenantHintShown || !msg.includes('Tenant or user not found')) return;
+    supabasePoolerTenantHintShown = true;
+    console.error(`
+[Database] Supabase pooler: "Tenant or user not found"
+Your connection username must be postgres.<project_ref> where <project_ref> is the ID in your Supabase URL.
+Example: https://abrrhepysnsqihmiivzv.supabase.co  →  user postgres.abrrhepysnsqihmiivzv (not an old project ref).
+Fix: Supabase Dashboard → Project Settings → Database → copy "Connection string" (URI).
+Use the password for that project. Database name is usually "postgres" unless you created another DB.
+`);
+}
+
 // --- Supabase PostgreSQL connection Pool ---
 const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
+    connectionString: databaseUrl,
     ssl: {
-        // rejectUnauthorized: true for production for security if providing CA
-        rejectUnauthorized: process.env.NODE_ENV === 'production' && !!process.env.DB_CA_CERT,
-        ca: process.env.DB_CA_CERT // Provide the CA certificate content
+        rejectUnauthorized: false
     }
 });
 
@@ -167,6 +203,7 @@ async function logSystemEvent(logType, source, message, userId = null) {
             [logType, source, message, userId]
         );
     } catch (logErr) {
+        warnSupabasePoolerMismatchOnce(logErr);
         console.error('Failed to write to system_logs table:', logErr);
     }
 }
@@ -174,6 +211,7 @@ async function logSystemEvent(logType, source, message, userId = null) {
 // Test database connection
 pool.query('SELECT NOW()', (err, res) => {
     if (err) {
+        warnSupabasePoolerMismatchOnce(err);
         console.error('Database connection error:', err);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.BACKEND, `Database connection error: ${err.message}`);
     } else {
@@ -1788,12 +1826,16 @@ app.delete('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, asy
 
         // Note: The order is important due to foreign key constraints.
         // Delete related records before deleting the user.
+        // quota_extensions has FK to auth.users(id), not public.users
+        await client.query('DELETE FROM quota_extensions WHERE user_id = $1', [userId]);
         await client.query('DELETE FROM payment WHERE user_id = $1', [userId]);
         await client.query('DELETE FROM daily_energy_usage WHERE user_id = $1', [userId]);
         // Cascading deletes for sessions and their consumption data
         await client.query(`DELETE FROM consumption_data WHERE session_id IN (SELECT session_id FROM charging_session WHERE user_id = $1)`, [userId]);
         await client.query('DELETE FROM charging_session WHERE user_id = $1', [userId]);
         await client.query('DELETE FROM user_subscription WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM notification WHERE user_id = $1', [userId]);
+        await client.query('DELETE FROM user_devices WHERE user_id = $1', [userId]);
         await client.query('DELETE FROM admin_profiles WHERE user_id = $1', [userId]);
 
         // Finally, delete the user from the public.users table
@@ -1813,7 +1855,7 @@ app.delete('/api/admin/users/:userId', supabaseAuthMiddleware, requireAdmin, asy
         await client.query('ROLLBACK');
         console.error('Delete user error:', err.message);
         logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.API, `Delete user error for ${userId}: ${err.message}`, req.user.user_id);
-        res.status(500).json({ error: 'Server error' });
+        res.status(500).json({ error: `Error deleting user: ${err.message}` });
     } finally {
         client.release();
     }
@@ -3175,9 +3217,18 @@ app.use((err, req, res, next) => {
     res.status(500).json({ error: 'Something went wrong!' });
 });
 
+// Debug endpoint - returns env loaded status
+app.get('/api/debug/env', (req, res) => {
+    res.json({
+        SUPABASE_JWKS_URL: process.env.SUPABASE_JWKS_URL || 'NOT SET',
+        SUPABASE_JWT_SECRET: process.env.SUPABASE_JWT_SECRET ? 'SET' : 'NOT SET'
+    });
+});
+
 // Start server
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
+    console.log(`ENV - JWKS: ${process.env.SUPABASE_JWKS_URL || 'NOT SET'}, SECRET: ${process.env.SUPABASE_JWT_SECRET ? 'SET' : 'NOT SET'}`);
     logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Server started on port ${PORT}`);
 });
 
@@ -3218,71 +3269,68 @@ process.on('SIGTERM', () => { // Handles termination signals from Render
 });
 
 // --- Supabase JWT Authentication Middleware ---
-// Helper to get JWKS and verify JWT
 const SUPABASE_JWT_SECRET = process.env.SUPABASE_JWT_SECRET;
-let cachedJwks = null;
-let cachedJwksAt = 0;
-// Note: You removed SUPABASE_JWKS_URL, so getSupabaseJwks might not be needed if only using HS256.
-// If you are using RS256, you need to provide SUPABASE_JWKS_URL and use this function.
-// For now, I've left it as is assuming your verifySupabaseJWT uses HS256 with a secret.
-async function getSupabaseJwks() {
-    if (cachedJwks && Date.now() - cachedJwksAt < 60 * 60 * 1000) return cachedJwks;
-    try {
-        // This URL needs to be defined if you plan to use RS256 for JWT verification.
-        // const res = await fetch(SUPABASE_JWKS_URL);
-        // if (!res.ok) throw new Error(`Failed to fetch JWKS: ${res.statusText}`);
-        // const { keys } = await res.json();
-        // cachedJwks = keys;
-        // cachedJwksAt = Date.now();
-        // logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.AUTH, 'Successfully fetched Supabase JWKS');
-        // return keys;
-        throw new Error("JWKS fetching is not configured or necessary for HS256.");
-    } catch (err) {
-        console.error('Failed to fetch JWKS:', err.message);
-        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.AUTH, `Failed to fetch Supabase JWKS: ${err.message}`);
-        throw err;
+const SUPABASE_JWKS_URL = process.env.SUPABASE_JWKS_URL;
+
+/** Reused RemoteJWKSet (jose caches keys internally). */
+let supabaseRemoteJwkSet = null;
+
+async function getSupabaseRemoteJwkSet() {
+    if (!SUPABASE_JWKS_URL) return null;
+    if (!supabaseRemoteJwkSet) {
+        const jose = await import('jose');
+        supabaseRemoteJwkSet = jose.createRemoteJWKSet(new URL(SUPABASE_JWKS_URL));
     }
-}
-function getKeyFromJwks(kid, jwks) {
-    return jwks.find(k => k.kid === kid);
+    return supabaseRemoteJwkSet;
 }
 
-//Convert certificate to PEM format
-function certToPEM(cert) {
-    // Convert x5c to PEM format
-    let pem = cert.match(/.{1,64}/g).join('\n');
-    pem = `-----BEGIN CERTIFICATE-----\n${pem}\n-----END CERTIFICATE-----\n`;
-    return pem;
-}
-
-//Verify Supabase JWT
+// Verify Supabase JWT (ES256/RS256 via JWKS, or legacy HS256)
 async function verifySupabaseJWT(token) {
-     if (!SUPABASE_JWT_SECRET) {
-        logSystemEvent(LOG_TYPES.ERROR, LOG_SOURCES.AUTH, 'SUPABASE_JWT_SECRET environment variable is not set!');
-        throw new Error('Server misconfiguration: JWT secret is missing for HS256 verification.');
+    const decoded = jwt.decode(token, { complete: true });
+    if (!decoded?.header?.alg) {
+        throw new Error('Invalid token: missing algorithm');
     }
 
-    try {
-        // For HS256, you directly use the shared secret for verification
-        // The `kid` is not used in symmetric (HS256) verification against a JWKS.
-        return jwt.verify(token, SUPABASE_JWT_SECRET, { algorithms: ['HS256'] });
-    } catch (error) {
-        // Re-throw the error after logging for consistency
-        console.error('JWT verification error with HS256:', error.message);
-        throw error;
+    const alg = decoded.header.alg;
+    console.log('JWT verify: alg:', alg, 'JWKS_URL:', SUPABASE_JWKS_URL ? 'set' : 'not set', 'SECRET:', SUPABASE_JWT_SECRET ? 'set' : 'not set');
+
+    const jose = await import('jose');
+
+    if (alg === 'ES256' || alg === 'RS256') {
+        if (!SUPABASE_JWKS_URL) {
+            throw new Error('SUPABASE_JWKS_URL is required for ES256/RS256 tokens (current Supabase projects). Set it to https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json');
+        }
+        const JWKS = await getSupabaseRemoteJwkSet();
+        const { payload } = await jose.jwtVerify(token, JWKS);
+        console.log('JWT verified (asymmetric): sub=', payload?.sub);
+        return payload;
     }
+
+    if (alg === 'HS256') {
+        if (!SUPABASE_JWT_SECRET) {
+            throw new Error('SUPABASE_JWT_SECRET is required for HS256 (legacy) tokens');
+        }
+        const payload = jwt.verify(token, SUPABASE_JWT_SECRET, { algorithms: ['HS256'] });
+        console.log('JWT verified (HS256): sub=', payload?.sub);
+        return payload;
+    }
+
+    throw new Error(`Unsupported JWT algorithm: ${alg}`);
 }
 
 // Express middleware
 async function supabaseAuthMiddleware(req, res, next) {
     try {
         const auth = req.headers['authorization'];
+        console.log('Auth middleware called, auth present:', !!auth);
         if (!auth || !auth.startsWith('Bearer ')) {
             logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.AUTH, 'Missing or invalid Authorization header');
             return res.status(401).json({ error: 'Missing or invalid Authorization header' });
         }
         const token = auth.replace('Bearer ', '');
+        console.log('Token start:', token.substring(0, 50), '...');
         const payload = await verifySupabaseJWT(token);
+        console.log('JWT verified OK, user_id:', payload?.sub);
         req.user = {
             user_id: payload.sub,
             email: payload.email,

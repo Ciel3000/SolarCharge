@@ -14,6 +14,8 @@ import HomePage from './pages/HomePage';
 import LandingPage from './pages/LandingPagePublic';
 import LoginPage from './pages/LoginPage';
 import SignUpPage from './pages/SignUpPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import SubscriptionPage from './pages/SubscriptionPage';
 import UsagePage from './pages/UsagePage';
 import StationPage from './pages/StationPage';
@@ -380,6 +382,16 @@ function AppContent() {
           <Route
             path="/signup"
             element={<SignUpPage navigateTo={navigateTo} />}
+          />
+
+          <Route
+            path="/forgot-password"
+            element={<ForgotPasswordPage navigateTo={navigateTo} />}
+          />
+
+          <Route
+            path="/reset-password"
+            element={<ResetPasswordPage navigateTo={navigateTo} />}
           />
 
           {/* User Protected Routes */}
