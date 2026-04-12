@@ -224,7 +224,10 @@ function AdminUsers({ navigateTo, handleSignOut }) {
                     headers: { 'Authorization': `Bearer ${session.access_token}` }
                 });
                 
-                if (!res.ok) throw new Error(`Error deleting user: ${res.statusText}`);
+                if (!res.ok) {
+                    const errorData = await res.json().catch(() => ({}));
+                    throw new Error(errorData.error || `Error deleting user: ${res.statusText}`);
+                }
                 
                 await fetchUsers();
                 setSelectedUser(null);

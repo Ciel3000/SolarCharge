@@ -540,9 +540,7 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
                   <h4 className="text-xl sm:text-2xl font-bold mb-4 flex items-center gap-2" style={{ color: '#000b3d' }}>
                     <span className="text-2xl">🌟</span> Your Current Plan
                   </h4>
-                  <div className="mb-3 text-lg sm:text-xl font-semibold" style={{ color: '#000b3d' }}>{subscription.plan_name}</div>
-                  <div className="mb-3 text-sm sm:text-base" style={{ color: '#000b3d', opacity: 0.7 }}>{subscription.description}</div>
-                  <div className="mb-6 text-sm sm:text-base" style={{ color: '#000b3d', opacity: 0.7 }}><strong>Daily Limit:</strong> {subscription.daily_mah_limit} mAh</div>
+                  <div className="mb-6 text-sm sm:text-base" style={{ color: '#000b3d', opacity: 0.7 }}><strong>Daily Limit:</strong> {subscription.subscription_plans?.daily_mah_limit || subscription.daily_mah_limit || 0} mAh</div>
                   
                   {/* Usage Analytics - Made more compact */}
                   <div className="grid grid-cols-3 gap-3 w-full mb-6">
@@ -569,53 +567,11 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
                     </div>
                   </div>
                   
-                  {/* Energy Consumed and Progress Bar */}
+                  {/* Energy Consumed */}
                   <div className="w-full mb-6">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm font-medium" style={{ color: '#000b3d', opacity: 0.8 }}>Energy Consumed (This Month)</span>
                       <span className="text-sm font-bold" style={{ color: '#000b3d' }}>{usage.totalEnergyMAH ? parseFloat(usage.totalEnergyMAH).toFixed(2) : '0.00'} mAh</span>
-                    </div>
-                    {(() => {
-                      const daysSoFar = new Date().getDate();
-                      const monthlyLimit = subscription.daily_mah_limit * daysSoFar;
-                      const totalEnergyMAH = parseFloat(usage.totalEnergyMAH) || 0;
-                      const percent = monthlyLimit > 0 ? Math.min(100, ((totalEnergyMAH / monthlyLimit) * 100)) : 0;
-                      
-                      console.log('HomePage Progress Bar Debug:', {
-                        daysSoFar,
-                        monthlyLimit,
-                        totalEnergyMAH,
-                        percent,
-                        usage: usage.totalEnergyMAH
-                      });
-                      
-                      return (
-                        <div className="w-full rounded-full h-3 backdrop-blur-md" style={{
-                          background: 'rgba(0, 11, 61, 0.1)',
-                          border: '1px solid rgba(255, 255, 255, 0.3)'
-                        }}>
-                          <div
-                            className="h-3 rounded-full transition-all duration-500"
-                            style={{ 
-                              width: `${percent}%`,
-                              background: percent < 80 
-                                ? 'linear-gradient(135deg, #f9d217 0%, #38b6ff 100%)' 
-                                : percent < 100 
-                                ? 'linear-gradient(135deg, #f9d217 0%, #ff6b6b 100%)' 
-                                : 'linear-gradient(135deg, #ff6b6b 0%, #dc2626 100%)'
-                            }}
-                          ></div>
-                        </div>
-                      );
-                    })()}
-                    <div className="flex justify-end mt-1">
-                      <span className="text-xs" style={{ color: '#000b3d', opacity: 0.6 }}>{(() => {
-                        const daysSoFar = new Date().getDate();
-                        const monthlyLimit = subscription.daily_mah_limit * daysSoFar;
-                        const totalEnergyMAH = parseFloat(usage.totalEnergyMAH) || 0;
-                        const percent = monthlyLimit > 0 ? Math.min(100, ((totalEnergyMAH / monthlyLimit) * 100)) : 0;
-                        return `${Math.round(percent)}% of monthly limit (${monthlyLimit} mAh)`;
-                      })()}</span>
                     </div>
                   </div>
                   
