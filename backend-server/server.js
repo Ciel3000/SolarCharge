@@ -773,8 +773,9 @@ mqttClient.on('message', async (topic, message) => {
             const hasDeviceTimestamp = Number.isFinite(deviceTimestampMs);
             const charger_state = payload.charger_state;
 
-            const consumptionWatts = consumptionAmps * NOMINAL_CHARGING_VOLTAGE_DC;
-            const validatedConsumption = validateConsumption(consumptionWatts);
+            // Store consumption as Amps directly (ESP32 sends current in Amps)
+            // We validate against reasonable wattage threshold by multiplying back
+            const validatedConsumption = validateConsumption(consumptionAmps * NOMINAL_CHARGING_VOLTAGE_DC);
 
             console.log(
                 `MQTT: Processing usage message for ${sessionKey}. Charger state: ${charger_state}, ` +
@@ -813,6 +814,19 @@ mqttClient.on('message', async (topic, message) => {
                         'UPDATE charging_session SET energy_consumed_kwh = COALESCE(energy_consumed_kwh, 0) + $1, energy_consumed_mah = COALESCE(energy_consumed_mah, 0) + $2, total_mah_consumed = COALESCE(total_mah_consumed, 0) + $3, last_status_update = $4 WHERE session_id = $5',
                         [kwhIncrement, mAhIncrement, mAhIncrement, serverTimestamp, currentSessionId]
                     );
+
+                    // Update user's daily consumption in real-time
+                    const userResult = await pool.query(
+                        "SELECT user_id FROM charging_session WHERE session_id = $1",
+                        [currentSessionId]
+                    );
+                    if (userResult.rows.length > 0) {
+                        const userId = userResult.rows[0].user_id;
+                        await pool.query(
+                            "UPDATE user_subscription SET current_daily_mah_consumed = COALESCE(current_daily_mah_consumed, 0) + $1 WHERE user_id = $2 AND is_active = true",
+                            [mAhIncrement, userId]
+                        );
+                    }
 
                     // Reset inactivity timer on new consumption data
                     if (activePortTimers[sessionKey]) {
@@ -1038,8 +1052,8 @@ app.get('/api/devices/consumption', async (req, res) => {
             const totalMah = Number(row.total_mah_consumed) || 0;
             const recentWatts = Number(row.recent_consumption_watts) || 0;
             
-            // Calculate current consumption in mA: Watts / Voltage * 1000
-            const currentConsumption = recentWatts > 0 ? (recentWatts / NOMINAL_CHARGING_VOLTAGE_DC) * 1000 : 0;
+            // consumption_data now stores Amps (not Watts), so convert to mA: Amps * 1000
+            const currentConsumption = recentWatts > 0 ? recentWatts * 1000 : 0;
             
             return {
                 device_id: row.device_id,

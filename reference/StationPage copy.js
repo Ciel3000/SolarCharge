@@ -472,9 +472,11 @@ function StationPage({ station, navigateTo }) {
     // Get current consumption (real-time, updates every 10 seconds)
     // Show current consumption if there's an active session on this port
     let currentConsumption = 0;
+    let totalMah = 0;
     if (userActiveSession) {
       // Show real-time current consumption from the API
       currentConsumption = consumptionInfo.current_consumption || 0;
+      totalMah = consumptionInfo.total_mah || 0;
     }
     
     return {
@@ -483,6 +485,7 @@ function StationPage({ station, navigateTo }) {
       buttonDisabled,
       isUserSession,
       consumption: currentConsumption, // Real-time current consumption in mA
+      totalMah: totalMah, // Total mAh consumed for this session
       energyKwh: 0 // Not available in old endpoint
     };
   }, [chargerPortStatus, portConsumption, activeSessions, stationData?.device_mqtt_id]);
@@ -723,7 +726,7 @@ function StationPage({ station, navigateTo }) {
                               {currentStatus.isUserSession ? currentStatus.consumption.toFixed(2) : '0.00'} mA
                             </div>
                             <div className="text-xs mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>
-                              Daily Total: {getDailyUsage().toFixed(2)} mAh
+                              Session Total: {currentStatus.isUserSession ? currentStatus.totalMah.toFixed(2) : '0.00'} mAh
                             </div>
                           </div>
 
