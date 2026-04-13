@@ -42,6 +42,7 @@ function SubscriptionPage() {
     const [paypalLoading, setPaypalLoading] = useState(false);
     const [selectedPlanForPayment, setSelectedPlanForPayment] = useState(null);
     const [showPayPal, setShowPayPal] = useState(false);
+    const [createdOrderId, setCreatedOrderId] = useState(null);
     
     // New state for subscription history
     const [subscriptionHistory, setSubscriptionHistory] = useState([]);
@@ -109,12 +110,43 @@ function SubscriptionPage() {
     }, [fetchAvailablePlans, fetchSubscriptionHistory]);
 
     // Handle plan selection for payment
-    const handleSelectPlan = (plan) => {
-        setSelectedPlanForPayment(plan);
-        setShowPayPal(true);
-        setFeedback('');
-    };
+    const handleSelectPlan = async (plan) => {
+    setSelectedPlanForPayment(plan);
+    setPaypalLoading(true);
+    setFeedback('');
     
+        try {
+            // Call backend to create the order and save to database
+            const response = await fetch(`${BACKEND_URL}/api/payment/create-order`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${session.access_token}`,
+                },
+                body: JSON.stringify({
+                    planId: plan.plan_id,
+                    paymentType: 'subscription'
+                }),
+            });
+            
+            const data = await response.json();
+            
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to create order');
+            }
+            
+            // Store the order ID from backend
+            setCreatedOrderId(data.orderId);
+            setShowPayPal(true);
+            
+        } catch (err) {
+            console.error('Create order error:', err);
+            setFeedback(`Failed to create order: ${err.message}`);
+        } finally {
+            setPaypalLoading(false);
+        }
+    };
+        
     // Handle subscription cancellation
     const handleCancelSubscription = async () => {
         // IMPORTANT: window.confirm is used as a placeholder.
@@ -147,51 +179,63 @@ function SubscriptionPage() {
 
     // PayPal payment functions
     const createPayPalOrder = useCallback(async (data, actions) => {
-        if (!selectedPlanForPayment) {
-            throw new Error('No plan selected');
+        if (!createdOrderId) {
+            throw new Error('No order created');
         }
-        setPaypalLoading(true);
-        return actions.order.create({
-            purchase_units: [{
-                description: `${selectedPlanForPayment.plan_name} Subscription`,
-                amount: {
-                    currency_code: 'PHP',
-                    value: selectedPlanForPayment.price.toString(),
-                },
-            }],
-            application_context: {
-                shipping_preference: 'NO_SHIPPING',
-            },
-        });
-    }, [selectedPlanForPayment]);
+        // Return the order ID from backend - PayPal will use it
+        return createdOrderId;
+    }, [createdOrderId]);
 
     const onPayPalApprove = useCallback(async (data, actions) => {
-        try {
-            const order = await actions.order.capture();
-            console.log('PayPal order captured:', order);
-            
-            // Here you would typically send the order details to your backend
-            // to create the subscription in your database
-            
-            setFeedback('Payment successful! Your subscription has been activated.');
-            setShowPayPal(false);
-            setSelectedPlanForPayment(null);
-            
-            // Refresh the page or update the subscription state
-            window.location.reload();
-            
-        } catch (error) {
-            console.error('PayPal capture error:', error);
-            setFeedback('Payment failed. Please try again.');
-        } finally {
-            setPaypalLoading(false);
+    try {
+        setPaypalLoading(true);
+        const orderId = data.orderID;
+
+        // DON'T call actions.order.capture() - call backend instead!
+        const response = await fetch(`${BACKEND_URL}/api/payment/capture-order`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify({
+                orderId: orderId
+            }),
+        });
+
+        const result = await response.json();
+
+        if (!response.ok) {
+            throw new Error(result.error || 'Payment failed');
         }
-    }, []);
+
+        console.log('Payment captured successfully:', result);
+        setFeedback('Payment successful! Your subscription has been activated.');
+        setShowPayPal(false);
+        setSelectedPlanForPayment(null);
+        setCreatedOrderId(null);
+        
+        window.location.reload();
+        
+    } catch (error) {
+        console.error('PayPal capture error:', error);
+        setFeedback(`Payment failed: ${error.message}`);
+    } finally {
+        setPaypalLoading(false);
+    }
+    }, [session]);
 
     const onPayPalError = useCallback((err) => {
         console.error('PayPal error:', err);
         setFeedback('Payment error occurred. Please try again.');
         setPaypalLoading(false);
+    }, []);
+
+    const onPayPalCancel = useCallback(() => {
+        setFeedback('Payment was cancelled.');
+        setShowPayPal(false);
+        setSelectedPlanForPayment(null);
+        setCreatedOrderId(null);
     }, []);
 
     // Helper function to format currency
@@ -658,6 +702,7 @@ function SubscriptionPage() {
                                     createOrder={createPayPalOrder}
                                     onApprove={onPayPalApprove}
                                     onError={onPayPalError}
+                                    onCancel={onPayPalCancel}
                                     style={{ layout: "vertical" }}
                                 />
                             </PayPalScriptProvider>
@@ -667,6 +712,7 @@ function SubscriptionPage() {
                                 onClick={() => {
                                     setShowPayPal(false);
                                     setSelectedPlanForPayment(null);
+                                    setCreatedOrderId(null);
                                 }}
                                 className="text-sm font-medium transition-colors hover:opacity-80"
                                 style={{ color: '#000b3d', opacity: 0.7 }}
