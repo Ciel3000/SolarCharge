@@ -4188,6 +4188,32 @@ app.put('/api/admin/quota/extensions/:extensionId/confirm-payment', supabaseAuth
     }
 });
 
+// ==========================================
+// PAYMENT API ROUTES (PayPal Checkout API)
+// ==========================================
+
+// Load payment service modules
+const paymentRoutes = require('./routes/payment');
+const idempotencyMiddleware = require('./middleware/idempotency');
+
+// Apply payment routes with auth - all payment routes require authentication
+// The routes themselves have auth middleware applied
+app.use('/api/payment', paymentRoutes);
+
+// ==========================================
+// PAYMENT CLEANUP JOB
+// ==========================================
+const { startCleanupJob } = require('./jobs/cleanupOrders');
+
+// Start the cleanup job (runs hourly)
+let cleanupJob;
+try {
+    cleanupJob = startCleanupJob(pool, 60 * 60 * 1000); // Every hour
+    console.log('Payment cleanup job started');
+} catch (err) {
+    console.error('Failed to start payment cleanup job:', err.message);
+}
+
 // 404 handler for unmatched routes (must be at the end)
 app.use('*', (req, res) => {
     res.status(404).json({ error: 'Route not found' });
