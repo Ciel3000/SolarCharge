@@ -70,7 +70,7 @@ async function getQuotaExtensionPricing(pool, extensionType = 'direct_purchase')
 async function logPaymentEvent(pool, userId, action, payload, response, status) {
     await pool.query(
         `INSERT INTO payment_logs (user_id, action, payload, response, status)
-         VALUES ($1, $2, $3, $4, $5)`,
+         VALUES ($1, $2, $3::jsonb, $4::jsonb, $5)`,
         [userId, action, JSON.stringify(payload), JSON.stringify(response), status]
     );
 }
