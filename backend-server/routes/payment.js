@@ -110,8 +110,8 @@ router.post('/create-order', async (req, res) => {
         // Save to paypal_orders table
         await pool.query(
             `INSERT INTO paypal_orders (id, user_id, order_id, payment_type, plan_id, amount, currency, status, idempotency_key, expires_at)
-             VALUES ($1, $2, $3, $4, $5, $6::numeric, $7, 'CREATED', $8, $9)`,
-            [internalOrderId, userId, paypalOrderId, paymentType, planId || null, amount, currency, idempotencyKey, expiresAt]
+             VALUES ($1::uuid, $2::uuid, $3::varchar, $4::varchar, $5::uuid, $6::numeric, $7::varchar, $8::varchar, $9::varchar, $10::timestamptz)`,
+            [internalOrderId, userId, paypalOrderId, paymentType, planId || null, amount, currency, 'CREATED', idempotencyKey, expiresAt.toISOString()]
         );
 
         await logPaymentEvent(pool, userId, 'ORDER_CREATED', { 
@@ -187,7 +187,7 @@ router.post('/capture-order', async (req, res) => {
         // Check if expired
         if (new Date(dbOrder.expires_at) < new Date()) {
             await pool.query(
-                `UPDATE paypal_orders SET status = 'FAILED', error_message = 'Order expired' WHERE order_id = $1`,
+                `UPDATE paypal_orders SET status = 'FAILED'::varchar, error_message = 'Order expired'::text WHERE order_id = $1::varchar`,
                 [orderId]
             );
             return res.status(400).json({ error: 'Order has expired' });
@@ -204,7 +204,7 @@ router.post('/capture-order', async (req, res) => {
         } catch (ppError) {
             console.error('PayPal capture error:', ppError);
             await pool.query(
-                `UPDATE paypal_orders SET status = 'FAILED', error_message = $1 WHERE order_id = $2`,
+                `UPDATE paypal_orders SET status = 'FAILED'::varchar, error_message = $1::text WHERE order_id = $2::varchar`,
                 [ppError.message, orderId]
             );
             await logPaymentEvent(pool, userId, 'PAYPAL_CAPTURE_ERROR', { orderId }, { error: ppError.message }, 'FAILED');
@@ -217,7 +217,7 @@ router.post('/capture-order', async (req, res) => {
         if (capture.status !== 'COMPLETED') {
             const status = capture.status === 'DECLINED' ? 'DECLINED' : 'FAILED';
             await pool.query(
-                `UPDATE paypal_orders SET status = $1, error_message = $2 WHERE order_id = $3`,
+                `UPDATE paypal_orders SET status = $1::varchar, error_message = $2::varchar WHERE order_id = $3::varchar`,
                 [status, capture.status, orderId]
             );
             await logPaymentEvent(pool, userId, 'CAPTURE_NOT_COMPLETED', { orderId }, { status: capture.status }, 'FAILED');
@@ -236,7 +236,7 @@ router.post('/capture-order', async (req, res) => {
 
         if (Math.abs(capturedAmount - expectedAmount) > tolerance) {
             await pool.query(
-                `UPDATE paypal_orders SET status = 'FAILED', error_message = 'Amount mismatch' WHERE order_id = $1`,
+                `UPDATE paypal_orders SET status = 'FAILED'::varchar, error_message = 'Amount mismatch'::text WHERE order_id = $1::varchar`,
                 [orderId]
             );
             await logPaymentEvent(pool, userId, 'FRAUD_ALERT_AMOUNT_MISMATCH', { 

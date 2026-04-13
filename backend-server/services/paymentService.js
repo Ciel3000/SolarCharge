@@ -71,7 +71,7 @@ async function logPaymentEvent(pool, userId, action, payload, response, status) 
     try {
         await pool.query(
             `INSERT INTO payment_logs (user_id, action, payload, response, status)
-             VALUES ($1, $2, $3, $4, $5)`,
+             VALUES ($1, $2, $3::jsonb, $4::jsonb, $5)`,
             [
                 userId || null, 
                 action || 'unknown', 
@@ -133,7 +133,7 @@ async function processSuccessfulPayment(pool, orderId, captureData, userId) {
         const paymentId = uuidv4();
         await client.query(
             `INSERT INTO payments (id, user_id, paypal_order_id, payment_capture_id, payment_type, amount, currency, status)
-             VALUES ($1, $2, $3, $4, $5, $6::numeric, $7, $8)`,
+             VALUES ($1::uuid, $2::uuid, $3::varchar, $4::varchar, $5::varchar, $6::numeric, $7::varchar, $8::varchar)`,
             [paymentId, userId, orderId, paypalCaptureId, dbOrder.payment_type, dbOrder.amount, dbOrder.currency || 'PHP', 'completed']
         );
 
@@ -216,10 +216,10 @@ async function processSubscriptionPayment(client, userId, dbOrder, captureId) {
         // Update existing subscription
         await client.query(
             `UPDATE user_subscription 
-             SET plan_id = $1, is_active = true, start_date = $2, end_date = $3, 
+             SET plan_id = $1, is_active = true, start_date = $2::timestamptz, end_date = $3::timestamptz, 
                  current_daily_mah_consumed = 0, updated_at = NOW()
-             WHERE user_id = $5`,
-            [dbOrder.plan_id, startDate, endDate, plan.daily_mah_limit, userId]
+             WHERE user_id = $4`,
+            [dbOrder.plan_id, startDate.toISOString(), endDate.toISOString(), userId]
         );
         
         return {
@@ -231,8 +231,8 @@ async function processSubscriptionPayment(client, userId, dbOrder, captureId) {
         // Insert new subscription
         await client.query(
             `INSERT INTO user_subscription (user_subscription_id, user_id, plan_id, is_active, start_date, end_date, current_daily_mah_consumed)
-             VALUES ($1, $2, $3, true, $4, $5, 0)`,
-            [subscriptionId, userId, dbOrder.plan_id, startDate, endDate]
+             VALUES ($1, $2, $3, true, $4::timestamptz, $5::timestamptz, 0)`,
+            [subscriptionId, userId, dbOrder.plan_id, startDate.toISOString(), endDate.toISOString()]
         );
         
         return {
@@ -270,8 +270,8 @@ async function processQuotaExtensionPayment(client, userId, dbOrder, captureId) 
     // Insert quota extension record
     await client.query(
         `INSERT INTO quota_extensions (id, user_id, subscription_id, paypal_order_id, paypal_capture_id, purchased_amount_mah, total_cost, payment_status, created_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'completed', NOW(), $8)`,
-        [extensionId, userId, subscriptionId, dbOrder.order_id, captureId, extensionAmountMah, dbOrder.amount, expiresAt]
+         VALUES ($1, $2, $3, $4, $5, $6::numeric, $7::numeric, 'completed', NOW(), $8::timestamptz)`,
+        [extensionId, userId, subscriptionId, dbOrder.order_id, captureId, extensionAmountMah, dbOrder.amount, expiresAt.toISOString()]
     );
 
     // Update user's daily quota balance (add to borrowed_mah_today)
