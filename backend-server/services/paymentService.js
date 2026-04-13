@@ -68,11 +68,21 @@ async function getQuotaExtensionPricing(pool, extensionType = 'direct_purchase')
  * @param {string} status - Status of the action
  */
 async function logPaymentEvent(pool, userId, action, payload, response, status) {
-    await pool.query(
-        `INSERT INTO payment_logs (user_id, action, payload, response, status)
-         VALUES ($1, $2, $3::jsonb, $4::jsonb, $5)`,
-        [userId, action, JSON.stringify(payload), JSON.stringify(response), status]
-    );
+    try {
+        await pool.query(
+            `INSERT INTO payment_logs (user_id, action, payload, response, status)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [
+                userId || null, 
+                action || 'unknown', 
+                JSON.stringify(payload || {}), 
+                JSON.stringify(response || {}), 
+                status || 'unknown'
+            ]
+        );
+    } catch (err) {
+        console.error('logPaymentEvent error:', err.message);
+    }
 }
 
 /**
@@ -123,8 +133,8 @@ async function processSuccessfulPayment(pool, orderId, captureData, userId) {
         const paymentId = uuidv4();
         await client.query(
             `INSERT INTO payments (id, user_id, paypal_order_id, payment_capture_id, payment_type, amount, currency, status)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 'completed')`,
-            [paymentId, userId, orderId, paypalCaptureId, dbOrder.payment_type, dbOrder.amount, dbOrder.currency || 'PHP']
+             VALUES ($1, $2, $3, $4, $5, $6::numeric, $7, $8)`,
+            [paymentId, userId, orderId, paypalCaptureId, dbOrder.payment_type, dbOrder.amount, dbOrder.currency || 'PHP', 'completed']
         );
 
         let result;

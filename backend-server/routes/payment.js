@@ -110,7 +110,7 @@ router.post('/create-order', async (req, res) => {
         // Save to paypal_orders table
         await pool.query(
             `INSERT INTO paypal_orders (id, user_id, order_id, payment_type, plan_id, amount, currency, status, idempotency_key, expires_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 'CREATED', $8, $9)`,
+             VALUES ($1, $2, $3, $4, $5, $6::numeric, $7, 'CREATED', $8, $9)`,
             [internalOrderId, userId, paypalOrderId, paymentType, planId || null, amount, currency, idempotencyKey, expiresAt]
         );
 
