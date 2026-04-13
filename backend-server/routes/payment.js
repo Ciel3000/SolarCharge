@@ -14,9 +14,10 @@ const {
     isWebhookProcessed,
     markWebhookProcessed
 } = require('../services/paymentService');
-const idempotencyMiddleware = require('../middleware/idempotency');
-
 const router = express.Router();
+
+// Import pool directly
+const pool = require('../pool');
 
 // Apply JSON parsing for non-webhook routes
 router.use(express.json());
@@ -27,7 +28,6 @@ router.use(express.json());
  * Auth required
  */
 router.post('/create-order', async (req, res) => {
-    const pool = req.app.get('pool');
     const { planId, paymentType, extensionAmount } = req.body;
     const userId = req.user?.user_id;
 
@@ -142,7 +142,7 @@ router.post('/create-order', async (req, res) => {
  * Auth required
  */
 router.post('/capture-order', async (req, res) => {
-    const pool = req.app.get('pool');
+    const pool = require('../pool');
     const { orderId } = req.body;
     const userId = req.user?.user_id;
 
@@ -268,7 +268,7 @@ router.post('/capture-order', async (req, res) => {
  * No user auth - uses PayPal signature verification
  */
 router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
-    const pool = req.app.get('pool');
+    const pool = require('../pool');
     
     // Get PayPal headers
     const eventId = req.headers['paypal-event-id'];
@@ -349,7 +349,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
  * Check payment status (for debugging)
  */
 router.get('/status/:orderId', async (req, res) => {
-    const pool = req.app.get('pool');
+    const pool = require('../pool');
     const { orderId } = req.params;
     const userId = req.user?.user_id;
 
