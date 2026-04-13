@@ -29,7 +29,15 @@ function paypalClient() {
         environment = new checkoutNodeJssdk.core.SandboxEnvironment(clientId, clientSecret);
     }
 
-    return new checkoutNodeJssdk.core.PayPalHttpClient(environment);
+    const client = new checkoutNodeJssdk.core.PayPalHttpClient(environment);
+    
+    // Add orders API access
+    client.orders = {
+        OrdersCreateRequest: checkoutNodeJssdk.orders.OrdersCreateRequest,
+        OrdersCaptureRequest: checkoutNodeJssdk.orders.OrdersCaptureRequest
+    };
+    
+    return client;
 }
 
 /**
