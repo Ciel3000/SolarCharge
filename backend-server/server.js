@@ -4198,7 +4198,7 @@ const idempotencyMiddleware = require('./middleware/idempotency');
 
 // Apply payment routes with auth - all payment routes require authentication
 // The routes themselves have auth middleware applied
-app.use('/api/payment', paymentRoutes);
+app.use('/api/payment', supabaseAuthMiddleware, paymentRoutes);
 
 // ==========================================
 // PAYMENT CLEANUP JOB

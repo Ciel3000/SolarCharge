@@ -63,7 +63,7 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
       // Fetch fresh usage data when returning to home page
       const fetchUsageAnalytics = async () => {
         try {
-          const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://solar-charger-backend.onrender.com';
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
           const res = await fetch(`${BACKEND_URL}/api/user/usage`, {
             headers: { Authorization: `Bearer ${session.access_token}` },
           });
@@ -139,7 +139,7 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
   const fetchUsageAnalytics = useCallback(async () => {
     if (!session?.access_token) return;
     try {
-      const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://solar-charger-backend.onrender.com';
+      const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
       const res = await fetch(`${BACKEND_URL}/api/user/usage`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });

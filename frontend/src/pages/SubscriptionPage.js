@@ -6,15 +6,14 @@ import { PayPalScriptProvider, PayPalButtons } from '@paypal/react-paypal-js';
 import { useAuth } from '../contexts/AuthContext';
 import { filterActivePlans } from '../utils/planUtils';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://solar-charger-backend.onrender.com';
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
 // PayPal Sandbox Configuration
 const PAYPAL_CLIENT_ID = process.env.REACT_APP_PAYPAL_CLIENT_ID || 'sb'; // Using a default sandbox client ID
 const PAYPAL_OPTIONS = {
     "client-id": PAYPAL_CLIENT_ID,
     currency: "PHP",
-    intent: "subscription",
-    vault: true
+    intent: "capture"
 };
 
 // A simple, reusable component for empty states to maintain consistency.
@@ -83,7 +82,7 @@ function SubscriptionPage() {
         if (!session?.access_token) return;
         
         try {
-            const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://solar-charger-backend.onrender.com';
+            const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
             const response = await fetch(`${BACKEND_URL}/api/user/subscription-history`, {
                 headers: {
                     'Authorization': `Bearer ${session.access_token}`
@@ -486,23 +485,6 @@ function SubscriptionPage() {
                                                 border: '1px solid rgba(16, 185, 129, 0.4)',
                                                 color: '#10b981'
                                             }}>Current Plan</div>
-                                        ) : plan.paypal_link ? (
-                                            <a
-                                                href={plan.paypal_link}
-                                                target="_blank"
-                                                rel="noopener noreferrer"
-                                                className="group relative px-6 py-3 rounded-xl font-bold text-white overflow-hidden transition-all duration-300 hover:scale-105 focus:outline-none focus:ring-4 focus:ring-opacity-50 block"
-                                                style={{
-                                                    background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
-                                                    boxShadow: '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
-                                                    focusRingColor: 'rgba(56, 182, 255, 0.5)'
-                                                }}
-                                            >
-                                                <span className="relative z-10">Subscribe via PayPal</span>
-                                                <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" style={{
-                                                    background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.3) 0%, rgba(56, 182, 255, 0.3) 100%)'
-                                                }}></div>
-                                            </a>
                                         ) : (
                                             <button
                                                 onClick={() => handleSelectPlan(plan)}

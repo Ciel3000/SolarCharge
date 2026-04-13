@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://solar-charger-backend.onrender.com';
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
 function AdminQuotaPricing({ navigateTo, handleSignOut }) {
     const navigate = useNavigate();

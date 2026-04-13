@@ -3,7 +3,7 @@ import { supabase } from '../supabaseClient';
 import Navigation from '../components/Navigation';
 import { formatCurrency } from '../utils/currencyUtils';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://solar-charger-backend.onrender.com';
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
 function AdminRevenue({ navigateTo, handleSignOut }) {
   const [revenueData, setRevenueData] = useState({

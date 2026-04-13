@@ -21,7 +21,8 @@ function decodeJwtPayload(accessToken) {
 }
 
 const getBackendBaseUrl = () => {
-  const raw = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
+  const raw = process.env.REACT_APP_BACKEND_URL;
+  if (!raw) throw new Error('REACT_APP_BACKEND_URL is not set');
   return String(raw).replace(/\/$/, '');
 };
 

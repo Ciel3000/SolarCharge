@@ -17,7 +17,7 @@ export const NotificationProvider = ({ children }) => {
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
 
-  const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'https://solar-charger-backend.onrender.com';
+  const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
   // Fetch notifications
   const fetchNotifications = useCallback(async () => {
