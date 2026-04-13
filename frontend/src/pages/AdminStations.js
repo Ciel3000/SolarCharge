@@ -219,7 +219,7 @@ function AdminStations({ navigateTo, handleSignOut }) {
          longitude: parseFloat(formData.longitude) || 0,
          solar_panel_wattage: parseInt(formData.solar_panel_wattage) || 0,
          battery_capacity_mah: (parseFloat(formData.battery_capacity_kwh) || 0) * 1000, // Convert kWh to mAh
-         current_battery_level: parseFloat(formData.current_battery_level) || 0,
+         current_battery_level: 100,
          price_per_mah: (parseFloat(formData.price_per_kwh) || 0.25) / 1000, // Convert price per kWh to price per mAh
          device_mqtt_id: formData.device_mqtt_id.trim(),
          num_free_ports: parseInt(formData.num_free_ports) || 0,
@@ -599,38 +599,6 @@ function AdminStations({ navigateTo, handleSignOut }) {
                       e.target.style.background = 'rgba(255, 255, 255, 0.2)';
                     }}
                     step="0.001"
-                    required
-                  />
-                </div>
-                
-                <div>
-                  <label className="block font-bold mb-2" style={{ color: '#000b3d' }}>
-                    Current Battery Level (%)
-                  </label>
-                  <input
-                    type="number"
-                    name="current_battery_level"
-                    value={formData.current_battery_level}
-                    onChange={handleInputChange}
-                    className="rounded-xl w-full py-2 px-3 leading-tight transition-all duration-200"
-                    style={{
-                      background: 'rgba(255, 255, 255, 0.2)',
-                      border: '1px solid rgba(255, 255, 255, 0.3)',
-                      color: '#000b3d',
-                      backdropFilter: 'blur(10px)'
-                    }}
-                    onFocus={(e) => {
-                      e.target.style.boxShadow = '0 0 0 3px rgba(56, 182, 255, 0.3)';
-                      e.target.style.borderColor = 'rgba(56, 182, 255, 0.5)';
-                      e.target.style.background = 'rgba(255, 255, 255, 0.3)';
-                    }}
-                    onBlur={(e) => {
-                      e.target.style.boxShadow = 'none';
-                      e.target.style.borderColor = 'rgba(255, 255, 255, 0.3)';
-                      e.target.style.background = 'rgba(255, 255, 255, 0.2)';
-                    }}
-                    min="0"
-                    max="100"
                     required
                   />
                 </div>

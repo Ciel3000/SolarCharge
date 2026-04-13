@@ -717,15 +717,7 @@ function StationPage({ station, navigateTo }) {
                             {currentStatus.displayStatus}
                           </div>
                           
-                          <div className="text-center mb-4">
-                            <div className="text-xs mb-1" style={{ color: '#000b3d', opacity: 0.7 }}>Current Consumption</div>
-                            <div className="text-lg font-bold" style={{ color: '#38b6ff' }}>
-                              {currentStatus.isUserSession ? currentStatus.consumption.toFixed(2) : '0.00'} mA
-                            </div>
-                            <div className="text-xs mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>
-                              Daily Total: {getDailyUsage().toFixed(2)} mAh
-                            </div>
-                          </div>
+                          
 
                           {currentStatus.displayStatus === 'Offline' ? (
                             <button

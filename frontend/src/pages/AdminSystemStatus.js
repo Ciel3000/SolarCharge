@@ -322,48 +322,7 @@ function AdminSystemStatus({ navigateTo, handleSignOut }) {
           </div>
         </div>
         
-        {/* Battery Levels */}
-        <div className="relative backdrop-blur-xl rounded-2xl shadow-2xl border border-white/30 overflow-hidden p-6 mb-8" style={{ 
-          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
-          boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
-        }}>
-          <h2 className="text-xl font-bold mb-4" style={{ color: '#000b3d' }}>Station Battery Levels</h2>
-          
-          <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-            {batteryLevels.map((station, index) => (
-              <div key={index} className="relative backdrop-blur-md rounded-xl overflow-hidden p-4" style={{
-                background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.15) 100%)',
-                border: '1px solid rgba(255, 255, 255, 0.3)'
-              }}>
-                <h3 className="font-bold mb-2" style={{ color: '#000b3d' }}>{station.station_name}</h3>
-                <div className="mt-2 h-4 rounded-full overflow-hidden backdrop-blur-md" style={{
-                  background: 'rgba(0, 11, 61, 0.1)',
-                  border: '1px solid rgba(255, 255, 255, 0.3)'
-                }}>
-                  <div
-                    className="h-full transition-all duration-300"
-                    style={{ 
-                      width: `${station.level}%`,
-                      background: station.level > 70 
-                        ? 'linear-gradient(135deg, #10b981 0%, #059669 100%)'
-                        : station.level > 40
-                        ? 'linear-gradient(135deg, #f9d217 0%, #f59e0b 100%)'
-                        : 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'
-                    }}
-                  ></div>
-                </div>
-                <div className="mt-1 flex justify-between text-sm">
-                  <span style={{ color: '#000b3d' }}>{station.level}%</span>
-                  <span style={{
-                    color: station.status === 'Critical' ? '#ef4444' : station.status === 'Warning' ? '#f9d217' : '#10b981'
-                  }}>
-                    {station.status}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
+        
         
         {/* System Logs */}
         <div className="relative backdrop-blur-xl rounded-2xl shadow-2xl border border-white/30 overflow-hidden p-6" style={{ 

@@ -23,8 +23,12 @@ function ForgotPasswordPage({ navigateTo }) {
 
     try {
       setLoading(true);
+      const redirectUrl = process.env.REACT_APP_SITE_URL 
+        ? `${process.env.REACT_APP_SITE_URL}/reset-password`
+        : `${window.location.origin}/reset-password`;
+      
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${process.env.REACT_APP_SITE_URL || window.location.origin}/reset-password`,
+        redirectTo: redirectUrl,
       });
 
       if (error) {

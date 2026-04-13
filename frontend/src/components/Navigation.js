@@ -48,7 +48,6 @@ function Navigation({ navigateTo, handleSignOut }) {
         links.push({ name: 'Revenue', path: '/admin/revenue', type: 'internal', admin: true });
         links.push({ name: 'System', path: '/admin/system-status', type: 'internal', admin: true });
         links.push({ name: 'Logs', path: '/admin/logs', type: 'internal', admin: true });
-        links.push({ name: 'Quota Pricing', path: '/admin/quota-pricing', type: 'internal', admin: true });
       } else {
         // Regular user links (not admin)
         links.push({ name: 'Home', path: '/home', type: 'internal' });
