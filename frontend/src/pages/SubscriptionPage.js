@@ -1,6 +1,6 @@
 // frontend/src/pages/SubscriptionPage.js
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { PayPalScriptProvider, PayPalButtons } from '@paypal/react-paypal-js';
 import { useAuth } from '../contexts/AuthContext';
@@ -43,6 +43,7 @@ function SubscriptionPage() {
     const [selectedPlanForPayment, setSelectedPlanForPayment] = useState(null);
     const [showPayPal, setShowPayPal] = useState(false);
     const [createdOrderId, setCreatedOrderId] = useState(null);
+    const paypalSectionRef = useRef(null);
     
     // New state for subscription history
     const [subscriptionHistory, setSubscriptionHistory] = useState([]);
@@ -138,6 +139,11 @@ function SubscriptionPage() {
             // Store the order ID from backend
             setCreatedOrderId(data.orderId);
             setShowPayPal(true);
+            
+            // Scroll to payment section
+            setTimeout(() => {
+                paypalSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 100);
             
         } catch (err) {
             console.error('Create order error:', err);
@@ -689,7 +695,7 @@ function SubscriptionPage() {
 
                 {/* PayPal Integration */}
                 {showPayPal && selectedPlanForPayment && (
-                    <div className="mt-8 relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-8 px-6 sm:px-8 lg:px-12 animate-fade-in" style={{
+                    <div ref={paypalSectionRef} className="mt-8 relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-8 px-6 sm:px-8 lg:px-12 animate-fade-in" style={{
                         background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
                         boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
                     }}>

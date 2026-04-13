@@ -557,7 +557,7 @@ bool sensorIdleOffsetExceedsThreshold(int portIdx, float* measuredCurrent) {
 
 bool calibratePortSensor(int portIdx, bool verbose) {
   int sensorPin = (portIdx == 0) ? HALL_EFFECT_SENSOR_PIN_1 : HALL_EFFECT_SENSOR_PIN_2;
-  const int numReadings = 2000;
+  const int numReadings = 10000;
   long sumRawValue = 0;
 
   for (int i = 0; i < numReadings; i++) {

@@ -40,7 +40,7 @@ async function acquireSessionLock(sessionKey, timeoutMs = 5000) {
 const INACTIVITY_TIMEOUT_SECONDS = 300; // 5 minutes for inactivity timeout
 const DEVICE_STATUS_STALE_THRESHOLD_SECONDS = 45; // when device stops reporting
 const USER_DEVICE_ONLINE_THRESHOLD_SECONDS = 120; // consider mobile device online if updated within last 2 minutes
-const NOMINAL_CHARGING_VOLTAGE_DC = 12; // Volts DC. Adjust this based on your battery system.
+const NOMINAL_CHARGING_VOLTAGE_DC = 13; // Volts DC. 
 const MAX_REASONABLE_CONSUMPTION = 10000; // 10kW in watts, for consumption validation
 
 // Premium user slot limits - easily configurable
@@ -773,8 +773,10 @@ mqttClient.on('message', async (topic, message) => {
             const hasDeviceTimestamp = Number.isFinite(deviceTimestampMs);
             const charger_state = payload.charger_state;
 
-            // Store consumption as Amps directly (ESP32 sends current in Amps)
-            // We validate against reasonable wattage threshold by multiplying back
+            console.log(`MQTT DEBUG: Raw consumption from ESP32: ${rawConsumption} (type: ${typeof rawConsumption})`);
+            
+            // ESP32 sends current in Amps. Validate against reasonable wattage threshold.
+            // (Amps * 12V = Watts for validation, but store as Amps directly)
             const validatedConsumption = validateConsumption(consumptionAmps * NOMINAL_CHARGING_VOLTAGE_DC);
 
             console.log(
@@ -789,24 +791,27 @@ mqttClient.on('message', async (topic, message) => {
             // ALWAYS store consumption data regardless of session state
             
             if (validatedConsumption > 0) {
-                // Store consumption data with port_number for easier querying
+                // Store consumption data (now storing Amps instead of Watts)
+                // For backward compatibility with existing column name, we insert Amps value into consumption_watts column
                 await pool.query(
                     'INSERT INTO consumption_data (session_id, device_id, port_number, consumption_watts, timestamp, charger_state) VALUES ($1, $2, $3, $4, $5, $6)',
-                    [currentSessionId, deviceId, portNumberInDevice, validatedConsumption, serverTimestamp, charger_state]
+                    [currentSessionId, deviceId, portNumberInDevice, consumptionAmps, serverTimestamp, charger_state]
                 );
                 console.log(
                     `MQTT: Stored consumption for ${deviceId} Port ${portNumberInDevice}: ` +
-                    `${validatedConsumption}W at ${serverTimestamp.toISOString()}`
+                    `${consumptionAmps}A at ${serverTimestamp.toISOString()}`
                 );
 
                 // If we have an active session, update session totals
                 if (currentSessionId) {
                     const intervalSeconds = 10; // ESP32 publishes every 10 seconds
-                    const kwhIncrement = (validatedConsumption * intervalSeconds) / (1000 * 3600); // Watts * seconds / (1000W/kW * 3600s/hr)
-
-                    // Calculate mAh Increment (assuming a nominal charging voltage, e.g., 12V for the battery)
-                    const currentAmps = validatedConsumption / NOMINAL_CHARGING_VOLTAGE_DC; // Amps = Watts / Volts
-                    const mAhIncrement = (currentAmps * 1000) * (intervalSeconds / 3600); // mAh = Amps * 1000 * (seconds / 3600)
+                    
+                    // consumptionAmps is now the actual Amps value from ESP32
+                    // Convert Amps to kWh: (Amps * Volts * seconds) / (1000 * 3600)
+                    const kwhIncrement = (consumptionAmps * NOMINAL_CHARGING_VOLTAGE_DC * intervalSeconds) / (1000 * 3600);
+                    
+                    // Calculate mAh Increment directly from Amps: Amps * 1000 * (seconds / 3600)
+                    const mAhIncrement = (consumptionAmps * 1000) * (intervalSeconds / 3600);
 
                     console.log(`MQTT: Energy increment for ${sessionKey}: ${kwhIncrement.toFixed(6)} kWh, ${mAhIncrement.toFixed(2)} mAh`);
 
@@ -1029,12 +1034,13 @@ app.get('/api/devices/consumption', async (req, res) => {
                 COALESCE(cs.total_mah_consumed, 0) as total_mah_consumed,
                 COALESCE(cs.energy_consumed_kwh, 0) as energy_consumed_kwh,
                 COALESCE(cs.last_status_update, NOW()) as timestamp,
-                -- Calculate current consumption from recent consumption_data
+                -- Calculate current consumption from recent consumption_data (by device_id and port_number)
                 (SELECT AVG(sub.consumption_watts) 
                  FROM (
                      SELECT consumption_watts
                      FROM consumption_data cd 
-                     WHERE cd.session_id = cs.session_id 
+                     WHERE cd.device_id = cp.device_mqtt_id 
+                     AND cd.port_number = cp.port_number_in_device
                      AND cd.timestamp > NOW() - INTERVAL '1 minute'
                      ORDER BY cd.timestamp DESC 
                      LIMIT 6
@@ -1050,10 +1056,12 @@ app.get('/api/devices/consumption', async (req, res) => {
         // Transform the data to include current consumption calculation
         const consumptionData = result.rows.map(row => {
             const totalMah = Number(row.total_mah_consumed) || 0;
-            const recentWatts = Number(row.recent_consumption_watts) || 0;
+            const recentAmps = Number(row.recent_consumption_watts) || 0;
             
-            // consumption_data now stores Amps (not Watts), so convert to mA: Amps * 1000
-            const currentConsumption = recentWatts > 0 ? recentWatts * 1000 : 0;
+            console.log(`DEBUG: device_id=${row.device_id}, port=${row.port_number}, recentAmps=${recentAmps}, raw_value=${row.recent_consumption_watts}`);
+            
+            // consumption_data now stores Amps, convert to mA
+            const currentConsumption = recentAmps > 0 ? recentAmps * 1000 : 0;
             
             return {
                 device_id: row.device_id,
@@ -1108,7 +1116,8 @@ app.get('/api/stations/:stationId/sync', async (req, res) => {
                  FROM (
                      SELECT consumption_watts
                      FROM consumption_data cd 
-                     WHERE cd.session_id = cs.session_id 
+                     WHERE cd.device_id = cp.device_mqtt_id 
+                     AND cd.port_number = cp.port_number_in_device
                      AND cd.timestamp > NOW() - INTERVAL '1 minute'
                      ORDER BY cd.timestamp DESC 
                      LIMIT 6
@@ -1121,8 +1130,9 @@ app.get('/api/stations/:stationId/sync', async (req, res) => {
 
         const consumptionData = consumptionResult.rows.map(row => {
             const totalMah = Number(row.total_mah_consumed) || 0;
-            const recentWatts = Number(row.recent_consumption_watts) || 0;
-            const currentConsumption = recentWatts > 0 ? (recentWatts / NOMINAL_CHARGING_VOLTAGE_DC) * 1000 : 0;
+            const recentAmps = Number(row.recent_consumption_watts) || 0;
+            // recent_consumption_watts column now stores Amps, convert to mA
+            const currentConsumption = recentAmps > 0 ? recentAmps * 1000 : 0;
 
             return {
                 device_id: row.device_id,
@@ -3327,7 +3337,7 @@ async function verifySupabaseJWT(token) {
     }
 
     const alg = decoded.header.alg;
-    console.log('JWT verify: alg:', alg, 'JWKS_URL:', SUPABASE_JWKS_URL ? 'set' : 'not set', 'SECRET:', SUPABASE_JWT_SECRET ? 'set' : 'not set');
+    //console.log('JWT verify: alg:', alg, 'JWKS_URL:', SUPABASE_JWKS_URL ? 'set' : 'not set', 'SECRET:', SUPABASE_JWT_SECRET ? 'set' : 'not set');
 
     const jose = await import('jose');
 
@@ -3337,7 +3347,7 @@ async function verifySupabaseJWT(token) {
         }
         const JWKS = await getSupabaseRemoteJwkSet();
         const { payload } = await jose.jwtVerify(token, JWKS);
-        console.log('JWT verified (asymmetric): sub=', payload?.sub);
+        //console.log('JWT verified (asymmetric): sub=', payload?.sub);
         return payload;
     }
 
@@ -3346,7 +3356,7 @@ async function verifySupabaseJWT(token) {
             throw new Error('SUPABASE_JWT_SECRET is required for HS256 (legacy) tokens');
         }
         const payload = jwt.verify(token, SUPABASE_JWT_SECRET, { algorithms: ['HS256'] });
-        console.log('JWT verified (HS256): sub=', payload?.sub);
+        // (HS256): sub=', payload?.sub);
         return payload;
     }
 
@@ -3363,9 +3373,9 @@ async function supabaseAuthMiddleware(req, res, next) {
             return res.status(401).json({ error: 'Missing or invalid Authorization header' });
         }
         const token = auth.replace('Bearer ', '');
-        console.log('Token start:', token.substring(0, 50), '...');
+        //console.log('Token start:', token.substring(0, 50), '...');
         const payload = await verifySupabaseJWT(token);
-        console.log('JWT verified OK, user_id:', payload?.sub);
+        //console.log('JWT verified OK, user_id:', payload?.sub);
         req.user = {
             user_id: payload.sub,
             email: payload.email,
