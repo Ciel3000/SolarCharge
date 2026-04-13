@@ -198,7 +198,7 @@ async function processSubscriptionPayment(client, userId, dbOrder, captureId) {
 
     // Check if user already has a subscription
     const existingSub = await client.query(
-        `SELECT id FROM user_subscription WHERE user_id = $1`,
+        `SELECT user_subscription_id FROM user_subscription WHERE user_id = $1`,
         [userId]
     );
 
@@ -206,23 +206,23 @@ async function processSubscriptionPayment(client, userId, dbOrder, captureId) {
         // Update existing subscription
         await client.query(
             `UPDATE user_subscription 
-             SET plan_id = $1, status = 'active', start_date = $2, end_date = $3, 
-                 daily_mah_limit = $4, current_daily_mah_consumed = 0, updated_at = NOW()
+             SET plan_id = $1, is_active = true, start_date = $2, end_date = $3, 
+                 current_daily_mah_consumed = 0, updated_at = NOW()
              WHERE user_id = $5`,
             [dbOrder.plan_id, startDate, endDate, plan.daily_mah_limit, userId]
         );
         
         return {
             status: 'COMPLETED',
-            subscriptionId: existingSub.rows[0].id,
+            subscriptionId: existingSub.rows[0].user_subscription_id,
             message: 'Subscription updated successfully'
         };
     } else {
         // Insert new subscription
         await client.query(
-            `INSERT INTO user_subscription (id, user_id, plan_id, status, start_date, end_date, daily_mah_limit, borrowed_mah_today)
-             VALUES ($1, $2, $3, 'active', $4, $5, $6, 0)`,
-            [subscriptionId, userId, dbOrder.plan_id, startDate, endDate, plan.daily_mah_limit]
+            `INSERT INTO user_subscription (user_subscription_id, user_id, plan_id, is_active, start_date, end_date, current_daily_mah_consumed)
+             VALUES ($1, $2, $3, true, $4, $5, 0)`,
+            [subscriptionId, userId, dbOrder.plan_id, startDate, endDate]
         );
         
         return {
@@ -247,7 +247,7 @@ async function processQuotaExtensionPayment(client, userId, dbOrder, captureId) 
     
     // Get current active subscription to link the extension
     const subscriptionResult = await client.query(
-        `SELECT id FROM user_subscription WHERE user_id = $1 AND status = 'active'`,
+        `SELECT user_subscription_id FROM user_subscription WHERE user_id = $1 AND is_active = true`,
         [userId]
     );
 
