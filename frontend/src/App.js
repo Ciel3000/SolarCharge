@@ -22,6 +22,7 @@ import StationPage from './pages/StationPage';
 import StationsPage from './pages/StationsPage';
 import UserProfilePage from './pages/UserProfilePage';
 import Navigation from './components/Navigation';
+import BottomNavigation from './components/BottomNavigation';
 
 // Import admin pages
 import AdminDashboard from './pages/AdminDashboard';
@@ -299,8 +300,8 @@ function AppContent() {
         />
       )}
 
-      {/* Add top padding to content if navigation is shown */}
-      <div className={showNavigation ? "pt-16" : ""}>
+      {/* Add top padding to content if navigation is shown, bottom padding for mobile bottom nav */}
+      <div className={showNavigation ? "pt-16 pb-20 md:pb-0" : ""}>
         <PageVisibilityDebug />
         <Routes>
           {/* Default routes: Redirects handled by useEffect above for '/' */}
@@ -474,49 +475,85 @@ function AppContent() {
             }
           />
 
-          {/* Admin Protected Routes */}
+          {/* Admin Protected Routes - Check isLoading first to prevent "Access Denied" during auth init */}
           <Route path="/admin/dashboard" element={
-            !session ? <LoginPage navigateTo={navigateTo} message={'Access Denied: Please log in as an administrator.'} /> :
+            isLoading || isRecovering ? (
+              <div className="min-h-screen flex items-center justify-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-t-transparent" style={{ borderColor: '#38b6ff', borderTopColor: 'transparent' }}></div>
+              </div>
+            ) : !session ? <LoginPage navigateTo={navigateTo} message={'Access Denied: Please log in as an administrator.'} /> :
             !isAdmin ? <HomePage navigateTo={navigateTo} message={'Access Denied: You do not have administrator privileges.'} stations={stations} loadingStations={loadingStations} /> :
             <AdminDashboard navigateTo={navigateTo} handleSignOut={handleSignOut} />
           } />
           <Route path="/admin/logs" element={
-            !session ? <LoginPage navigateTo={navigateTo} message={'Access Denied: Please log in as an administrator.'} /> :
+            isLoading || isRecovering ? (
+              <div className="min-h-screen flex items-center justify-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-t-transparent" style={{ borderColor: '#38b6ff', borderTopColor: 'transparent' }}></div>
+              </div>
+            ) : !session ? <LoginPage navigateTo={navigateTo} message={'Access Denied: Please log in as an administrator.'} /> :
             !isAdmin ? <HomePage navigateTo={navigateTo} message={'Access Denied: You do not have administrator privileges.'} stations={stations} loadingStations={loadingStations} /> :
             <AdminLogs navigateTo={navigateTo} handleSignOut={handleSignOut} />
           } />
           <Route path="/admin/plans" element={
-            !session ? <LoginPage navigateTo={navigateTo} message={'Access Denied: Please log in as an administrator.'} /> :
+            isLoading || isRecovering ? (
+              <div className="min-h-screen flex items-center justify-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-t-transparent" style={{ borderColor: '#38b6ff', borderTopColor: 'transparent' }}></div>
+              </div>
+            ) : !session ? <LoginPage navigateTo={navigateTo} message={'Access Denied: Please log in as an administrator.'} /> :
             !isAdmin ? <HomePage navigateTo={navigateTo} message={'Access Denied: You do not have administrator privileges.'} stations={stations} loadingStations={loadingStations} /> :
             <AdminPlans navigateTo={navigateTo} handleSignOut={handleSignOut} />
           } />
           <Route path="/admin/revenue" element={
-            !session ? <LoginPage navigateTo={navigateTo} message={'Access Denied: Please log in as an administrator.'} /> :
+            isLoading || isRecovering ? (
+              <div className="min-h-screen flex items-center justify-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-t-transparent" style={{ borderColor: '#38b6ff', borderTopColor: 'transparent' }}></div>
+              </div>
+            ) : !session ? <LoginPage navigateTo={navigateTo} message={'Access Denied: Please log in as an administrator.'} /> :
             !isAdmin ? <HomePage navigateTo={navigateTo} message={'Access Denied: You do not have administrator privileges.'} stations={stations} loadingStations={loadingStations} /> :
             <AdminRevenue navigateTo={navigateTo} handleSignOut={handleSignOut} />
           } />
           <Route path="/admin/sessions" element={
-            !session ? <LoginPage navigateTo={navigateTo} message={'Access Denied: Please log in as an administrator.'} /> :
+            isLoading || isRecovering ? (
+              <div className="min-h-screen flex items-center justify-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-t-transparent" style={{ borderColor: '#38b6ff', borderTopColor: 'transparent' }}></div>
+              </div>
+            ) : !session ? <LoginPage navigateTo={navigateTo} message={'Access Denied: Please log in as an administrator.'} /> :
             !isAdmin ? <HomePage navigateTo={navigateTo} message={'Access Denied: You do not have administrator privileges.'} stations={stations} loadingStations={loadingStations} /> :
             <AdminSessions navigateTo={navigateTo} handleSignOut={handleSignOut} />
           } />
           <Route path="/admin/stations" element={
-            !session ? <LoginPage navigateTo={navigateTo} message={'Access Denied: Please log in as an administrator.'} /> :
+            isLoading || isRecovering ? (
+              <div className="min-h-screen flex items-center justify-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-t-transparent" style={{ borderColor: '#38b6ff', borderTopColor: 'transparent' }}></div>
+              </div>
+            ) : !session ? <LoginPage navigateTo={navigateTo} message={'Access Denied: Please log in as an administrator.'} /> :
             !isAdmin ? <HomePage navigateTo={navigateTo} message={'Access Denied: You do not have administrator privileges.'} stations={stations} loadingStations={loadingStations} /> :
             <AdminStations navigateTo={navigateTo} handleSignOut={handleSignOut} />
           } />
           <Route path="/admin/system-status" element={
-            !session ? <LoginPage navigateTo={navigateTo} message={'Access Denied: Please log in as an administrator.'} /> :
+            isLoading || isRecovering ? (
+              <div className="min-h-screen flex items-center justify-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-t-transparent" style={{ borderColor: '#38b6ff', borderTopColor: 'transparent' }}></div>
+              </div>
+            ) : !session ? <LoginPage navigateTo={navigateTo} message={'Access Denied: Please log in as an administrator.'} /> :
             !isAdmin ? <HomePage navigateTo={navigateTo} message={'Access Denied: You do not have administrator privileges.'} stations={stations} loadingStations={loadingStations} /> :
             <AdminSystemStatus navigateTo={navigateTo} handleSignOut={handleSignOut} />
           } />
           <Route path="/admin/users" element={
-            !session ? <LoginPage navigateTo={navigateTo} message={'Access Denied: Please log in as an administrator.'} /> :
+            isLoading || isRecovering ? (
+              <div className="min-h-screen flex items-center justify-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-t-transparent" style={{ borderColor: '#38b6ff', borderTopColor: 'transparent' }}></div>
+              </div>
+            ) : !session ? <LoginPage navigateTo={navigateTo} message={'Access Denied: Please log in as an administrator.'} /> :
             !isAdmin ? <HomePage navigateTo={navigateTo} message={'Access Denied: You do not have administrator privileges.'} stations={stations} loadingStations={loadingStations} /> :
             <AdminUsers navigateTo={navigateTo} handleSignOut={handleSignOut} />
           } />
           <Route path="/admin/quota-pricing" element={
-            !session ? <LoginPage navigateTo={navigateTo} message={'Access Denied: Please log in as an administrator.'} /> :
+            isLoading || isRecovering ? (
+              <div className="min-h-screen flex items-center justify-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-4 border-t-transparent" style={{ borderColor: '#38b6ff', borderTopColor: 'transparent' }}></div>
+              </div>
+            ) : !session ? <LoginPage navigateTo={navigateTo} message={'Access Denied: Please log in as an administrator.'} /> :
             !isAdmin ? <HomePage navigateTo={navigateTo} message={'Access Denied: You do not have administrator privileges.'} stations={stations} loadingStations={loadingStations} /> :
             <AdminQuotaPricing />
           } />
@@ -537,6 +574,7 @@ function AppContent() {
             </div>
           } />
         </Routes>
+        {showNavigation && !isAdmin && <BottomNavigation />}
       </div>
     </>
   );

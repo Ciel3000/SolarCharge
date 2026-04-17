@@ -45,8 +45,8 @@ const char* PUBLISH_TOPIC_STATUS = "charger/status/ESP32_CHARGER_STATION_001";
 // Hardware Pin Definitions
 const int CHARGER_RELAY_PIN_1 = 25;
 const int CHARGER_RELAY_PIN_2 = 26;
-const int HALL_EFFECT_SENSOR_PIN_1 = 34;
-const int HALL_EFFECT_SENSOR_PIN_2 = 35;
+const int HALL_EFFECT_SENSOR_PIN_1 = 34; // 34 - 32
+const int HALL_EFFECT_SENSOR_PIN_2 = 33; // 35 - 33
 
 // RGB LED Pins (Common Cathode: HIGH = ON)
 const int RGB_LED_R_PIN_1 = 18;
@@ -59,8 +59,11 @@ const int RGB_LED_B_PIN_2 = 17;
 // ACS712 Sensor Configuration (30A version)
 const float VCC_ESP32 = 3.3;
 const float SENSOR_SENSITIVITY = 0.066;
-float quiescentVoltage1 = VCC_ESP32 / 2.0;
-float quiescentVoltage2 = VCC_ESP32 / 2.0;
+//float quiescentVoltage1 = VCC_ESP32 / 2.0;
+//float quiescentVoltage2 = VCC_ESP32 / 2.0;
+const float ACS712_SUPPLY_VOLTAGE = 5.0;  // Add this
+float quiescentVoltage1 = ACS712_SUPPLY_VOLTAGE / 2.0;  // Should be 2.5V
+float quiescentVoltage2 = ACS712_SUPPLY_VOLTAGE / 2.0;
 const float CURRENT_FILTER_ALPHA = 0.15f;           // EMA weight for smoothing
 const float SENSOR_IDLE_TOLERANCE_AMPS = 0.08f;     // Max idle drift before recalibration
 const unsigned long SENSOR_HEALTH_RECHECK_DELAY_MS = 200;
@@ -139,6 +142,8 @@ bool calibratePortSensor(int portIdx, bool verbose = true);
 bool ensureSensorReadyForActivation(int portNumber);
 
 void setup() {
+  analogReadResolution(12);   // ensure 12-bit mode (0–4095)
+  analogSetAttenuation(ADC_11db);  // allows reading up to ~3.3V  
   Serial.begin(115200);
   Serial.println("ESP32 Charger Station - Enhanced RGB Control");
   Serial.println("============================================");
@@ -164,6 +169,8 @@ void setup() {
   setPortLedState(1, LED_STATE_AVAILABLE);
   setPortLedState(2, LED_STATE_AVAILABLE);
 
+  Serial.println("Waiting for sensor power rail...");
+  delay(3000);  // give 5V rail time to fully stabilize
   Serial.println("Calibrating sensors (ensure no current flow)...");
   calibrateSensors();
   Serial.println("Calibration complete");
@@ -218,9 +225,12 @@ void loop() {
         absCurrent = 0.0;
       }
 
-      float mahThisInterval = (absCurrent * MEASUREMENT_INTERVAL_MS) / 3600.0;
-      if (mahThisInterval > 0.0) {
-        totalMah[portIdx] += mahThisInterval;
+      // Only track mAh when charger is ON
+      if (chargerState[portIdx]) {
+        float mahThisInterval = (absCurrent * MEASUREMENT_INTERVAL_MS) / 3600.0;
+        if (mahThisInterval > 0.0) {
+          totalMah[portIdx] += mahThisInterval;
+        }
       }
 
       // Charging phase detection
@@ -534,8 +544,12 @@ float readCurrent(int sensorPin, float quiescentV) {
   }
   
   float avgRawValue = (float)sumRawValue / numSamples;
-  float voltage = (avgRawValue / 4095.0) * VCC_ESP32;
+  float voltage = (avgRawValue / 4095.0) * VCC_ESP32; // was VCC_ESP32
   float current = (voltage - quiescentV) / SENSOR_SENSITIVITY;
+  Serial.print("Raw ADC: ");
+  Serial.print(avgRawValue);
+  Serial.print(" | Voltage: ");
+  Serial.println(voltage, 3);
   return current;
 }
 
@@ -562,27 +576,50 @@ bool calibratePortSensor(int portIdx, bool verbose) {
 
   for (int i = 0; i < numReadings; i++) {
     sumRawValue += analogRead(sensorPin);
-    delayMicroseconds(150);
+    delayMicroseconds(100);
   }
 
   float avgRawValue = (float)sumRawValue / numReadings;
   float voltage = (avgRawValue / 4095.0) * VCC_ESP32;
-  if (portIdx == 0) {
-    quiescentVoltage1 = voltage;
-  } else {
-    quiescentVoltage2 = voltage;
-  }
-  filteredCurrent[portIdx] = 0.0f;
-  lastCalibrationTime[portIdx] = millis();
-
-  if (verbose) {
+  if (voltage < 1.8 || voltage > 2.8) {
     Serial.print("Sensor ");
     Serial.print(portIdx + 1);
-    Serial.print(" recalibrated: ");
+    Serial.print(": BAD calibration (");
     Serial.print(voltage, 4);
-    Serial.println("V");
+    Serial.println("V) — retrying in 1s...");
+    delay(1000);
+
+    // Retry once
+    sumRawValue = 0;
+    for (int i = 0; i < numReadings; i++) {
+      sumRawValue += analogRead(sensorPin);
+      delayMicroseconds(100);
+    }
+    avgRawValue = (float)sumRawValue / numReadings;
+    voltage = (avgRawValue / 4095.0) * VCC_ESP32;
+
+    if (voltage < 1.8 || voltage > 2.8) {  // same range as first check
+      Serial.print("Sensor ");
+      Serial.print(portIdx + 1);
+      Serial.println(": Retry also failed — using default 2.5V");
+      voltage = 2.5;  // ACS712 idle output = VCC_sensor / 2 = 2.5V
+    }
   }
-  return true;
+
+    if (portIdx == 0) quiescentVoltage1 = voltage;
+    else              quiescentVoltage2 = voltage;
+
+    filteredCurrent[portIdx] = 0.0f;
+    lastCalibrationTime[portIdx] = millis();
+
+    if (verbose) {
+      Serial.print("Sensor ");
+      Serial.print(portIdx + 1);
+      Serial.print(" recalibrated: ");
+      Serial.print(voltage, 4);
+      Serial.println("V");
+    }
+    return true;
 }
 
 bool ensureSensorReadyForActivation(int portNumber) {
@@ -653,8 +690,6 @@ void controlRelay(int portNumber, bool state) {
     return;
   }
 
-  filteredCurrent[portIdx] = 0.0;
-
   if (!state) {
     chargingPhase[portIdx] = PHASE_IDLE;
     peakCurrent[portIdx] = 0.0;
@@ -664,6 +699,18 @@ void controlRelay(int portNumber, bool state) {
   }
 
   digitalWrite(relayPin, state ? HIGH : LOW);
+
+  // Pre-fill filter AFTER relay closes so we read actual load current
+  if (state) {
+    delay(150); // wait for relay to close and load to settle
+    float prefillCurrent = readCurrent(
+      (portIdx == 0) ? HALL_EFFECT_SENSOR_PIN_1 : HALL_EFFECT_SENSOR_PIN_2,
+      (portIdx == 0) ? quiescentVoltage1 : quiescentVoltage2
+    );
+    filteredCurrent[portIdx] = prefillCurrent;
+  }
+
+
   setPortLedState(portNumber, state ? LED_STATE_ACTIVE : LED_STATE_AVAILABLE);
   
   Serial.print("Port ");

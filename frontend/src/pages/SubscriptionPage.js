@@ -61,6 +61,8 @@ function SubscriptionPage() {
     // Fetch available subscription plans
     const fetchAvailablePlans = useCallback(async () => {
         try {
+            setLoading(true);
+
             const { supabase } = await import('../supabaseClient');
             const { data, error } = await supabase
                 .from('subscription_plans')
@@ -76,14 +78,21 @@ function SubscriptionPage() {
         } catch (err) {
             console.error('Failed to load subscription plans:', err);
             setAvailablePlans([]);
+        } finally {
+            setLoading(false);
         }
     }, []);
 
     // Fetch subscription history
     const fetchSubscriptionHistory = useCallback(async () => {
-        if (!session?.access_token) return;
+        if (!session?.access_token) {
+            setLoading(false);
+            return;
+        }
         
         try {
+            setLoading(true);
+
             const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
             const response = await fetch(`${BACKEND_URL}/api/user/subscription-history`, {
                 headers: {
@@ -100,15 +109,36 @@ function SubscriptionPage() {
         } catch (err) {
             console.error('Failed to load subscription history:', err);
             setSubscriptionHistory([]);
+        } finally {
+            setLoading(false);
         }
     }, [session]);
 
     // Fetch all data concurrently on component mount/session change
     useEffect(() => {
         fetchAvailablePlans();
-        fetchSubscriptionHistory();
-        setLoading(false);
-    }, [fetchAvailablePlans, fetchSubscriptionHistory]);
+
+        if (session?.access_token) {
+            fetchSubscriptionHistory();
+        }
+    }, [fetchAvailablePlans, fetchSubscriptionHistory, session]);
+
+    // Refetch data when user returns to tab (focus event)
+    useEffect(() => {
+        const handleFocus = () => {
+            fetchAvailablePlans();
+
+            if (session?.access_token) {
+                fetchSubscriptionHistory();
+            }
+        };
+
+        window.addEventListener('focus', handleFocus);
+
+        return () => {
+            window.removeEventListener('focus', handleFocus);
+        };
+    }, [fetchAvailablePlans, fetchSubscriptionHistory, session]);
 
     // Handle plan selection for payment
     const handleSelectPlan = async (plan) => {
@@ -246,10 +276,11 @@ function SubscriptionPage() {
 
     // Helper function to format currency
     const formatCurrency = (amount) => {
+        const num = typeof amount === 'number' ? amount : parseFloat(amount) || 0;
         return new Intl.NumberFormat('en-PH', {
             style: 'currency',
             currency: 'PHP',
-        }).format(amount || 0);
+        }).format(num);
     };
 
     // Helper function to get duration display text
@@ -352,7 +383,7 @@ function SubscriptionPage() {
                             }}>
                                 <div className="text-sm mb-2" style={{ color: '#000b3d', opacity: 0.8 }}>Plan</div>
                                 <div className="text-lg font-bold" style={{ color: '#10b981' }}>
-                                    {subscription.subscription_plans?.plan_name || subscription.plan_name || 'Unknown Plan'}
+                                    {subscription.plan_name || 'Unknown Plan'}
                                 </div>
                             </div>
                             <div className="p-4 rounded-xl backdrop-blur-md" style={{
@@ -361,7 +392,7 @@ function SubscriptionPage() {
                             }}>
                                 <div className="text-sm mb-2" style={{ color: '#000b3d', opacity: 0.8 }}>Daily Limit</div>
                                 <div className="text-lg font-bold" style={{ color: '#38b6ff' }}>
-                                    {subscription.subscription_plans?.daily_mah_limit || subscription.daily_mah_limit || '0'} mAh
+                                    {subscription.daily_mah_limit || '0'} mAh
                                 </div>
                             </div>
                             <div className="p-4 rounded-xl backdrop-blur-md" style={{
@@ -370,16 +401,16 @@ function SubscriptionPage() {
                             }}>
                                 <div className="text-sm mb-2" style={{ color: '#000b3d', opacity: 0.8 }}>Duration</div>
                                 <div className="text-lg font-bold" style={{ color: '#8b5cf6' }}>
-                                    {getDurationDisplayText(
-                                        subscription.subscription_plans?.duration_type || subscription.duration_type, 
-                                        subscription.subscription_plans?.duration_value || subscription.duration_value
+                                    {subscription.duration_display || getDurationDisplayText(
+                                        subscription.duration_type, 
+                                        subscription.duration_value
                                     )}
                                 </div>
                             </div>
                         </div>
                         
                         {/* Additional subscription details */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                             <div className="p-4 rounded-xl backdrop-blur-md" style={{
                                 background: 'linear-gradient(135deg, rgba(249, 115, 22, 0.2) 0%, rgba(249, 115, 22, 0.1) 100%)',
                                 border: '1px solid rgba(249, 115, 22, 0.3)'
@@ -393,8 +424,17 @@ function SubscriptionPage() {
                                 background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(99, 102, 241, 0.1) 100%)',
                                 border: '1px solid rgba(99, 102, 241, 0.3)'
                             }}>
-                                <div className="text-sm mb-2" style={{ color: '#000b3d', opacity: 0.8 }}>Start Date</div>
+                                <div className="text-sm mb-2" style={{ color: '#000b3d', opacity: 0.8 }}>Plan Price</div>
                                 <div className="text-lg font-bold" style={{ color: '#6366f1' }}>
+                                    {subscription.price != null ? `₱${Number(subscription.price).toFixed(2)}` : 'Free'}
+                                </div>
+                            </div>
+                            <div className="p-4 rounded-xl backdrop-blur-md" style={{
+                                background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.1) 100%)',
+                                border: '1px solid rgba(56, 182, 255, 0.3)'
+                            }}>
+                                <div className="text-sm mb-2" style={{ color: '#000b3d', opacity: 0.8 }}>Start Date</div>
+                                <div className="text-lg font-bold" style={{ color: '#38b6ff' }}>
                                     {new Date(subscription.start_date).toLocaleDateString()}
                                 </div>
                             </div>

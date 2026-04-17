@@ -102,10 +102,10 @@ export const useIntervalWithVisibility = (callback, delay, enabled = true) => {
         isPageVisibleRef.current = false;
         stopInterval();
       } else {
-        // Page is visible again - restart interval
+        // Page is visible again - just restart interval, don't fetch immediately
         console.log('Interval visibility: Tab visible, restarting interval');
         isPageVisibleRef.current = true;
-        safelyCallCallback();
+        // Removed safelyCallCallback() - let the polling interval handle refresh
         startInterval();
       }
     };

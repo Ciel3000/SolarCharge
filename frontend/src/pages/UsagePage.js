@@ -228,9 +228,9 @@ function UsagePage() {
 
     // Calculate subscription usage and remaining
     const calculateSubscriptionUsage = () => {
-        if (!subscription || !subscription.subscription_plans) return null;
+        if (!subscription) return null;
 
-        const dailyLimit = subscription.subscription_plans.daily_mah_limit || 0;
+        const dailyLimit = subscription.daily_mah_limit || 0;
         const consumed = subscription.current_daily_mah_consumed || 0;
         const borrowedToday = subscription.borrowed_mah_today || 0;
         const borrowedPending = subscription.borrowed_mah_pending || 0;
@@ -447,14 +447,14 @@ function UsagePage() {
                         {usageData ? (
                             <div className="space-y-6">
                                 {/* Current Plan and Remaining Quota - Side by Side */}
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div className="p-4 rounded-xl backdrop-blur-md" style={{
                                         background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.1) 100%)',
                                         border: '1px solid rgba(56, 182, 255, 0.3)'
                                     }}>
                                         <div className="text-sm mb-2" style={{ color: '#000b3d', opacity: 0.8 }}>CURRENT PLAN</div>
                                         <div className="text-lg font-bold" style={{ color: '#38b6ff' }}>
-                                            {subscription.subscription_plans?.plan_name ||  'Unknown Plan'}
+                                            {subscription.plan_name || 'Unknown Plan'}
                                         </div>
                                     </div>
                                     
@@ -771,7 +771,7 @@ function UsagePage() {
                         {usage ? (
                             <div className="space-y-6">
                                 {/* Monthly Statistics */}
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div className="p-4 rounded-xl backdrop-blur-md" style={{
                                         background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.1) 100%)',
                                         border: '1px solid rgba(56, 182, 255, 0.3)'
@@ -788,7 +788,7 @@ function UsagePage() {
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div className="p-4 rounded-xl backdrop-blur-md" style={{
                                         background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(139, 92, 246, 0.1) 100%)',
                                         border: '1px solid rgba(139, 92, 246, 0.3)'

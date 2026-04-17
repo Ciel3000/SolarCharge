@@ -40,7 +40,7 @@ function AdminSystemStatus({ navigateTo, handleSignOut }) {
     }
   }, []);
 
-  // Handle page visibility changes
+  // Handle page visibility (just stop interval when hidden, no fetch on visible)
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden) {
@@ -49,14 +49,10 @@ function AdminSystemStatus({ navigateTo, handleSignOut }) {
         isPageVisibleRef.current = false;
         stopInterval();
       } else {
-        // Page is visible again - restart interval and fetch fresh data
+        // Page is visible again - just restart interval
+        // No need to fetch here, polling interval will fetch fresh data
         console.log('AdminSystemStatus: Tab visible, restarting interval');
         isPageVisibleRef.current = true;
-        
-        // Immediately fetch fresh data
-        fetchSystemStatus();
-        
-        // Restart interval
         startInterval();
       }
     };

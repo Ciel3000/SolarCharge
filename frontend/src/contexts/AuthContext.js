@@ -92,55 +92,54 @@ export const AuthProvider = ({ children }) => {
     }
   }, [handleSessionTimeout]);
 
-  // --- Helper to fetch user subscription and all plans ---
-  const fetchSubscriptionAndPlans = useCallback(async (currentSession) => {
-    if (!currentSession) {
-      setSubscription(null);
-      setPlans([]);
-      return;
-    }
-    try {
-      // First, fetch all available plans (this should always work)
-      const { data: plansData, error: plansError } = await supabase
-        .from('subscription_plans')
-        .select('*');
+   // --- Helper to fetch user subscription and all plans ---
+   const fetchSubscriptionAndPlans = useCallback(async (currentSession) => {
+     if (!currentSession) {
+       setSubscription(null);
+       setPlans([]);
+       return;
+     }
+     try {
+       // First, fetch all available plans from Supabase (fast, direct)
+       const { data: plansData, error: plansError } = await supabase
+         .from('subscription_plans')
+         .select('*');
 
-      if (plansError) {
-        console.error("AuthContext: Error fetching plans:", plansError);
-      } else {
-        setPlans(plansData || []);
-      }
+       if (plansError) {
+         console.error("AuthContext: Error fetching plans:", plansError);
+       } else {
+         setPlans(plansData || []);
+       }
 
-      // Then fetch user's active subscription (this might not exist)
-      try {
-        const { data: subData, error: subError } = await supabase
-          .from('user_subscription')
-          .select(`
-            *,
-            subscription_plans (*)
-          `)
-          .eq('user_id', currentSession.user.id)
-          .eq('is_active', true)
-          .limit(1);
+       // Then fetch user's active subscription from backend API (consistent shape with history)
+       try {
+         const res = await fetch(`${getBackendBaseUrl()}/api/user/subscription`, {
+           headers: {
+             Authorization: `Bearer ${currentSession.access_token}`
+           }
+         });
 
-        if (subError) {
-          console.error("AuthContext: Error fetching subscription:", subError);
-          setSubscription(null);
-        } else {
-          // Take the first result if any, or null if empty array
-          setSubscription(subData && subData.length > 0 ? subData[0] : null);
-        }
-      } catch (subscriptionError) {
-        console.error("AuthContext: Subscription fetch failed:", subscriptionError);
-        setSubscription(null);
-      }
+         if (res.ok) {
+           const data = await res.json();
+           setSubscription(data.subscription);
+         } else if (res.status === 404) {
+           // No active subscription - this is fine
+           setSubscription(null);
+         } else {
+           console.error("AuthContext: Error fetching subscription from API:", res.status);
+           setSubscription(null);
+         }
+       } catch (subscriptionError) {
+         console.error("AuthContext: Subscription fetch failed:", subscriptionError);
+         setSubscription(null);
+       }
 
-    } catch (error) {
-      console.error("AuthContext: Error fetching subscription or plans:", error.message);
-      setSubscription(null);
-      setPlans([]);
-    }
-  }, []);
+     } catch (error) {
+       console.error("AuthContext: Error fetching subscription or plans:", error.message);
+       setSubscription(null);
+       setPlans([]);
+     }
+   }, []);
 
   // --- Session recovery function ---
   const recoverSession = useCallback(async () => {
@@ -239,19 +238,22 @@ export const AuthProvider = ({ children }) => {
             switch (event) {
               case 'SIGNED_IN':
                 console.log("AuthContext: User signed in");
-                if (!initialized || !session) {
+                const isNewLogin = !initialized && !session;
+                if (isNewLogin) {
                   setLoading(true);
                 }
                 setError(null);
                 setSession(currentSession);
                 setUser(currentSession?.user || null);
-                // Run queries in parallel
-                await Promise.all([
-                  checkAdminStatus(currentSession),
-                  fetchSubscriptionAndPlans(currentSession)
-                ]);
-                setLoading(false);
-                setInitialized(true);
+                
+                if (isNewLogin) {
+                  await Promise.all([
+                    checkAdminStatus(currentSession),
+                    fetchSubscriptionAndPlans(currentSession)
+                  ]);
+                  setLoading(false);
+                  setInitialized(true);
+                }
                 break;
                 
               case 'SIGNED_OUT':
@@ -350,32 +352,18 @@ export const AuthProvider = ({ children }) => {
 
   // --- Page visibility change handler ---
   useEffect(() => {
-    const handleVisibilityChange = async () => {
-      if (!document.hidden) {
-        const now = Date.now();
-        // Debounce: only recover if at least 2 seconds since last attempt
-        if (now - lastRecoveryAttempt < 2000) return;
-
-        setLastRecoveryAttempt(now);
-
-        if (session && isSessionExpired(session)) {
-          console.log("AuthContext: Page became visible and session is expired");
+    const handleVisibilityChange = () => {
+      if (!document.hidden && session) {
+        if (isSessionExpired(session)) {
+          console.log("AuthContext: Session expired while tab was hidden");
           handleSessionTimeout();
-        } else if (session && !isRecovering) {
-          console.log("AuthContext: Page became visible, refreshing session...");
-          await recoverSession();
-        } else if (!session && !isRecovering) {
-          console.log("AuthContext: Page became visible, attempting session recovery...");
-          await recoverSession();
         }
+        // Let Supabase handle token refresh automatically
       }
     };
-
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-    };
-  }, [session, isSessionExpired, handleSessionTimeout, recoverSession, isRecovering, lastRecoveryAttempt]);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [session, isSessionExpired, handleSessionTimeout]);
 
   // Error recovery function
   const clearError = () => setError(null);

@@ -516,7 +516,7 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
                 )}
               </div>
             {subscription ? (
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 w-full animate-fade-in-up">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full animate-fade-in-up">
                 {/* Left Panel - Current Plan */}
                 <div className="group relative backdrop-blur-xl rounded-3xl p-6 sm:p-8 flex flex-col transform transition-all duration-500 hover:scale-105 hover:-translate-y-2" style={{
                   background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.15) 100%)',
@@ -529,7 +529,7 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
                   <div className="mb-6 text-sm sm:text-base" style={{ color: '#000b3d', opacity: 0.7 }}><strong>Daily Limit:</strong> {subscription.subscription_plans?.daily_mah_limit || subscription.daily_mah_limit || 0} mAh</div>
                   
                   {/* Usage Analytics - Made more compact */}
-                  <div className="grid grid-cols-3 gap-3 w-full mb-6">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3 w-full mb-6">
                     <div className="flex flex-col items-center rounded-xl px-3 py-3 backdrop-blur-md" style={{
                       background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.1) 100%)',
                       border: '1px solid rgba(56, 182, 255, 0.3)'

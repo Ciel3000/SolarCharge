@@ -206,41 +206,35 @@ async function processSubscriptionPayment(client, userId, dbOrder, captureId) {
 
     const subscriptionId = uuidv4();
 
-    // Check if user already has a subscription
-    const existingSub = await client.query(
-        `SELECT user_subscription_id FROM user_subscription WHERE user_id = $1`,
+    // Find currently active subscription(s) for this user
+    const activeSubResult = await client.query(
+        `SELECT user_subscription_id FROM user_subscription WHERE user_id = $1 AND is_active = true`,
         [userId]
     );
 
-    if (existingSub.rows.length > 0) {
-        // Update existing subscription
+    if (activeSubResult.rows.length > 0) {
+        // Deactivate all active subscriptions (preserves history, ensures single active)
         await client.query(
             `UPDATE user_subscription 
-             SET plan_id = $1, is_active = true, start_date = $2::timestamptz, end_date = $3::timestamptz, 
-                 current_daily_mah_consumed = 0, updated_at = NOW()
-             WHERE user_id = $4`,
-            [dbOrder.plan_id, startDate.toISOString(), endDate.toISOString(), userId]
+             SET is_active = false, end_date = NOW(), updated_at = NOW()
+             WHERE user_id = $1 AND is_active = true`,
+            [userId]
         );
-        
-        return {
-            status: 'COMPLETED',
-            subscriptionId: existingSub.rows[0].user_subscription_id,
-            message: 'Subscription updated successfully'
-        };
-    } else {
-        // Insert new subscription
-        await client.query(
-            `INSERT INTO user_subscription (user_subscription_id, user_id, plan_id, is_active, start_date, end_date, current_daily_mah_consumed)
-             VALUES ($1, $2, $3, true, $4::timestamptz, $5::timestamptz, 0)`,
-            [subscriptionId, userId, dbOrder.plan_id, startDate.toISOString(), endDate.toISOString()]
-        );
-        
-        return {
-            status: 'COMPLETED',
-            subscriptionId,
-            message: 'Subscription activated successfully'
-        };
     }
+
+    // Always insert a new subscription record (preserves full history)
+    await client.query(
+        `INSERT INTO user_subscription 
+         (user_subscription_id, user_id, plan_id, is_active, start_date, end_date, current_daily_mah_consumed)
+         VALUES ($1, $2, $3, true, $4::timestamptz, $5::timestamptz, 0)`,
+        [subscriptionId, userId, dbOrder.plan_id, startDate.toISOString(), endDate.toISOString()]
+    );
+
+    return {
+        status: 'COMPLETED',
+        subscriptionId,
+        message: activeSubResult.rows.length > 0 ? 'Subscription renewed successfully' : 'Subscription activated successfully'
+    };
 }
 
 /**

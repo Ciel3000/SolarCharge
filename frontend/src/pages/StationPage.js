@@ -29,6 +29,7 @@ function StationPage({ station, navigateTo }) {
   const isPageVisibleRef = useRef(true);
   const intervalsRef = useRef([]); // New ref for all intervals
   const realtimeSyncTimeoutRef = useRef(null);
+  const abortControllerRef = useRef(null); // For cancelling in-progress sync
 
   const fromRoute = location.state?.from || '/home';
   
@@ -298,11 +299,22 @@ function StationPage({ station, navigateTo }) {
         console.log('StationPage: Tab hidden, stopping intervals');
         isPageVisibleRef.current = false;
         stopIntervals();
+        // Cancel any in-progress sync
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
+        }
       } else {
         console.log('StationPage: Tab visible, restarting intervals');
         isPageVisibleRef.current = true;
         
-        // Immediately fetch fresh data
+        // Cancel any in-progress sync before starting new one
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+        }
+        abortControllerRef.current = new AbortSignal();
+        
+        // Fetch fresh data
         syncStationState();
         
         // Restart intervals
@@ -319,6 +331,9 @@ function StationPage({ station, navigateTo }) {
       if (realtimeSyncTimeoutRef.current) {
         clearTimeout(realtimeSyncTimeoutRef.current);
         realtimeSyncTimeoutRef.current = null;
+      }
+      if (abortControllerRef.current) {
+        abortControllerRef.current = null;
       }
     };
   }, [syncStationState, startIntervals, stopIntervals]);
