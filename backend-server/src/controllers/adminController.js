@@ -83,10 +83,13 @@ async function createUser(req, res, next) {
 async function updateUser(req, res, next) {
   const { userId } = req.params;
   const { fname, lname, contact_number, is_admin, plan_id } = req.body;
+  console.log('updateUser called:', { userId, fname, lname, contact_number, is_admin, plan_id });
   try {
     const result = await userService.updateUser(userId, { fname, lname, contact_number, is_admin, plan_id });
+    console.log('updateUser result:', result);
     res.json(result);
   } catch (err) {
+    console.error('updateUser error:', err);
     next(err);
   }
 }

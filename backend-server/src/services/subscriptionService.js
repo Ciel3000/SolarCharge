@@ -120,7 +120,7 @@ async function checkUserQuota(userId) {
 // ============= Subscription Plans (Admin) =============
 
 function getAllPlans() {
-  return pool.query('SELECT * FROM subscription_plans ORDER BY price ASC');
+  return pool.query('SELECT * FROM subscription_plans ORDER BY price ASC').then(res => res.rows);
 }
 
 function getPlanById(planId) {

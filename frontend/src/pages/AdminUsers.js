@@ -137,7 +137,7 @@ function AdminUsers({ navigateTo, handleSignOut }) {
             email: user.email || '',
             contact_number: user.contact_number || '',
             is_admin: user.is_admin || false,
-            plan_id: user.subscription?.plan_id || '' 
+            plan_id: user.plan_id || '' 
         });
         setIsEditing(true);
         setIsAdding(false);
@@ -183,6 +183,8 @@ function AdminUsers({ navigateTo, handleSignOut }) {
             
             const method = selectedUser ? 'PUT' : 'POST';
 
+            console.log('Submitting:', method, url, formData);
+
             const res = await fetch(url, {
                 method,
                 headers: {
@@ -192,10 +194,16 @@ function AdminUsers({ navigateTo, handleSignOut }) {
                 body: JSON.stringify(formData)
             });
             
+            console.log('Response status:', res.status);
+            
             if (!res.ok) {
                 const errorData = await res.json();
+                console.error('Error response:', errorData);
                 throw new Error(errorData.error || `Error ${isAdding ? 'adding' : 'updating'} user`);
             }
+            
+            const result = await res.json();
+            console.log('Success:', result);
             
             await fetchUsers(); // Refresh the user list to show changes.
             
