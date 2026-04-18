@@ -323,14 +323,15 @@ async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortI
           `Session ${sessionId} auto-completed due to inactivity. Cost: $${sessionCost.toFixed(2)}`
         );
 
-        // Update daily consumption
+        // Update daily consumption via UPSERT on user_usage
         const userResult = await pool.query('SELECT user_id FROM charging_session WHERE session_id = $1', [sessionId]);
         if (userResult.rows.length > 0) {
           const userId = userResult.rows[0].user_id;
           await pool.query(
-            `UPDATE user_subscription
-             SET current_daily_mah_consumed = COALESCE(current_daily_mah_consumed, 0) + $1
-             WHERE user_id = $2 AND is_active = true`,
+            `INSERT INTO user_usage (user_id, total_consumed_mah, last_reset_at)
+             VALUES ($2, $1, NOW())
+             ON CONFLICT (user_id) DO UPDATE
+               SET total_consumed_mah = user_usage.total_consumed_mah + EXCLUDED.total_consumed_mah`,
             [mAhConsumed, userId]
           );
           console.log(`Inactivity: Updated daily consumption for user ${userId} by ${mAhConsumed.toFixed(0)} mAh`);
@@ -421,9 +422,10 @@ async function finalizeSessionFromDeviceEvent({ deviceId, portNumberInDevice, ac
 
   if (sessionRow.user_id) {
     await pool.query(
-      `UPDATE user_subscription
-       SET current_daily_mah_consumed = COALESCE(current_daily_mah_consumed, 0) + $1
-       WHERE user_id = $2 AND is_active = true`,
+      `INSERT INTO user_usage (user_id, total_consumed_mah, last_reset_at)
+       VALUES ($2, $1, NOW())
+       ON CONFLICT (user_id) DO UPDATE
+         SET total_consumed_mah = user_usage.total_consumed_mah + EXCLUDED.total_consumed_mah`,
       [mAhConsumed, sessionRow.user_id]
     );
   }
@@ -566,14 +568,15 @@ async function processUsageMessage(payload, deviceId, portNumberInDevice, actual
         [kwhIncrement, mAhIncrement, mAhIncrement, serverTimestamp, currentSessionId]
       );
 
-      // Update daily consumption
+      // Update daily consumption via UPSERT on user_usage
       const userResult = await pool.query('SELECT user_id FROM charging_session WHERE session_id = $1', [currentSessionId]);
       if (userResult.rows.length > 0) {
         const userId = userResult.rows[0].user_id;
         await pool.query(
-          `UPDATE user_subscription
-           SET current_daily_mah_consumed = COALESCE(current_daily_mah_consumed, 0) + $1
-           WHERE user_id = $2 AND is_active = true`,
+          `INSERT INTO user_usage (user_id, total_consumed_mah, last_reset_at)
+           VALUES ($2, $1, NOW())
+           ON CONFLICT (user_id) DO UPDATE
+             SET total_consumed_mah = user_usage.total_consumed_mah + EXCLUDED.total_consumed_mah`,
           [mAhIncrement, userId]
         );
       }
@@ -688,8 +691,8 @@ async function startSession({ deviceId, portNumber, userId, stationId }) {
   try {
     // Validate user and quota
     const quotaCheck = await subscriptionService.checkUserQuota(userId);
-    if (!quotaCheck.canCharge) {
-      throw { status: 403, message: quotaCheck.reason, quotaInfo: quotaCheck };
+    if (!quotaCheck.allowed) {
+      throw { status: 403, message: 'Daily quota exceeded', quotaInfo: quotaCheck };
     }
 
     // Check active session slots
@@ -830,9 +833,10 @@ async function stopSession({ deviceId, portNumber, userId }) {
       );
 
       await pool.query(
-        `UPDATE user_subscription
-         SET current_daily_mah_consumed = COALESCE(current_daily_mah_consumed, 0) + $1
-         WHERE user_id = $2 AND is_active = true`,
+        `INSERT INTO user_usage (user_id, total_consumed_mah, last_reset_at)
+         VALUES ($2, $1, NOW())
+         ON CONFLICT (user_id) DO UPDATE
+           SET total_consumed_mah = user_usage.total_consumed_mah + EXCLUDED.total_consumed_mah`,
         [mAhConsumed, userId]
       );
 

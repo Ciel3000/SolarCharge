@@ -142,8 +142,6 @@ async function processSuccessfulPayment(pool, orderId, captureData, userId) {
         // Branch on payment_type
         if (dbOrder.payment_type === 'subscription') {
             result = await processSubscriptionPayment(client, userId, dbOrder, paypalCaptureId);
-        } else if (dbOrder.payment_type === 'quota_extension') {
-            result = await processQuotaExtensionPayment(client, userId, dbOrder, paypalCaptureId);
         } else {
             throw new Error('Unknown payment type: ' + dbOrder.payment_type);
         }
@@ -206,83 +204,22 @@ async function processSubscriptionPayment(client, userId, dbOrder, captureId) {
 
     const subscriptionId = uuidv4();
 
-    // Find currently active subscription(s) for this user
-    const activeSubResult = await client.query(
-        `SELECT user_subscription_id FROM user_subscription WHERE user_id = $1 AND is_active = true`,
-        [userId]
-    );
-
-    if (activeSubResult.rows.length > 0) {
-        // Deactivate all active subscriptions (preserves history, ensures single active)
-        await client.query(
-            `UPDATE user_subscription 
-             SET is_active = false, end_date = NOW(), updated_at = NOW()
-             WHERE user_id = $1 AND is_active = true`,
-            [userId]
-        );
-    }
-
-    // Always insert a new subscription record (preserves full history)
+    // Insert new subscription record (multiple active subscriptions now allowed)
     await client.query(
         `INSERT INTO user_subscription 
-         (user_subscription_id, user_id, plan_id, is_active, start_date, end_date, current_daily_mah_consumed)
-         VALUES ($1, $2, $3, true, $4::timestamptz, $5::timestamptz, 0)`,
+         (user_subscription_id, user_id, plan_id, is_active, start_date, end_date)
+         VALUES ($1, $2, $3, true, $4::timestamptz, $5::timestamptz)`,
         [subscriptionId, userId, dbOrder.plan_id, startDate.toISOString(), endDate.toISOString()]
     );
 
     return {
         status: 'COMPLETED',
         subscriptionId,
-        message: activeSubResult.rows.length > 0 ? 'Subscription renewed successfully' : 'Subscription activated successfully'
+        message: 'Subscription activated successfully'
     };
 }
 
-/**
- * Process quota extension payment - add to user's quota
- * @param {object} client - Database client (transaction)
- * @param {string} userId - User ID
- * @param {object} dbOrder - The order from paypal_orders
- * @param {string} captureId - PayPal capture ID
- * @returns {object} Extension result
- */
-async function processQuotaExtensionPayment(client, userId, dbOrder, captureId) {
-    // Get the extension amount from the order or calculate from pricing
-    const extensionAmountMah = dbOrder.amount * 1000; // Assuming price is per 1000 mAh
-    
-    // Get current active subscription to link the extension
-    const subscriptionResult = await client.query(
-        `SELECT user_subscription_id FROM user_subscription WHERE user_id = $1 AND is_active = true`,
-        [userId]
-    );
 
-    const subscriptionId = subscriptionResult.rows[0]?.id || null;
-
-    const extensionId = uuidv4();
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 30); // Extensions expire in 30 days
-
-    // Insert quota extension record
-    await client.query(
-        `INSERT INTO quota_extensions (id, user_id, subscription_id, paypal_order_id, paypal_capture_id, purchased_amount_mah, total_cost, payment_status, created_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6::numeric, $7::numeric, 'completed', NOW(), $8::timestamptz)`,
-        [extensionId, userId, subscriptionId, dbOrder.order_id, captureId, extensionAmountMah, dbOrder.amount, expiresAt.toISOString()]
-    );
-
-    // Update user's daily quota balance (add to borrowed_mah_today)
-    await client.query(
-        `UPDATE user_subscription 
-         SET borrowed_mah_today = COALESCE(borrowed_mah_today, 0) + $1, updated_at = NOW()
-         WHERE user_id = $2`,
-        [extensionAmountMah, userId]
-    );
-
-    return {
-        status: 'COMPLETED',
-        extensionId,
-        message: 'Quota extension purchased successfully',
-        addedQuota: extensionAmountMah
-    };
-}
 
 /**
  * Handle webhook payment completed event

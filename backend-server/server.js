@@ -32,7 +32,10 @@ const server = app.listen(PORT, () => {
 startStaleSessionChecker(mqttClient);
 startExpiredSubscriptionChecker();
 startBorrowedAmountProcessor();
-startDailyQuotaReset();
+startDailyQuotaReset(require('./src/config/database'));
+
+// Start rolling 24h reset service
+require('./src/services/resetService');
 
 // Start PayPal orders cleanup job (runs hourly)
 startCleanupJob(require('./src/config/database'));

@@ -56,6 +56,12 @@ function createApp() {
    app.get('/', (req, res) => res.send('SolarCharge Backend is running!'));
    app.get('/api/health', (req, res) => res.json({ status: 'OK', timestamp: new Date().toISOString() }));
    app.get('/api/me', supabaseAuthMiddleware, userController.getMe);
+   
+   // Config routes
+   const { CONFIG } = require('./utils/constants');
+   app.get('/api/config/slot-limits', (req, res) => {
+     res.json({ premiumUserMaxActiveSlots: CONFIG.PREMIUM_USER_MAX_ACTIVE_SLOTS });
+   });
 
    // API routes
    app.use('/api/devices', devicesRouter);

@@ -71,7 +71,7 @@ function SignUpPage({ navigateTo }) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+    <div className="min-h-screen flex flex-col items-center justify-center p-4 text-gray-800 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
       {/* Animated Background Orbs with brand colors */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         {/* Sun-colored orb */}
@@ -80,6 +80,16 @@ function SignUpPage({ navigateTo }) {
         <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-float-slow-delay" style={{ background: 'radial-gradient(circle, rgba(56, 182, 255, 0.25) 0%, rgba(56, 182, 255, 0.1) 50%, transparent 100%)' }}></div>
         {/* Solar panel colored accent */}
         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full blur-3xl animate-pulse-slow" style={{ background: 'radial-gradient(circle, rgba(0, 11, 61, 0.15) 0%, rgba(0, 11, 61, 0.05) 50%, transparent 100%)' }}></div>
+      </div>
+
+      {/* Header with Logo */}
+      <div className="absolute top-4 left-0 right-0 z-10 flex justify-center">
+        <div className="relative">
+          
+          <div className="absolute inset-0 blur-lg opacity-40" style={{
+            background: 'radial-gradient(circle, rgba(249, 210, 23, 0.4) 0%, transparent 70%)'
+          }}></div>
+        </div>
       </div>
 
       {/* Glass Card */}

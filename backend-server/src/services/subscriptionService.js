@@ -24,95 +24,42 @@ async function checkUserActiveSessions(userId) {
   }
 }
 
-// Quota validation with daily reset
+// Quota validation using shared pool model
 async function checkUserQuota(userId) {
   try {
-    const { rows } = await pool.query(`
-      SELECT 
-        us.current_daily_mah_consumed,
-        us.borrowed_mah_today,
-        us.last_quota_reset,
-        sp.daily_mah_limit
+    // Step 1 - Get total available quota from all active subscriptions
+    const quotaRes = await pool.query(`
+      SELECT COALESCE(SUM(sp.daily_mah_limit), 0) AS total_limit
       FROM user_subscription us
       JOIN subscription_plans sp ON us.plan_id = sp.plan_id
-      WHERE us.user_id = $1 AND us.is_active = true
-      ORDER BY us.created_at DESC LIMIT 1
+      WHERE us.user_id = $1
+        AND us.is_active = true
+        AND us.end_date > NOW()
     `, [userId]);
 
-    if (rows.length === 0) {
-      return {
-        canCharge: false,
-        reason: 'No active subscription found',
-        availableQuota: 0,
-        totalUsed: 0,
-        dailyLimit: 0,
-        borrowedToday: 0,
-      };
-    }
+    // Step 2 - Get user consumption from user_usage table
+    const usageRes = await pool.query(`
+      SELECT total_consumed_mah, last_reset_at
+      FROM user_usage
+      WHERE user_id = $1
+    `, [userId]);
 
-    const subscription = rows[0];
-    const dailyLimit = Number(subscription.daily_mah_limit) || 0;
-    const consumed = Number(subscription.current_daily_mah_consumed) || 0;
-    const borrowedToday = Number(subscription.borrowed_mah_today) || 0;
-    const lastQuotaReset = subscription.last_quota_reset;
-
-    // Check for new day to reset
-    const now = new Date();
-    const lastResetDate = lastQuotaReset ? new Date(lastQuotaReset) : null;
-    const isNewDay = !lastResetDate ||
-      lastResetDate.getDate() !== now.getDate() ||
-      lastResetDate.getMonth() !== now.getMonth() ||
-      lastResetDate.getFullYear() !== now.getFullYear();
-
-    if (isNewDay && consumed > 0) {
-      await pool.query(`
-        UPDATE user_subscription
-        SET current_daily_mah_consumed = 0,
-            last_quota_reset = NOW(),
-            borrowed_mah_today = 0
-        WHERE user_id = $1 AND is_active = true
-      `, [userId]);
-
-      console.log(`Daily quota reset for user ${userId}. Previous consumption: ${consumed} mAh`);
-      await logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.SUBSCRIPTION, `Daily quota reset for user ${userId}`, userId);
-
-      const dailyQuotaRemaining = Math.max(0, dailyLimit);
-      const borrowedQuotaAvailable = 0;
-      const availableQuota = dailyQuotaRemaining; // no borrowed yet
-
-      return {
-        canCharge: availableQuota > 0,
-        reason: availableQuota > 0 ? 'Quota available' : 'Daily quota reached. Please purchase an extension.',
-        availableQuota,
-        totalUsed: 0,
-        dailyLimit,
-        borrowedToday: 0,
-      };
-    }
-
-    // Normal calculation
-    const dailyQuotaRemaining = Math.max(0, dailyLimit - consumed);
-    const borrowedQuotaAvailable = consumed >= dailyLimit ? borrowedToday : 0;
-    const availableQuota = dailyQuotaRemaining + borrowedQuotaAvailable;
-    const canCharge = availableQuota > 0;
+    const totalLimit = Number(quotaRes.rows[0]?.total_limit || 0);
+    const totalConsumed = Number(usageRes.rows[0]?.total_consumed_mah || 0);
 
     return {
-      canCharge,
-      reason: canCharge ? 'Quota available' : 'Daily quota reached. Please purchase an extension.',
-      availableQuota,
-      totalUsed: consumed,
-      dailyLimit,
-      borrowedToday,
+      allowed: totalConsumed < totalLimit,
+      totalLimit,
+      totalConsumed,
+      remaining: Math.max(0, totalLimit - totalConsumed),
     };
   } catch (error) {
     console.error('Error checking user quota:', error);
     return {
-      canCharge: false,
-      reason: 'Error checking quota',
-      availableQuota: 0,
-      totalUsed: 0,
-      dailyLimit: 0,
-      borrowedToday: 0,
+      allowed: false,
+      totalLimit: 0,
+      totalConsumed: 0,
+      remaining: 0,
     };
   }
 }
@@ -145,10 +92,6 @@ function getUserSubscription(userId) {
       us.end_date,
       us.is_active,
       us.is_active as status,
-      us.current_daily_mah_consumed,
-      us.borrowed_mah_today,
-      us.borrowed_mah_pending,
-      us.last_quota_reset,
       us.created_at,
       us.updated_at,
       sp.plan_name,
@@ -178,14 +121,38 @@ function getUserSubscription(userId) {
       END as duration_display
     FROM user_subscription us
     JOIN subscription_plans sp ON us.plan_id = sp.plan_id
-    WHERE us.user_id = $1 AND us.is_active = true
-    ORDER BY us.created_at DESC LIMIT 1
-  `, [userId]).then(res => {
-    const row = res.rows[0];
-    if (row && typeof row.price === 'string') {
-      row.price = parseFloat(row.price);
+    WHERE us.user_id = $1 AND us.is_active = true AND us.end_date > NOW()
+    ORDER BY us.created_at DESC
+  `, [userId]).then(async res => {
+    const rows = res.rows;
+    
+    // Ensure price is numeric in all rows
+    if (rows) {
+      rows.forEach(row => {
+        if (row && typeof row.price === 'string') {
+          row.price = parseFloat(row.price);
+        }
+      });
     }
-    return row;
+
+    // Get user usage for aggregate
+    const usageRes = await pool.query(`
+      SELECT total_consumed_mah, last_reset_at
+      FROM user_usage
+      WHERE user_id = $1
+    `, [userId]);
+    
+    const usageRow = usageRes.rows[0];
+    const aggregateDailyLimit = rows.reduce((s, r) => s + Number(r.daily_mah_limit || 0), 0);
+    const totalConsumedMah = Number(usageRow?.total_consumed_mah || 0);
+
+    return {
+      primary: rows[0] || null,
+      active_subscriptions: rows,
+      aggregate_daily_limit: aggregateDailyLimit,
+      total_consumed_mah: totalConsumedMah,
+      last_reset_at: usageRow?.last_reset_at || null,
+    };
   });
 }
 
@@ -241,149 +208,56 @@ function getSubscriptionHistory(userId) {
   });
 }
 
-async function cancelSubscription(userId) {
-  const result = await pool.query(
-    'SELECT user_subscription_id FROM user_subscription WHERE user_id = $1 AND is_active = true',
-    [userId]
-  );
-  if (result.rows.length === 0) {
-    throw new Error('No active subscription found');
+async function cancelSubscription(userId, subscriptionId = null) {
+  let targetId;
+
+  if (subscriptionId) {
+    // Security: verify ownership
+    const verify = await pool.query(
+      `SELECT user_subscription_id FROM user_subscription
+       WHERE user_subscription_id = $1 AND user_id = $2 AND is_active = true`,
+      [subscriptionId, userId]
+    );
+    if (verify.rows.length === 0)
+      throw new Error('Subscription not found or does not belong to this user.');
+    targetId = subscriptionId;
+  } else {
+    const recent = await pool.query(
+      `SELECT user_subscription_id FROM user_subscription
+       WHERE user_id = $1 AND is_active = true
+       ORDER BY created_at DESC LIMIT 1`,
+      [userId]
+    );
+    if (recent.rows.length === 0) throw new Error('No active subscription found.');
+    targetId = recent.rows[0].user_subscription_id;
   }
-  const subId = result.rows[0].user_subscription_id;
-  await pool.query(
-    'UPDATE user_subscription SET is_active = false, end_date = NOW() WHERE user_subscription_id = $1',
-    [subId]
+
+  const result = await pool.query(
+    `UPDATE user_subscription
+     SET is_active = false, end_date = NOW(), updated_at = NOW()
+     WHERE user_subscription_id = $1 RETURNING *`,
+    [targetId]
   );
-  await logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.SUBSCRIPTION, `User ${userId} cancelled their subscription`);
-  return { cancelled: true };
+  await logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.SUBSCRIPTION, `User ${userId} cancelled subscription ${targetId}`);
+  return result.rows[0];
 }
 
 function getUserUsage(userId) {
   return pool.query(`
-    SELECT current_daily_mah_consumed, borrowed_mah_today, last_quota_reset
-    FROM user_subscription
-    WHERE user_id = $1 AND is_active = true
+    SELECT total_consumed_mah, last_reset_at
+    FROM user_usage
+    WHERE user_id = $1
   `, [userId]).then(res => {
     if (res.rows.length === 0) return null;
     const row = res.rows[0];
     return {
-      currentDailyMahConsumed: Number(row.current_daily_mah_consumed) || 0,
-      borrowedMahToday: Number(row.borrowed_mah_today) || 0,
-      lastQuotaReset: row.last_quota_reset,
+      total_consumed_mah: Number(row.total_consumed_mah) || 0,
+      last_reset_at: row.last_reset_at,
     };
   });
 }
 
-// ============= Quota Extensions (Purchase) =============
 
-function getQuotaPricing(extensionType = 'direct_purchase') {
-  return pool.query(
-    `SELECT id, extension_type, price_per_transaction, extension_amount_mah, is_active
-     FROM quota_extension_pricing
-     WHERE extension_type = $1 AND is_active = true`,
-    [extensionType]
-  ).then(res => {
-    if (res.rows.length === 0) throw new Error('Quota extension pricing not found or inactive');
-    return res.rows[0];
-  });
-}
-
-function getAllQuotaPricing() {
-  return pool.query(
-    `SELECT * FROM quota_extension_pricing WHERE is_active = true ORDER BY price_per_transaction ASC`
-  ).then(res => res.rows);
-}
-
-function updateQuotaPricing(id, fields) {
-  const { extension_type, price_per_transaction, extension_amount_mah, is_active } = fields;
-  return pool.query(
-    `UPDATE quota_extension_pricing
-     SET extension_type = $1, price_per_transaction = $2, extension_amount_mah = $3, is_active = $4
-     WHERE id = $5`,
-    [extension_type, price_per_transaction, extension_amount_mah, is_active, id]
-  );
-}
-
-async function purchaseQuotaExtension(userId, extensionType) {
-  const pricing = await getQuotaPricing(extensionType);
-  const extensionAmountMah = pricing.extension_amount_mah;
-  const price = pricing.price_per_transaction;
-
-  // Get active subscription for this user
-  const subResult = await pool.query(
-    'SELECT user_subscription_id FROM user_subscription WHERE user_id = $1 AND is_active = true',
-    [userId]
-  );
-  const subscriptionId = subResult.rows[0]?.user_subscription_id || null;
-
-  const extensionId = require('uuid').v4();
-  const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + 30);
-
-  await pool.query(
-    `INSERT INTO quota_extensions
-     (id, user_id, subscription_id, purchased_amount_mah, total_cost, payment_status, created_at, expires_at)
-     VALUES ($1, $2, $3, $4, $5, 'pending', NOW(), $6)`,
-    [extensionId, userId, subscriptionId, extensionAmountMah, price, expiresAt.toISOString()]
-  );
-
-  // Immediately add to borrowed quota (will be used for charging)
-  await pool.query(
-    `UPDATE user_subscription
-     SET borrowed_mah_today = COALESCE(borrowed_mah_today, 0) + $1
-     WHERE user_id = $2 AND is_active = true`,
-    [extensionAmountMah, userId]
-  );
-
-  await logSystemEvent(
-    LOG_TYPES.INFO,
-    LOG_SOURCES.SUBSCRIPTION,
-    `User ${userId} purchased quota extension: ${extensionAmountMah} mAh for $${price}`
-  );
-
-  return {
-    extensionId,
-    addedQuota: extensionAmountMah,
-    cost: price,
-  };
-}
-
-function getExtensionStatus(extensionId) {
-  return pool.query(
-    `SELECT * FROM quota_extensions WHERE id = $1`,
-    [extensionId]
-  ).then(res => res.rows[0]);
-}
-
-function getAllExtensions() {
-  return pool.query(`
-    SELECT qe.*, u.fname, u.lname, us.plan_id
-    FROM quota_extensions qe
-    LEFT JOIN users u ON qe.user_id = u.user_id
-    LEFT JOIN user_subscription us ON qe.subscription_id = us.user_subscription_id
-    ORDER BY qe.created_at DESC
-  `).then(res => res.rows);
-}
-
-async function confirmExtensionPayment(extensionId) {
-  const result = await pool.query(
-    `UPDATE quota_extensions
-     SET payment_status = 'completed', paid_at = NOW()
-     WHERE id = $1 AND payment_status = 'pending'
-     RETURNING *`,
-    [extensionId]
-  );
-  if (result.rows.length === 0) {
-    throw new Error('Extension not found or already processed');
-  }
-  const ext = result.rows[0];
-  await logSystemEvent(
-    LOG_TYPES.INFO,
-    LOG_SOURCES.SUBSCRIPTION,
-    `Admin confirmed payment for quota extension ${extensionId} for user ${ext.user_id}`
-  );
-  return ext;
-}
 
 // ============= Admin: Fix Expired Subscriptions =============
 
@@ -460,15 +334,6 @@ module.exports = {
   getSubscriptionHistory,
   cancelSubscription,
   getUserUsage,
-
-  // Quota extensions
-  getQuotaPricing,
-  getAllQuotaPricing,
-  updateQuotaPricing,
-  purchaseQuotaExtension,
-  getExtensionStatus,
-  getAllExtensions,
-  confirmExtensionPayment,
 
   // Admin
   fixExpiredSubscriptions,

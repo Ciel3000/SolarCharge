@@ -215,10 +215,8 @@ function AppContent() {
   };
 
   // Determine if Navigation component should be shown
-  const showNavigation = session 
-    ? !['/login', '/signup', '/landing'].includes(location.pathname)
-    : !['/landing'].includes(location.pathname);
-  
+  //const showNavigation = !['/login', '/signup', '/landing'].includes(location.pathname);
+  const showNavigation = true;
   const showAdminNavigation = showNavigation && isAdmin;
   const showUserNavigation = showNavigation && !isAdmin;
 

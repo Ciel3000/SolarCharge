@@ -6,6 +6,7 @@ const deviceController = require('../controllers/deviceController');
 const { CHARGER_STATES, CONFIG } = require('../utils/constants');
 const pool = require('../config/database');
 const { logSystemEvent } = require('../services/logger');
+const { supabaseAuthMiddleware } = require('../middleware/auth');
 
 // Public endpoints (no auth)
 router.get('/status', deviceController.getAllDeviceStatus);
@@ -13,9 +14,14 @@ router.get('/consumption', deviceController.getAllDeviceConsumption);
 router.get('/:deviceId/:portNumber/consumption', deviceController.getDeviceConsumption);
 
 // Auth required for control
-router.post('/:deviceId/:portNumber/control', deviceController.controlPort);
+router.post('/:deviceId/:portNumber/control', supabaseAuthMiddleware, deviceController.controlPort);
 
 // Config/slot-limits
+router.get('/config/slot-limits', async (req, res) => {
+  res.json({ premiumUserMaxActiveSlots: CONFIG.PREMIUM_USER_MAX_ACTIVE_SLOTS });
+});
+
+// Config/slot-limits at root level (/api/config/slot-limits)
 router.get('/config/slot-limits', async (req, res) => {
   res.json({ premiumUserMaxActiveSlots: CONFIG.PREMIUM_USER_MAX_ACTIVE_SLOTS });
 });

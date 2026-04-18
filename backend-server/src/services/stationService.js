@@ -24,8 +24,11 @@ function getAllStations() {
       s.is_active,
       s.current_battery_level,
       s.price_per_mah,
+      s.num_free_ports,
+      s.num_premium_ports,
       COUNT(p.port_id) as total_ports,
-      COUNT(CASE WHEN p.current_status = 'available' THEN 1 END) as available_ports
+      COUNT(CASE WHEN p.current_status = 'available' THEN 1 END) as available_ports,
+      COUNT(CASE WHEN p.current_status = 'available' AND p.is_premium = true THEN 1 END) as available_premium_ports
     FROM charging_station s
     LEFT JOIN charging_port p ON s.station_id = p.station_id
     GROUP BY s.station_id
@@ -35,10 +38,17 @@ function getAllStations() {
 
 // Public: Get single station details
 function getStationById(stationId) {
-  return pool.query(
-    'SELECT * FROM charging_station WHERE station_id = $1',
-    [stationId]
-  ).then(res => res.rows[0]);
+  return pool.query(`
+    SELECT 
+      s.*,
+      COUNT(p.port_id) as total_ports,
+      COUNT(CASE WHEN p.current_status = 'available' THEN 1 END) as available_ports,
+      COUNT(CASE WHEN p.current_status = 'available' AND p.is_premium = true THEN 1 END) as available_premium_ports
+    FROM charging_station s
+    LEFT JOIN charging_port p ON s.station_id = p.station_id
+    WHERE s.station_id = $1
+    GROUP BY s.station_id
+  `, [stationId]).then(res => res.rows[0]);
 }
 
 // Admin: Get all stations for admin dashboard (includes more fields)

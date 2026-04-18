@@ -10,7 +10,7 @@ import NotificationBell from '../components/NotificationBell';
 function HomePage({ navigateTo, message, stations: propStations, loadingStations: propLoadingStations }) {
   console.log('HomePage rendered.');
 
-  const { session, user, subscription, plans, isLoading: authLoading } = useAuth();
+  const { session, user, subscription, usageAggregate, plans, isLoading: authLoading } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -398,23 +398,18 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
   };
 
   const calculateKwhUsage = () => {
-    if (!subscription) return 0;
-    const dailyLimit = subscription.subscription_plans?.daily_mah_limit || subscription.daily_mah_limit || 0;
-    const usedMah = usage?.totalEnergyMAH || 0;
-    return usedMah / 1000;
+    if (!usageAggregate) return 0;
+    return (usageAggregate.total_consumed || 0) / 1000;
   };
 
   const calculateKwhRemaining = () => {
-    if (!subscription) return 0;
-    const dailyLimitKwh = (subscription.subscription_plans?.daily_mah_limit || subscription.daily_mah_limit || 0) / 1000;
-    return Math.max(0, dailyLimitKwh - calculateKwhUsage());
+    if (!usageAggregate) return 0;
+    return Math.max(0, (usageAggregate.remaining || 0) / 1000);
   };
 
   const calculateUsagePercent = () => {
-    if (!subscription) return 0;
-    const dailyLimit = subscription.subscription_plans?.daily_mah_limit || subscription.daily_mah_limit || 0;
-    const usedMah = usage?.totalEnergyMAH || 0;
-    return Math.min(100, Math.round((usedMah / dailyLimit) * 100));
+    if (!usageAggregate || !usageAggregate.daily_limit) return 0;
+    return Math.min(100, Math.round(((usageAggregate.total_consumed || 0) / usageAggregate.daily_limit) * 100));
   };
 
   const getStationAvailabilityColor = (station) => {
@@ -746,7 +741,7 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
                   <h4 className="text-xl sm:text-2xl font-bold mb-4 flex items-center gap-2" style={{ color: '#000b3d' }}>
                     <span className="text-2xl">🌟</span> Your Current Plan
                   </h4>
-                  <div className="mb-6 text-sm sm:text-base" style={{ color: '#000b3d', opacity: 0.7 }}><strong>Daily Limit:</strong> {subscription.subscription_plans?.daily_mah_limit || subscription.daily_mah_limit || 0} mAh</div>
+                  <div className="mb-6 text-sm sm:text-base" style={{ color: '#000b3d', opacity: 0.7 }}><strong>Daily Limit:</strong> {usageAggregate?.daily_limit || 0} mAh</div>
                   
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3 w-full mb-6">
                     <div className="flex flex-col items-center rounded-xl px-3 py-3 backdrop-blur-md" style={{

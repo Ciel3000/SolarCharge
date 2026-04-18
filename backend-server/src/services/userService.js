@@ -22,9 +22,11 @@ function getUserProfile(userId) {
            us.plan_id, sp.plan_name, us.is_active as subscription_active,
            us.end_date as subscription_end_date
     FROM users u
-    LEFT JOIN user_subscription us ON u.user_id = us.user_id AND us.is_active = true
+    LEFT JOIN user_subscription us ON u.user_id = us.user_id AND us.is_active = true AND us.end_date > NOW()
     LEFT JOIN subscription_plans sp ON us.plan_id = sp.plan_id
     WHERE u.user_id = $1
+    ORDER BY us.created_at DESC
+    LIMIT 1
   `, [userId]).then(res => res.rows[0]);
 }
 
@@ -77,12 +79,13 @@ async function addUserDevice(userId, deviceData) {
 
 function getAllUsers() {
   return pool.query(`
-    SELECT u.user_id, u.fname, u.lname, u.email, u.contact_number, u.is_admin, u.created_at, u.last_login,
+    SELECT DISTINCT ON (u.user_id)
+           u.user_id, u.fname, u.lname, u.email, u.contact_number, u.is_admin, u.created_at, u.last_login,
            us.plan_id, sp.plan_name, us.is_active as subscription_active, us.end_date as subscription_end_date
     FROM users u
-    LEFT JOIN user_subscription us ON u.user_id = us.user_id AND us.is_active = true
+    LEFT JOIN user_subscription us ON u.user_id = us.user_id AND us.is_active = true AND us.end_date > NOW()
     LEFT JOIN subscription_plans sp ON us.plan_id = sp.plan_id
-    ORDER BY u.created_at DESC
+    ORDER BY u.user_id, us.created_at DESC
   `).then(res => res.rows);
 }
 
@@ -139,42 +142,36 @@ async function updateUser(userId, { fname, lname, contact_number, is_admin, plan
 
   // Update subscription if plan changed
   if (plan_id !== undefined) {
-    const currentSubResult = await pool.query(
-      `SELECT user_subscription_id FROM user_subscription WHERE user_id = $1 AND is_active = true`,
+    // Deactivate all active subscriptions first (replace, not stack)
+    await pool.query(
+      `UPDATE user_subscription
+       SET is_active = false, end_date = NOW()
+       WHERE user_id = $1 AND is_active = true`,
       [userId]
     );
-    const currentSub = currentSubResult.rows[0];
-    const currentPlanId = currentSub?.plan_id;
-    if (currentPlanId !== plan_id) {
-      if (currentSub) {
-        await pool.query(
-          `UPDATE user_subscription SET is_active = false, end_date = NOW() WHERE user_subscription_id = $1`,
-          [currentSub.user_subscription_id]
-        );
-      }
-      // Add new subscription if plan_id provided
-      if (plan_id) {
-        const planResult = await pool.query(
-          `SELECT duration_type, duration_value FROM subscription_plans WHERE plan_id = $1`,
-          [plan_id]
-        );
-        if (planResult.rows.length > 0) {
-          const plan = planResult.rows[0];
-          const endDate = new Date();
-          switch (plan.duration_type) {
-            case 'daily': endDate.setDate(endDate.getDate() + plan.duration_value); break;
-            case 'weekly': endDate.setDate(endDate.getDate() + (plan.duration_value * 7)); break;
-            case 'monthly': endDate.setMonth(endDate.getMonth() + plan.duration_value); break;
-            case 'quarterly': endDate.setMonth(endDate.getMonth() + (plan.duration_value * 3)); break;
-            case 'yearly': endDate.setFullYear(endDate.getFullYear() + plan.duration_value); break;
-            default: endDate.setMonth(endDate.getMonth() + 1);
-          }
-          await pool.query(
-            `INSERT INTO user_subscription (user_subscription_id, user_id, plan_id, is_active, start_date, end_date, current_daily_mah_consumed)
-             VALUES ($1, $2, $3, true, NOW(), $4, 0)`,
-            [uuidv4(), userId, plan_id, endDate.toISOString()]
-          );
+    
+    // Add new subscription if plan_id provided
+    if (plan_id) {
+      const planResult = await pool.query(
+        `SELECT duration_type, duration_value FROM subscription_plans WHERE plan_id = $1`,
+        [plan_id]
+      );
+      if (planResult.rows.length > 0) {
+        const plan = planResult.rows[0];
+        const endDate = new Date();
+        switch (plan.duration_type) {
+          case 'daily': endDate.setDate(endDate.getDate() + plan.duration_value); break;
+          case 'weekly': endDate.setDate(endDate.getDate() + (plan.duration_value * 7)); break;
+          case 'monthly': endDate.setMonth(endDate.getMonth() + plan.duration_value); break;
+          case 'quarterly': endDate.setMonth(endDate.getMonth() + (plan.duration_value * 3)); break;
+          case 'yearly': endDate.setFullYear(endDate.getFullYear() + plan.duration_value); break;
+          default: endDate.setMonth(endDate.getMonth() + 1);
         }
+        await pool.query(
+          `INSERT INTO user_subscription (user_subscription_id, user_id, plan_id, is_active, start_date, end_date)
+           VALUES ($1, $2, $3, true, NOW(), $4)`,
+          [uuidv4(), userId, plan_id, endDate.toISOString()]
+        );
       }
     }
   }

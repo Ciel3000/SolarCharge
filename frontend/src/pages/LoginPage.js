@@ -86,7 +86,7 @@ function LoginPage({ navigateTo, message }) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+    <div className="min-h-screen flex flex-col items-center justify-center p-4 text-gray-800 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
       {/* Animated Background Orbs with brand colors */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         {/* Sun-colored orb */}
@@ -96,6 +96,8 @@ function LoginPage({ navigateTo, message }) {
         {/* Solar panel colored accent */}
         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full blur-3xl animate-pulse-slow" style={{ background: 'radial-gradient(circle, rgba(0, 11, 61, 0.15) 0%, rgba(0, 11, 61, 0.05) 50%, transparent 100%)' }}></div>
       </div>
+
+      
 
       {/* Glass Card */}
       <div className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden max-w-md w-full p-8 sm:p-10 text-center animate-fade-in" style={{ 

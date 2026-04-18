@@ -8,7 +8,7 @@ import { supabase } from '../supabaseClient';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
 function StationPage({ station, navigateTo }) {
-  const { user, session, subscription, handleSessionTimeout } = useAuth();
+  const { user, session, subscription, usageAggregate, handleSessionTimeout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [chargerPortStatus, setChargerPortStatus] = useState({});
@@ -29,7 +29,6 @@ function StationPage({ station, navigateTo }) {
   const isPageVisibleRef = useRef(true);
   const intervalsRef = useRef([]); // New ref for all intervals
   const realtimeSyncTimeoutRef = useRef(null);
-  const abortControllerRef = useRef(null); // For cancelling in-progress sync
 
   const fromRoute = location.state?.from || '/home';
   
@@ -144,12 +143,11 @@ function StationPage({ station, navigateTo }) {
     }
   }, [user?.id, session?.access_token, devicePortMapping]);
 
-  // Get daily usage from subscription data
+  // Get daily usage from usageAggregate
   const getDailyUsage = useCallback(() => {
-    if (!subscription) return 0;
-    // Use current_daily_mah_consumed from subscription, which is updated in real-time
-    return parseFloat(subscription.current_daily_mah_consumed || 0);
-  }, [subscription]);
+    if (!usageAggregate) return 0;
+    return parseFloat(usageAggregate.total_consumed || 0);
+  }, [usageAggregate]);
 
   // Fetch consumption data using existing endpoint
   const fetchPortConsumption = useCallback(async () => {
@@ -299,20 +297,9 @@ function StationPage({ station, navigateTo }) {
         console.log('StationPage: Tab hidden, stopping intervals');
         isPageVisibleRef.current = false;
         stopIntervals();
-        // Cancel any in-progress sync
-        if (abortControllerRef.current) {
-          abortControllerRef.current.abort();
-          abortControllerRef.current = null;
-        }
       } else {
         console.log('StationPage: Tab visible, restarting intervals');
         isPageVisibleRef.current = true;
-        
-        // Cancel any in-progress sync before starting new one
-        if (abortControllerRef.current) {
-          abortControllerRef.current.abort();
-        }
-        abortControllerRef.current = new AbortSignal();
         
         // Fetch fresh data
         syncStationState();
@@ -331,9 +318,6 @@ function StationPage({ station, navigateTo }) {
       if (realtimeSyncTimeoutRef.current) {
         clearTimeout(realtimeSyncTimeoutRef.current);
         realtimeSyncTimeoutRef.current = null;
-      }
-      if (abortControllerRef.current) {
-        abortControllerRef.current = null;
       }
     };
   }, [syncStationState, startIntervals, stopIntervals]);
@@ -378,6 +362,7 @@ function StationPage({ station, navigateTo }) {
     if (!user || !stationData || !session?.access_token) return;
     
     const deviceId = stationData.device_mqtt_id || 'ESP32_CHARGER_STATION_001';
+    console.log(`Starting ${command} for deviceId=${deviceId}, port=${portNumber}, stationId=${stationData.station_id}`);
     
     try {
       setLoadingPort(portNumber);
@@ -418,7 +403,12 @@ function StationPage({ station, navigateTo }) {
         console.log(`Control command ${command} sent successfully for port ${portNumber}:`, result);
         await syncStationState();
       } else {
-        const errorData = await response.json();
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch (e) {
+          errorData = { error: `HTTP ${response.status}: ${response.statusText}` };
+        }
         console.error(`Failed to send control command:`, errorData);
         
         // Handle quota-related errors with better messaging
@@ -428,18 +418,17 @@ function StationPage({ station, navigateTo }) {
           // Handle slot limit errors
           alert(`Cannot start charging: ${errorData.error}\n\nPlease stop your current charging session before starting a new one.`);
         } else {
-          alert(`Error: ${errorData.error || 'Failed to send control command'}`);
+          alert(`Error: ${errorData.error || 'Failed to send control command'}\n\nStatus: ${response.status}`);
         }
       }
     } catch (error) {
       console.error('Error sending control command:', error);
-      alert('Error sending control command. Please try again.');
+      alert(`Error: ${error.message || 'Failed to send control command'}`);
     } finally {
       setLoadingPort(null);
     }
   };
 
-  // Simplified port status logic
   const getPortDisplayStatus = useCallback((portNumber) => {
     const deviceId = stationData?.device_mqtt_id || 'ESP32_CHARGER_STATION_001';
     const statusKey = `${deviceId}_${portNumber}`;
@@ -502,6 +491,59 @@ function StationPage({ station, navigateTo }) {
     };
   }, [chargerPortStatus, portConsumption, activeSessions, stationData?.device_mqtt_id]);
 
+  // Compute slot indicator colors based on state
+  const getSlotIndicatorState = useCallback(() => {
+    const isChargingActive = userActiveSessions > 0;
+    const isStationFull = stationData?.num_premium_ports > 0 && 
+      (stationData.available_premium_ports || 0) === 0;
+    const hasOfflinePort = Object.values(chargerPortStatus).some(
+      (s) => s.status_message === 'offline'
+    );
+
+    if (hasOfflinePort) {
+      return {
+        bg: 'rgba(245,158,11,0.08)',
+        border: '1px solid rgba(245,158,11,0.2)',
+        color: '#b45309',
+        label: 'Partial outage',
+        subLabel: hasOfflinePort ? '1 port offline' : 'Your sessions'
+      };
+    }
+    if (isStationFull) {
+      return {
+        bg: 'rgba(239,68,68,0.06)',
+        border: '1px solid rgba(239,68,68,0.2)',
+        color: '#dc2626',
+        label: 'Station full',
+        subLabel: 'All slots occupied'
+      };
+    }
+    if (isChargingActive) {
+      return {
+        bg: 'rgba(56,182,255,0.08)',
+        border: '1px solid rgba(56,182,255,0.2)',
+        color: '#38b6ff',
+        label: 'Charging active',
+        subLabel: `Your sessions: ${userActiveSessions} of ${maxActiveSlots} max`
+      };
+    }
+    return {
+      bg: 'rgba(16,185,129,0.08)',
+      border: '1px solid rgba(16,185,129,0.2)',
+      color: '#059669',
+      label: 'Slots available',
+      subLabel: `Your sessions: ${userActiveSessions} of ${maxActiveSlots} max`
+    };
+  }, [userActiveSessions, maxActiveSlots, stationData, chargerPortStatus]);
+
+  // Compute port counts
+  const portCounts = useMemo(() => {
+    const freePorts = stationData?.num_free_ports || 0;
+    const premiumPorts = stationData?.available_premium_ports || 0;
+    const totalPorts = freePorts + premiumPorts;
+    return { freePorts, premiumPorts, totalPorts };
+  }, [stationData]);
+
   // Show error if no station data
   if (!stationData) {
     return (
@@ -534,267 +576,273 @@ function StationPage({ station, navigateTo }) {
     );
   }
 
+const slotIndicatorState = getSlotIndicatorState();
+  const googleMapsUrl = stationData?.latitude && stationData?.longitude 
+    ? `https://www.google.com/maps/search/?api=1&query=${stationData.latitude},${stationData.longitude}`
+    : null;
+
+  const freePortsCount = stationData?.num_free_ports || 0;
+  const premiumPortsCount = stationData?.available_premium_ports || 0;
+
   return (
-    <div className="min-h-screen flex flex-col items-center p-4 text-gray-800 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
-      {/* Animated Background Orbs */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-float-slow" style={{ background: 'radial-gradient(circle, rgba(249, 210, 23, 0.25) 0%, rgba(249, 210, 23, 0.1) 50%, transparent 100%)' }}></div>
-        <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-float-slow-delay" style={{ background: 'radial-gradient(circle, rgba(56, 182, 255, 0.25) 0%, rgba(56, 182, 255, 0.1) 50%, transparent 100%)' }}></div>
-        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full blur-3xl animate-pulse-slow" style={{ background: 'radial-gradient(circle, rgba(0, 11, 61, 0.15) 0%, rgba(0, 11, 61, 0.05) 50%, transparent 100%)' }}></div>
-      </div>
-
-      {/* Main Content */}
-      <div className="w-full pt-24 pb-8">
-        <div className="w-full max-w-4xl mx-auto relative z-10 animate-fade-in px-4 sm:px-6 lg:px-8">
-          {/* Glass card effect */}
-          <div className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-8 sm:py-12 px-6 sm:px-8 lg:px-12" style={{ 
-            background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
-            boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+    <div className="min-h-dvh flex flex-col relative" style={{ background: '#f1f3e0' }}>
+      {/* Main scrollable area */}
+      <div className="flex-1 overflow-y-auto">
+        {/* Sticky Header */}
+        <div className="sticky top-0 z-20 flex items-center gap-2.5 px-3.5 py-2.5"
+          style={{ 
+            background: 'rgba(241,243,224,0.92)', 
+            borderBottom: '1px solid rgba(0,0,0,0.06)',
+            backdropFilter: 'blur(12px)',
+            WebkitBackdropFilter: 'blur(12px)'
           }}>
-            <button
-              className="mb-6 font-bold py-2 px-4 rounded-xl text-white transition-all duration-300 hover:scale-105"
-              style={{
-                background: 'linear-gradient(135deg, rgba(0, 11, 61, 0.8) 0%, rgba(0, 11, 61, 0.6) 100%)',
-                backdropFilter: 'blur(10px)',
-                border: '1px solid rgba(255, 255, 255, 0.2)',
-                boxShadow: '0 4px 16px rgba(0, 11, 61, 0.3)'
-              }}
-              onClick={() => navigate(fromRoute)}
-            >
-              ← Back to Home
-            </button>
-
-            <h1 className="text-3xl sm:text-4xl font-bold mb-4" style={{ color: '#000b3d' }}>{stationData.station_name}</h1>
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4">
-              <div className="flex-1">
-                <p className="mb-2" style={{ color: '#000b3d', opacity: 0.8 }}><strong>Location:</strong> {stationData.location_description}</p>
-              </div>
-              <div className="mt-2 sm:mt-0 sm:ml-4">
-                <button
-                  onClick={() => {
-                    openGoogleMaps(stationData.location_description, stationData.latitude, stationData.longitude);
-                    setMapMessage(`📍 Opening ${stationData.station_name} location in Google Maps`);
-                    // Clear any existing timeout
-                    if (mapMessageTimeoutRef.current) {
-                      clearTimeout(mapMessageTimeoutRef.current);
-                    }
-                    // Clear message after 3 seconds
-                    mapMessageTimeoutRef.current = setTimeout(() => setMapMessage(''), 3000);
-                  }}
-                  className="font-bold py-2 px-4 rounded-xl text-white transition-all duration-300 hover:scale-105 flex items-center gap-2"
-                  style={{
-                    background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
-                    boxShadow: '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
-                  }}
-                >
-                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd"></path>
-                  </svg>
-                  View on Map
-                </button>
-              </div>
-            </div>
-
-            {/* Map Message */}
-            {mapMessage && (
-              <div className="mb-4 p-3 rounded-lg text-center backdrop-blur-md" style={{
-                background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.1) 100%)',
-                border: '1px solid rgba(56, 182, 255, 0.3)',
-                color: '#000b3d'
-              }}>
-                {mapMessage}
-              </div>
-            )}
-
-            {/* Slot Status Indicator */}
-            <div className="mb-4 p-4 rounded-xl backdrop-blur-md" style={{
-              background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.15) 100%)',
-              border: '1px solid rgba(255, 255, 255, 0.3)'
-            }}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <svg className="w-5 h-5" style={{ color: '#38b6ff' }} fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm0 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V8zm0 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1v-2z" clipRule="evenodd"></path>
-                  </svg>
-                  <span className="font-semibold" style={{ color: '#000b3d' }}>Active Sessions:</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-                    userActiveSessions >= maxActiveSlots 
-                      ? 'bg-red-100 text-red-800' 
-                      : 'bg-green-100 text-green-800'
-                  }`}>
-                    {userActiveSessions}/{maxActiveSlots}
-                  </span>
-                  <span className="text-sm" style={{ color: '#000b3d', opacity: 0.7 }}>
-                    {userActiveSessions >= maxActiveSlots ? 'Limit reached' : 'Available'}
-                  </span>
-                </div>
-              </div>
-              {userActiveSessions >= maxActiveSlots && (
-                <div className="mt-2 text-sm p-2 rounded backdrop-blur-md" style={{
-                  background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.1) 100%)',
-                  border: '1px solid rgba(249, 210, 23, 0.3)',
-                  color: '#000b3d'
-                }}>
-                  ⚠️ You can only have {maxActiveSlots} active charging session{maxActiveSlots > 1 ? 's' : ''} at a time. Stop your current session{maxActiveSlots > 1 ? 's' : ''} to start a new one.
-                </div>
-              )}
-            </div>
-
-        {/* Debug Information - Commented out for production */}
-        {/* {process.env.NODE_ENV === 'development' && (
-          <div className="mt-4 p-4 bg-gray-100 rounded-lg text-sm">
-            <h3 className="font-bold mb-2">Debug Info:</h3>
-            <p><strong>Device MQTT ID:</strong> {stationData.device_mqtt_id || 'Not set (using fallback)'}</p>
-            <p><strong>Used Device ID:</strong> {stationData?.device_mqtt_id || 'ESP32_CHARGER_STATION_001'}</p>
-            <p><strong>Premium Ports:</strong> {stationData.num_premium_ports}</p>
-            <p><strong>Port Mapping:</strong> {JSON.stringify(devicePortMapping)}</p>
-            <p><strong>Status Keys:</strong> {Object.keys(chargerPortStatus).join(', ')}</p>
-            <p><strong>Active Sessions:</strong> {Object.keys(activeSessions).join(', ')}</p>
-            <p><strong>Consumption Keys:</strong> {Object.keys(portConsumption).join(', ')}</p>
+          <button 
+            onClick={() => navigate(fromRoute)}
+            className="w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0"
+            style={{ background: 'rgba(255,255,255,0.8)', border: '1px solid rgba(0,0,0,0.08)' }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#475569" strokeWidth="2" strokeLinecap="round">
+              <path d="M15 18l-6-6 6-6"/>
+            </svg>
+          </button>
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-gray-800 truncate">
+              {stationData?.station_name}
+            </p>
+            <p className="text-[10px] text-gray-500 truncate mt-0.5">
+              {stationData?.location_description}
+            </p>
           </div>
-        )} */}
+          {googleMapsUrl && (
+            <a href={googleMapsUrl} target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl flex-shrink-0"
+              style={{ background: 'rgba(56,182,255,0.12)', border: '1px solid rgba(56,182,255,0.25)' }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="#38b6ff">
+                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+              </svg>
+              <span className="text-[10px] font-bold" style={{ color: '#38b6ff' }}>Map</span>
+            </a>
+          )}
+        </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-              <div className="p-4 rounded-xl backdrop-blur-md" style={{
-                background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.1) 100%)',
-                border: '1px solid rgba(56, 182, 255, 0.3)'
-              }}>
-                <span style={{ color: '#000b3d', opacity: 0.8 }}>Free Ports</span>
-                <div className="text-2xl font-bold" style={{ color: '#38b6ff' }}>
-                  {stationData.num_free_ports}
-                </div>
-              </div>
-              <div className="p-4 rounded-xl backdrop-blur-md" style={{
-                background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.1) 100%)',
-                border: '1px solid rgba(249, 210, 23, 0.3)'
-              }}>
-                <span style={{ color: '#000b3d', opacity: 0.8 }}>Premium Ports</span>
-                <div className="text-2xl font-bold" style={{ color: '#f9d217' }}>
-                  {stationData.available_premium_ports} / {stationData.num_premium_ports}
-                </div>
-              </div>
-            </div>
-
-            {stationData.last_maintenance_message && (
-              <div className="mt-6 p-4 rounded-xl backdrop-blur-md" style={{
-                background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.1) 100%)',
-                border: '1px solid rgba(249, 210, 23, 0.3)'
-              }}>
-                <span className="text-sm" style={{ color: '#000b3d', opacity: 0.8 }}>🛠️ Last Maintenance: {stationData.last_maintenance_message}</span>
-              </div>
-            )}
-
-            {session && user?.id && (
-              <div className="mt-8">
-                <div className="flex justify-between items-center mb-4">
-                  <h2 className="text-xl font-bold" style={{ color: '#000b3d' }}>Control Charger Ports</h2>
-                  <button
-                    onClick={() => {
-                      syncStationState();
-                    }}
-                    className="font-bold py-2 px-4 rounded-xl text-white transition-all duration-300 hover:scale-105"
-                    style={{
-                      background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
-                      boxShadow: '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
-                    }}
-                  >
-                    Refresh Status
-                  </button>
-                </div>
-                {feedback && (
-                  <div className="mb-4 text-center font-semibold backdrop-blur-md p-3 rounded-lg" style={{
-                    background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(16, 185, 129, 0.1) 100%)',
-                    border: '1px solid rgba(16, 185, 129, 0.3)',
-                    color: '#000b3d'
-                  }}>{feedback}</div>
-                )}
-                
-                {stationData.num_premium_ports > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {premiumPorts.map(([frontendPortNumber, mappedPortDetails]) => {
-                      const currentStatus = getPortDisplayStatus(mappedPortDetails.internalPortNumber);
-                      
-                      return (
-                        <div key={frontendPortNumber} className="group relative backdrop-blur-xl rounded-2xl p-6 flex flex-col items-center transform transition-all duration-500 hover:scale-105 hover:-translate-y-2" style={{
-                          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.15) 100%)',
-                          border: '1px solid rgba(255, 255, 255, 0.3)',
-                          boxShadow: '0 8px 32px 0 rgba(56, 182, 255, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
-                        }}>
-                          <div className="text-lg font-semibold mb-2" style={{ color: '#000b3d' }}>{mappedPortDetails.label}</div>
-                          <div className={`mb-2 text-sm font-bold ${
-                            currentStatus.displayStatus.includes('Offline') ? 'text-red-600' : 
-                            currentStatus.displayStatus.includes('Your Session') ? 'text-green-600' : 
-                            currentStatus.displayStatus.includes('Occupied') ? 'text-orange-600' : 
-                            ''
-                          }`} style={!currentStatus.displayStatus.includes('Offline') && !currentStatus.displayStatus.includes('Your Session') && !currentStatus.displayStatus.includes('Occupied') ? { color: '#000b3d', opacity: 0.7 } : {}}>
-                            {currentStatus.displayStatus}
-                          </div>
-                          
-                          <div className="text-center mb-4">
-                            <div className="text-xs mb-1" style={{ color: '#000b3d', opacity: 0.7 }}>Current Consumption</div>
-                            <div className="text-lg font-bold" style={{ color: '#38b6ff' }}>
-                              {currentStatus.isUserSession ? currentStatus.consumption.toFixed(2) : '0.00'} mA
-                            </div>
-                            <div className="text-xs mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>
-                              Daily Total: {getDailyUsage().toFixed(2)} mAh
-                            </div>
-                          </div>
-
-                          {currentStatus.displayStatus === 'Offline' ? (
-                            <button
-                              className="font-bold py-2 px-6 rounded-xl text-white cursor-not-allowed"
-                              style={{
-                                background: 'linear-gradient(135deg, rgba(107, 114, 128, 0.6) 0%, rgba(75, 85, 99, 0.6) 100%)',
-                                boxShadow: '0 4px 12px rgba(107, 114, 128, 0.3)'
-                              }}
-                              disabled
-                            >
-                              Offline
-                            </button>
-                          ) : (
-                            <button
-                              className={`font-bold py-2 px-6 rounded-xl text-white transition-all duration-300 hover:scale-105 ${
-                                currentStatus.buttonDisabled ? 'cursor-not-allowed' : ''
-                              }`}
-                              style={currentStatus.buttonDisabled ? {
-                                background: 'linear-gradient(135deg, rgba(107, 114, 128, 0.6) 0%, rgba(75, 85, 99, 0.6) 100%)',
-                                boxShadow: '0 4px 12px rgba(107, 114, 128, 0.3)'
-                              } : currentStatus.isUserSession ? {
-                                background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
-                                boxShadow: '0 8px 24px rgba(239, 68, 68, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
-                              } : {
-                                background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                                boxShadow: '0 8px 24px rgba(16, 185, 129, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
-                              }}
-                              onClick={() => handleControlCommand(mappedPortDetails.internalPortNumber, currentStatus.isUserSession ? 'OFF' : 'ON')}
-                              disabled={currentStatus.buttonDisabled || loadingPort === mappedPortDetails.internalPortNumber}
-                            >
-                              {loadingPort === mappedPortDetails.internalPortNumber ? 'Processing...' : currentStatus.buttonText}
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div className="text-center py-8">
-                    <div className="backdrop-blur-xl rounded-2xl p-6" style={{
-                      background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.1) 100%)',
-                      border: '1px solid rgba(249, 210, 23, 0.3)'
-                    }}>
-                      <div className="text-lg font-semibold mb-2" style={{ color: '#000b3d' }}>⚠️ Premium Ports Not Available</div>
-                      <div style={{ color: '#000b3d', opacity: 0.8 }}>
-                        This station does not have any premium charging ports configured.
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+        {/* Slot Indicator Pill */}
+        <div className="mx-3.5 mb-2.5 mt-2 rounded-2xl px-3.5 py-2.5 flex items-center justify-between"
+          style={{ background: slotIndicatorState.bg, border: slotIndicatorState.border }}>
+          <div>
+            <p className="text-xs font-bold" style={{ color: slotIndicatorState.color }}>{slotIndicatorState.label}</p>
+            <p className="text-[9px] mt-0.5" style={{ color: slotIndicatorState.color, opacity: 0.7 }}>
+              {slotIndicatorState.subLabel}
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-xl font-black" style={{ color: slotIndicatorState.color }}>
+              {activeSessions?.length || 0}/{maxActiveSlots * 2}
+            </p>
+            <p className="text-[9px] text-gray-400">active now</p>
           </div>
         </div>
+
+        {/* Port Stats Row */}
+        <div className="flex gap-2 mx-3.5 mb-2.5">
+          <div className="flex-1 flex items-center gap-2 p-3 rounded-2xl"
+            style={{ background: 'rgba(56,182,255,0.08)', border: '1px solid rgba(56,182,255,0.15)' }}>
+            <div className="w-7 h-7 rounded-xl flex items-center justify-center"
+              style={{ background: 'rgba(56,182,255,0.15)' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#38b6ff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+              </svg>
+            </div>
+            <div>
+              <p className="text-lg font-black" style={{ color: '#38b6ff' }}>{freePortsCount}</p>
+              <p className="text-[9px]" style={{ color: '#38b6ff', opacity: 0.6 }}>Free ports</p>
+            </div>
+          </div>
+          <div className="flex-1 flex items-center gap-2 p-3 rounded-2xl"
+            style={{ background: 'rgba(249,210,23,0.1)', border: '1px solid rgba(249,210,23,0.25)' }}>
+            <div className="w-7 h-7 rounded-xl flex items-center justify-center"
+              style={{ background: 'rgba(249,210,23,0.2)' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#b45309" strokeWidth="2" strokeLinejoin="round">
+                <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+              </svg>
+            </div>
+            <div>
+              <p className="text-lg font-black" style={{ color: '#b45309' }}>{premiumPortsCount}</p>
+              <p className="text-[9px]" style={{ color: '#b45309', opacity: 0.6 }}>Premium</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Maintenance Alert */}
+        {stationData?.last_maintenance_message && (
+          <div className="mx-3.5 mb-2.5 flex items-center gap-2 p-3 rounded-2xl"
+            style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)' }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#b45309" strokeWidth="2" strokeLinejoin="round">
+              <path d="M12 2L2 19h20L12 2z"/>
+              <path d="M12 9v4M12 16h.01"/>
+            </svg>
+            <p className="text-xs" style={{ color: '#b45309' }}>{stationData.last_maintenance_message}</p>
+          </div>
+        )}
+
+        {/* Port Controls Header */}
+        {session && user?.id && (
+          <>
+            <div className="flex justify-between items-center mx-3.5 mb-2">
+              <h2 className="text-sm font-bold text-gray-800">Charging ports</h2>
+              <button 
+                onClick={syncStationState}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl"
+                style={{ background: 'rgba(56,182,255,0.1)', border: '1px solid rgba(56,182,255,0.2)' }}>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#38b6ff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M23 4v6h-6M1 20v-6h6"/>
+                  <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+                </svg>
+                <span className="text-[10px] font-bold" style={{ color: '#38b6ff' }}>Refresh</span>
+              </button>
+            </div>
+
+            {/* Port Cards */}
+            {feedback && (
+              <div className="mx-3.5 mb-2.5 text-center text-xs p-2 rounded-xl" style={{
+                background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', color: '#059669'
+              }}>{feedback}</div>
+            )}
+
+            {stationData.num_premium_ports > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5 px-3.5">
+                {premiumPorts.map(([frontendPortNumber, mappedPortDetails]) => {
+                  const portNum = mappedPortDetails.internalPortNumber;
+                  const deviceId = stationData?.device_mqtt_id || 'ESP32_CHARGER_STATION_001';
+                  const statusKey = `${deviceId}_${portNum}`;
+                  const statusData = chargerPortStatus[statusKey] || {};
+                  const consumptionInfo = portConsumption[statusKey] || {};
+                  const userSessionKey = activeSessions[statusKey];
+                  const isPremium = true;
+                  const isCharging = !!userSessionKey;
+                  const isOffline = statusData.status_message === 'offline';
+                  const isOccupied = statusData.charger_state === 'ON' && !userSessionKey;
+                  
+                  let statusBg, statusColor, statusBorder, statusLabel;
+                  if (isOffline) {
+                    statusBg = 'rgba(100,116,139,0.1)';
+                    statusColor = '#64748b';
+                    statusBorder = 'rgba(100,116,139,0.2)';
+                    statusLabel = 'Offline';
+                  } else if (isCharging) {
+                    statusBg = 'rgba(56,182,255,0.1)';
+                    statusColor = '#0369a1';
+                    statusBorder = 'rgba(56,182,255,0.3)';
+                    statusLabel = 'Charging';
+                  } else if (isOccupied) {
+                    statusBg = 'rgba(56,182,255,0.08)';
+                    statusColor = '#64748b';
+                    statusBorder = 'rgba(0,0,0,0.08)';
+                    statusLabel = 'In use';
+                  } else if (isPremium) {
+                    statusBg = 'rgba(249,210,23,0.15)';
+                    statusColor = '#b45309';
+                    statusBorder = 'rgba(249,210,23,0.3)';
+                    statusLabel = 'Available';
+                  } else {
+                    statusBg = 'rgba(16,185,129,0.1)';
+                    statusColor = '#059669';
+                    statusBorder = 'rgba(16,185,129,0.2)';
+                    statusLabel = 'Available';
+                  }
+
+                  let btnBg, btnColor, btnBorder, buttonLabel;
+                  const isDisabled = isOffline || isOccupied;
+                  if (isCharging) {
+                    btnBg = 'rgba(239,68,68,0.1)';
+                    btnColor = '#dc2626';
+                    btnBorder = '1px solid rgba(239,68,68,0.25)';
+                    buttonLabel = 'Stop charging';
+                  } else if (isDisabled) {
+                    btnBg = 'rgba(0,0,0,0.05)';
+                    btnColor = '#94a3b8';
+                    btnBorder = '1px solid rgba(0,0,0,0.06)';
+                    buttonLabel = isOffline ? 'Port offline' : 'Port in use';
+                  } else if (isPremium) {
+                    btnBg = 'rgba(249,210,23,0.9)';
+                    btnColor = '#78350f';
+                    btnBorder = 'none';
+                    buttonLabel = 'Start charging';
+                  } else {
+                    btnBg = '#38b6ff';
+                    btnColor = '#fff';
+                    btnBorder = 'none';
+                    buttonLabel = 'Start charging';
+                  }
+
+                  return (
+                    <div key={frontendPortNumber} className="p-4 rounded-2xl"
+                      style={{ 
+                        background: 'rgba(255,255,255,0.65)', 
+                        border: '1px solid rgba(255,255,255,0.9)',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
+                      }}>
+                      <div className="flex justify-between items-start mb-3">
+                        <div>
+                          <p className="text-sm font-bold text-gray-800">Port {portNum}</p>
+                          <p className="text-[10px] text-gray-500 mt-0.5">
+                            {isPremium ? 'Premium · Solar' : 'Standard · Free'}
+                          </p>
+                        </div>
+                        <span className="px-2.5 py-1 rounded-xl text-[10px] font-bold"
+                          style={{ background: statusBg, color: statusColor, border: statusBorder }}>
+                          {statusLabel}
+                        </span>
+                      </div>
+                      
+                      {isCharging && (
+                        <div className="flex gap-2 mb-3">
+                          <div className="flex-1 text-center p-2 rounded-xl"
+                            style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.05)' }}>
+                            <p className="text-sm font-bold text-gray-800 leading-none">
+                              {consumptionInfo.current_consumption ? (consumptionInfo.current_consumption / 1000).toFixed(2) : '0.00'} kWh
+                            </p>
+                            <p className="text-[9px] text-gray-400 mt-1">consumed</p>
+                          </div>
+                          <div className="flex-1 text-center p-2 rounded-xl"
+                            style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.05)' }}>
+                            <p className="text-sm font-bold text-gray-800 leading-none">--</p>
+                            <p className="text-[9px] text-gray-400 mt-1">duration</p>
+                          </div>
+                          <div className="flex-1 text-center p-2 rounded-xl"
+                            style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.05)' }}>
+                            <p className="text-sm font-bold text-gray-800 leading-none">--</p>
+                            <p className="text-[9px] text-gray-400 mt-1">cost</p>
+                          </div>
+                        </div>
+                      )}
+                      
+                      <button
+                        disabled={isDisabled || loadingPort === portNum}
+                        onClick={() => handleControlCommand(portNum, isCharging ? 'OFF' : 'ON')}
+                        className="w-full py-3 rounded-xl text-sm font-bold"
+                        style={{ 
+                          background: btnBg, 
+                          color: btnColor, 
+                          border: btnBorder,
+                          cursor: isDisabled ? 'not-allowed' : 'pointer'
+                        }}>
+                        {loadingPort === portNum ? 'Processing...' : buttonLabel}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="mx-3.5 p-4 rounded-2xl text-center"
+                style={{ background: 'rgba(249,210,23,0.1)', border: '1px solid rgba(249,210,23,0.25)' }}>
+                <p className="text-sm font-semibold" style={{ color: '#b45309' }}>No premium ports available</p>
+                <p className="text-xs text-gray-500 mt-1">This station has no premium charging ports configured.</p>
+              </div>
+            )}
+          </>
+        )}
+
+        <div className="h-6"></div>
       </div>
     </div>
   );

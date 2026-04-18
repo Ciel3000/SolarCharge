@@ -32,12 +32,18 @@ export const AuthProvider = ({ children }) => {
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [subscription, setSubscription] = useState(null);
+  const [activeSubscriptions, setActiveSubscriptions] = useState([]);
+  const [usageAggregate, setUsageAggregate] = useState({
+    daily_limit: 0,
+    total_consumed: 0,
+    remaining: 0,
+  });
   const [plans, setPlans] = useState([]);
   const [error, setError] = useState(null);
   const [initialized, setInitialized] = useState(false);
-  const [isRecovering, setIsRecovering] = useState(false); // Add recovery state
-  const [sessionTimeout, setSessionTimeout] = useState(null); // Track session timeout
-  const [lastRecoveryAttempt, setLastRecoveryAttempt] = useState(0); // Debounce recovery attempts
+  const [isRecovering, setIsRecovering] = useState(false);
+  const [sessionTimeout, setSessionTimeout] = useState(null);
+  const [lastRecoveryAttempt, setLastRecoveryAttempt] = useState(0);
 
   // --- Session timeout handler ---
   const handleSessionTimeout = useCallback(() => {
@@ -46,6 +52,8 @@ export const AuthProvider = ({ children }) => {
     setUser(null);
     setIsAdmin(false);
     setSubscription(null);
+    setActiveSubscriptions([]);
+    setUsageAggregate({ daily_limit: 0, total_consumed: 0, remaining: 0 });
     setPlans([]);
     setError("Session expired. Please log in again.");
     setInitialized(false);
@@ -94,11 +102,13 @@ export const AuthProvider = ({ children }) => {
 
    // --- Helper to fetch user subscription and all plans ---
    const fetchSubscriptionAndPlans = useCallback(async (currentSession) => {
-     if (!currentSession) {
-       setSubscription(null);
-       setPlans([]);
-       return;
-     }
+if (!currentSession) {
+        setSubscription(null);
+        setActiveSubscriptions([]);
+        setUsageAggregate({ daily_limit: 0, total_consumed: 0, remaining: 0 });
+        setPlans([]);
+        return;
+      }
      try {
        // First, fetch all available plans from Supabase (fast, direct)
        const { data: plansData, error: plansError } = await supabase
@@ -119,27 +129,42 @@ export const AuthProvider = ({ children }) => {
            }
          });
 
-         if (res.ok) {
-           const data = await res.json();
-           setSubscription(data.subscription);
-         } else if (res.status === 404) {
-           // No active subscription - this is fine
-           setSubscription(null);
-         } else {
+if (res.ok) {
+            const data = await res.json();
+            setSubscription(data.subscription);
+            setActiveSubscriptions(data.active_subscriptions || []);
+            setUsageAggregate(data.aggregate || { daily_limit: 0, total_consumed: 0, remaining: 0 });
+} else if (res.status === 404) {
+            // No active subscription - this is fine
+            setSubscription(null);
+            setActiveSubscriptions([]);
+            setUsageAggregate({ daily_limit: 0, total_consumed: 0, remaining: 0 });
+          } else {
            console.error("AuthContext: Error fetching subscription from API:", res.status);
            setSubscription(null);
          }
-       } catch (subscriptionError) {
-         console.error("AuthContext: Subscription fetch failed:", subscriptionError);
-         setSubscription(null);
-       }
+} catch (subscriptionError) {
+          console.error("AuthContext: Subscription fetch failed:", subscriptionError);
+          setSubscription(null);
+          setActiveSubscriptions([]);
+          setUsageAggregate({ daily_limit: 0, total_consumed: 0, remaining: 0 });
+        }
 
      } catch (error) {
        console.error("AuthContext: Error fetching subscription or plans:", error.message);
-       setSubscription(null);
-       setPlans([]);
-     }
-   }, []);
+setSubscription(null);
+        setActiveSubscriptions([]);
+        setUsageAggregate({ daily_limit: 0, total_consumed: 0, remaining: 0 });
+        setPlans([]);
+      }
+    }, []);
+
+  // Refresh function to avoid page reload
+  const refreshSubscription = useCallback(async (currentSession) => {
+    if (currentSession) {
+      await fetchSubscriptionAndPlans(currentSession);
+    }
+  }, [fetchSubscriptionAndPlans]);
 
   // --- Session recovery function ---
   const recoverSession = useCallback(async () => {
@@ -262,6 +287,8 @@ export const AuthProvider = ({ children }) => {
                 setUser(null);
                 setIsAdmin(false);
                 setSubscription(null);
+                setActiveSubscriptions([]);
+                setUsageAggregate({ daily_limit: 0, total_consumed: 0, remaining: 0 });
                 setPlans([]);
                 setError(null);
                 setInitialized(false);
@@ -375,6 +402,8 @@ export const AuthProvider = ({ children }) => {
     isAdmin,
     isLoading: loading,
     subscription,
+    activeSubscriptions,
+    usageAggregate,
     plans,
     error,
     clearError,
@@ -382,6 +411,7 @@ export const AuthProvider = ({ children }) => {
     isRecovering,
     handleSessionTimeout,
     isSessionExpired,
+    refreshSubscription,
     // Authentication methods
     signIn: (email, password) => supabase.auth.signInWithPassword({ email, password }),
     signOut: () => supabase.auth.signOut(),

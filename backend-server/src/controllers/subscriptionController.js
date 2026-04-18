@@ -22,7 +22,7 @@ async function getPlans(req, res, next) {
 async function getUserSubscription(req, res, next) {
   const { user_id } = req.user;
   try {
-    const subscription = await subscriptionService.getUserSubscription(user_id);
+    const data = await subscriptionService.getUserSubscription(user_id);
 
     // Fetch recent billing history (last 5 payments)
     const billingHistoryResult = await pool.query(`
@@ -40,31 +40,41 @@ async function getUserSubscription(req, res, next) {
     `, [user_id]);
     const billingHistory = billingHistoryResult.rows;
 
-    // Enrich subscription if active
-    if (subscription) {
+    // Enrich primary subscription if active
+    if (data.primary) {
+      const sub = data.primary;
       // Build features array from plan fields
       const features = [];
-      if (subscription.daily_mah_limit) features.push(`${subscription.daily_mah_limit} mAh daily limit`);
-      if (subscription.max_session_duration_hours) features.push(`${subscription.max_session_duration_hours} hour max session`);
-      if (subscription.fast_charging_access) features.push('Fast Charging Access');
-      if (subscription.priority_access) features.push('Priority Access');
-      if (subscription.cooldown_percentage && subscription.cooldown_time_hour) {
-        features.push(`${subscription.cooldown_percentage}% cooldown in ${subscription.cooldown_time_hour}h`);
+      if (sub.daily_mah_limit) features.push(`${sub.daily_mah_limit} mAh daily limit`);
+      if (sub.max_session_duration_hours) features.push(`${sub.max_session_duration_hours} hour max session`);
+      if (sub.fast_charging_access) features.push('Fast Charging Access');
+      if (sub.priority_access) features.push('Priority Access');
+      if (sub.cooldown_percentage && sub.cooldown_time_hour) {
+        features.push(`${sub.cooldown_percentage}% cooldown in ${sub.cooldown_time_hour}h`);
       }
-      subscription.features = features;
+      sub.features = features;
 
       // duration_display already computed by service
       // Compute next_billing_date
-      if (subscription.start_date) {
-        subscription.next_billing_date = calculateNextBillingDate(
-          new Date(subscription.start_date),
-          subscription.duration_type,
-          subscription.duration_value
+      if (sub.start_date) {
+        sub.next_billing_date = calculateNextBillingDate(
+          new Date(sub.start_date),
+          sub.duration_type,
+          sub.duration_value
         );
       }
     }
 
-    res.json({ subscription, billing_history: billingHistory });
+    res.json({
+      subscription: data.primary,
+      active_subscriptions: data.active_subscriptions || [],
+      aggregate: {
+        daily_limit: data.aggregate_daily_limit,
+        total_consumed: data.total_consumed_mah,
+        remaining: Math.max(0, data.aggregate_daily_limit - data.total_consumed_mah),
+      },
+      billing_history: billingHistory,
+    });
   } catch (err) {
     next(err);
   }
@@ -84,8 +94,9 @@ async function getSubscriptionHistory(req, res, next) {
 // POST /api/subscription/cancel - Cancel user's subscription
 async function cancelSubscription(req, res, next) {
   const { user_id } = req.user;
+  const { subscription_id } = req.body;
   try {
-    const result = await subscriptionService.cancelSubscription(user_id);
+    const result = await subscriptionService.cancelSubscription(user_id, subscription_id || null);
     res.json(result);
   } catch (err) {
     next(err);
@@ -106,20 +117,8 @@ async function getUserUsage(req, res, next) {
 // GET /api/quota/pricing - Public extension pricing
 async function getQuotaPricing(req, res, next) {
   try {
-    const pricing = await subscriptionService.getAllQuotaPricing();
-    res.json(pricing);
-  } catch (err) {
-    next(err);
-  }
-}
-
-// POST /api/quota/purchase-extension - Buy quota extension
-async function purchaseQuotaExtension(req, res, next) {
-  const { user_id } = req.user;
-  const { extensionType } = req.body;
-  try {
-    const result = await subscriptionService.purchaseQuotaExtension(user_id, extensionType || 'direct_purchase');
-    res.json(result);
+    // Quota extensions removed - return empty array
+    res.json([]);
   } catch (err) {
     next(err);
   }
@@ -136,21 +135,6 @@ async function getUserQuotaStatus(req, res, next) {
   }
 }
 
-// GET /api/quota/extension-status/:extensionId - Check extension status
-async function getExtensionStatus(req, res, next) {
-  const { extensionId } = req.params;
-  const { user_id } = req.user;
-  try {
-    const extension = await subscriptionService.getExtensionStatus(extensionId);
-    if (!extension || extension.user_id !== user_id) {
-      return res.status(404).json({ error: 'Extension not found' });
-    }
-    res.json(extension);
-  } catch (err) {
-    next(err);
-  }
-}
-
 module.exports = {
   getPlans,
   getUserSubscription,
@@ -158,7 +142,5 @@ module.exports = {
   cancelSubscription,
   getUserUsage,
   getQuotaPricing,
-  purchaseQuotaExtension,
   getUserQuotaStatus,
-  getExtensionStatus,
 };
