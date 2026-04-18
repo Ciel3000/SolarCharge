@@ -1,34 +1,32 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom'; // Add React Router hooks
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { openGoogleMaps } from '../utils/mapUtils';
 import { filterActivePlans } from '../utils/planUtils';
 import { useIntervalWithVisibility } from '../utils/usePageVisibility';
+import NotificationBell from '../components/NotificationBell';
 
 
 function HomePage({ navigateTo, message, stations: propStations, loadingStations: propLoadingStations }) {
   console.log('HomePage rendered.');
 
   const { session, user, subscription, plans, isLoading: authLoading } = useAuth();
-  const location = useLocation(); // Get location object
-  const navigate = useNavigate(); // Get navigate function
+  const location = useLocation();
+  const navigate = useNavigate();
 
   const [displayMessage, setDisplayMessage] = useState(message || '');
-  // Use props if available, otherwise fall back to internal state
   const [internalStations, setInternalStations] = useState([]);
   const [internalLoadingStations, setInternalLoadingStations] = useState(true);
   const [stationsInitialized, setStationsInitialized] = useState(false);
   
-  // Use props if provided, otherwise use internal state
   const stations = propStations || internalStations;
   const loadingStations = propLoadingStations !== undefined ? propLoadingStations : internalLoadingStations;
 
-  // Check for location state messages or URL parameters
   const locationMessage = location.state?.message;
   const scrollToSection = location.state?.scrollTo;
   const searchParams = new URLSearchParams(location.search);
-  const filter = searchParams.get('filter'); // e.g., ?filter=available
-  const stationId = searchParams.get('station'); // e.g., ?station=uuid
+  const filter = searchParams.get('filter');
+  const stationId = searchParams.get('station');
 
   useEffect(() => {
     if (message) {
@@ -38,7 +36,6 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
     }
   }, [message, locationMessage]);
 
-  // Handle scroll to section if specified
   useEffect(() => {
     if (scrollToSection) {
       const element = document.getElementById(scrollToSection);
@@ -48,7 +45,6 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
     }
   }, [scrollToSection]);
 
-  // Force refresh stations when navigating back to home page
   useEffect(() => {
     if (session && location.pathname === '/home' && stations.length === 0 && !loadingStations) {
       setStationsInitialized(false);
@@ -57,13 +53,11 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
     }
   }, [session, location.pathname, stations.length, loadingStations]);
 
-  // Refresh usage data when navigating back to home page
   useEffect(() => {
     if (session?.access_token && location.pathname === '/home') {
-      // Fetch fresh usage data when returning to home page
       const fetchUsageAnalytics = async () => {
         try {
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+          const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
           const res = await fetch(`${BACKEND_URL}/api/user/usage`, {
             headers: { Authorization: `Bearer ${session.access_token}` },
           });
@@ -79,10 +73,8 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
     }
   }, [session?.access_token, location.pathname]);
 
-  // Enhanced station navigation with state passing
   const handleStationClick = (station) => {
     if (subscription) {
-      // Use navigateTo function to properly set station data in App.js
       navigateTo('station', { 
         station, 
         state: {
@@ -91,10 +83,7 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
         }
       });
     } else {
-      // For users without subscription, open Google Maps with precise coordinates
       openGoogleMaps(station.location_description, station.latitude, station.longitude);
-      
-      // Show a helpful message about getting a subscription
       setDisplayMessage(`📍 Opening ${station.station_name} location in Google Maps. Get a subscription to access charging controls!`);
     }
   };
@@ -119,16 +108,12 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
       }
     }
     
-    // Only fetch stations if we have a session and haven't already fetched them
-    // This prevents refetching when returning from other browser tabs
     if (session && !stationsInitialized && internalStations.length === 0 && !propStations) {
       fetchStationsForHomePage();
     } else if (session && (stations.length > 0 || propStations)) {
-      // If we have stations data (from props or internal), we're not loading anymore
       setInternalLoadingStations(false);
       setStationsInitialized(true);
     } else if (session && stationsInitialized) {
-      // If we're initialized but have no data, we're not loading
       setInternalLoadingStations(false);
     }
   }, [session, stationsInitialized, internalStations.length, propStations]);
@@ -155,7 +140,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
   useIntervalWithVisibility(fetchUsageAnalytics, 30000, !!session);
 
-  // Function to detect device information
   const detectDeviceInfo = () => {
     const userAgent = navigator.userAgent;
     const platform = navigator.platform;
@@ -165,21 +149,17 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
     let deviceName = 'Unknown Device';
     let deviceModel = 'Unknown Model';
     
-    // Enhanced mobile device detection
     if (/Android/i.test(userAgent)) {
       deviceType = 'phone';
       deviceName = 'Android Device';
       
-      // Try multiple patterns for Android device detection
       let deviceInfo = '';
       
-      // Pattern 1: Standard Android build pattern
       const androidMatch = userAgent.match(/Android\s+\d+\.?\d*;\s*(.+?)\s+build/i);
       if (androidMatch) {
         deviceInfo = androidMatch[1].trim();
       }
       
-      // Pattern 2: Alternative pattern for some mobile browsers
       if (!deviceInfo) {
         const altMatch = userAgent.match(/Linux;\s*Android\s+\d+\.?\d*;\s*(.+?)\s+Build/i);
         if (altMatch) {
@@ -187,7 +167,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
         }
       }
       
-      // Pattern 3: Chrome mobile pattern
       if (!deviceInfo) {
         const chromeMatch = userAgent.match(/Mobile.*Android\s+\d+\.?\d*;\s*(.+?)\s+AppleWebKit/i);
         if (chromeMatch) {
@@ -195,7 +174,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
         }
       }
       
-      // Process device info if found
       if (deviceInfo) {
         if (deviceInfo.includes('SM-') || deviceInfo.includes('Samsung') || deviceInfo.includes('GT-')) {
           deviceName = 'Samsung Galaxy';
@@ -225,7 +203,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
           deviceModel = deviceInfo;
         }
       } else {
-        // Fallback for Android without specific device info
         deviceModel = 'Android Mobile';
       }
       
@@ -241,7 +218,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
         deviceName = 'iPhone';
       }
       
-      // Try to extract iOS version
       const iosMatch = userAgent.match(/OS\s+(\d+_\d+_\d+)/i);
       if (iosMatch) {
         deviceModel = `iOS ${iosMatch[1].replace(/_/g, '.')}`;
@@ -253,7 +229,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
       deviceType = 'desktop';
       deviceName = 'Windows PC';
       
-      // Try to detect Windows version
       if (/Windows NT 10\.0/i.test(userAgent)) {
         deviceModel = 'Windows 10/11';
       } else if (/Windows NT 6\.3/i.test(userAgent)) {
@@ -269,7 +244,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
       deviceType = 'desktop';
       deviceName = 'Mac';
       
-      // Try to detect macOS version
       if (/Mac OS X 10_15/i.test(userAgent) || /Mac OS X 11_/i.test(userAgent) || /Mac OS X 12_/i.test(userAgent) || /Mac OS X 13_/i.test(userAgent)) {
         deviceModel = 'macOS (Recent)';
       } else if (/Mac OS X 10_14/i.test(userAgent)) {
@@ -283,7 +257,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
       deviceType = 'desktop';
       deviceName = 'Linux PC';
       
-      // Try to detect specific Linux distribution
       if (/Ubuntu/i.test(userAgent)) {
         deviceModel = 'Ubuntu';
       } else if (/Fedora/i.test(userAgent)) {
@@ -299,7 +272,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
       deviceModel = 'Chrome OS';
     }
     
-    // Fallback for unknown devices
     if (deviceType === 'unknown') {
       deviceType = 'desktop';
       deviceName = 'Web Browser';
@@ -309,26 +281,22 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
     return { deviceType, deviceName, deviceModel };
   };
 
-  // Function to get charging status and battery level (if available)
   const getChargingStatus = async () => {
-    // Check if Battery API is available
     if ('getBattery' in navigator) {
       try {
         const battery = await navigator.getBattery();
         
-        // Add event listener for charging changes
         battery.addEventListener('chargingchange', () => {
           console.log('Charging status changed:', battery.charging);
         });
         
-        // Add event listener for battery level changes
         battery.addEventListener('levelchange', () => {
           console.log('Battery level changed:', battery.level);
         });
         
         return {
           charging: battery.charging,
-          batteryLevel: Math.round(battery.level * 100) // Convert to percentage
+          batteryLevel: Math.round(battery.level * 100)
         };
       } catch (error) {
         console.log('Battery API error:', error.message);
@@ -336,15 +304,13 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
       }
     }
     
-    // Fallback: Assume not charging if we can't detect it
     console.log('Battery API not available, using fallback');
     return {
-      charging: false, // Assume not charging if we can't detect it
+      charging: false,
       batteryLevel: null
     };
   };
 
-  // Effect to detect and store device information
   useEffect(() => {
     if (subscription && session) {
       const deviceInfo = detectDeviceInfo();
@@ -362,13 +328,11 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
         console.log('Final device object:', device);
         setUserDevices([device]);
         
-        // Save device information to database
         saveDeviceToDatabase(device);
       });
     }
   }, [subscription, session]);
 
-  // Function to save device information to database
   const saveDeviceToDatabase = async (device) => {
     try {
       const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -389,17 +353,15 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
       
       if (!response.ok) {
         console.warn('Device API not available yet, continuing without saving to database');
-        return; // Don't throw error, just continue
+        return;
       }
       
       console.log('Device information saved successfully');
     } catch (error) {
       console.warn('Error saving device information (API may not be deployed yet):', error);
-      // Don't throw error, just continue without saving to database
     }
   };
 
-  // Effect to update battery level periodically using visibility-aware interval
   const updateBatteryLevel = useCallback(async () => {
     if (subscription && session && userDevices.length > 0) {
       const chargingInfo = await getChargingStatus();
@@ -428,9 +390,51 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
     }).format(amount || 0);
   };
 
-  // openGoogleMaps function is now imported from utils/mapUtils.js
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good morning';
+    if (hour < 17) return 'Good afternoon';
+    return 'Good evening';
+  };
 
-  // Only show loading during initial app load, not for tab switches or minor updates
+  const calculateKwhUsage = () => {
+    if (!subscription) return 0;
+    const dailyLimit = subscription.subscription_plans?.daily_mah_limit || subscription.daily_mah_limit || 0;
+    const usedMah = usage?.totalEnergyMAH || 0;
+    return usedMah / 1000;
+  };
+
+  const calculateKwhRemaining = () => {
+    if (!subscription) return 0;
+    const dailyLimitKwh = (subscription.subscription_plans?.daily_mah_limit || subscription.daily_mah_limit || 0) / 1000;
+    return Math.max(0, dailyLimitKwh - calculateKwhUsage());
+  };
+
+  const calculateUsagePercent = () => {
+    if (!subscription) return 0;
+    const dailyLimit = subscription.subscription_plans?.daily_mah_limit || subscription.daily_mah_limit || 0;
+    const usedMah = usage?.totalEnergyMAH || 0;
+    return Math.min(100, Math.round((usedMah / dailyLimit) * 100));
+  };
+
+  const getStationAvailabilityColor = (station) => {
+    if (!subscription) return 'rgba(255,255,255,0.2)';
+    const freePorts = station.num_free_ports || 0;
+    const totalPorts = (station.num_free_ports || 0) + (station.num_premium_ports || 0);
+    if (totalPorts === 0) return '#ef4444';
+    const availabilityRatio = freePorts / totalPorts;
+    if (availabilityRatio > 0.5) return '#10b981';
+    if (availabilityRatio > 0) return '#f59e0b';
+    return '#ef4444';
+  };
+
+  const getStationAvailabilityText = (station) => {
+    if (!subscription) return 'Subscribe';
+    const freePorts = station.num_free_ports || 0;
+    if (freePorts === 0) return 'Full';
+    return `${freePorts} open`;
+  };
+
   if (authLoading && !session) {
     return (
       <div className="min-h-screen flex items-center justify-center relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
@@ -453,21 +457,15 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
   }
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4 text-gray-800 relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
-      {/* Animated Background Orbs with brand colors */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        {/* Sun-colored orb */}
+    <div className="min-h-dvh flex flex-col items-start justify-start p-0 text-gray-800 relative" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+      <div className="absolute inset-0 overflow-hidden pointer-events-none lg:hidden">
         <div className="absolute -top-40 -right-40 w-96 h-96 rounded-full blur-3xl animate-float-slow" style={{ background: 'radial-gradient(circle, rgba(249, 210, 23, 0.25) 0%, rgba(249, 210, 23, 0.1) 50%, transparent 100%)' }}></div>
-        {/* Lightning-colored orb */}
         <div className="absolute -bottom-40 -left-40 w-96 h-96 rounded-full blur-3xl animate-float-slow-delay" style={{ background: 'radial-gradient(circle, rgba(56, 182, 255, 0.25) 0%, rgba(56, 182, 255, 0.1) 50%, transparent 100%)' }}></div>
-        {/* Solar panel colored accent */}
         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] rounded-full blur-3xl animate-pulse-slow" style={{ background: 'radial-gradient(circle, rgba(0, 11, 61, 0.15) 0%, rgba(0, 11, 61, 0.05) 50%, transparent 100%)' }}></div>
-        {/* Additional floating orbs */}
         <div className="absolute top-1/4 right-1/4 w-64 h-64 rounded-full blur-3xl animate-float" style={{ background: 'radial-gradient(circle, rgba(56, 182, 255, 0.2) 0%, transparent 70%)' }}></div>
         <div className="absolute bottom-1/4 left-1/4 w-64 h-64 rounded-full blur-3xl animate-float-delay" style={{ background: 'radial-gradient(circle, rgba(249, 210, 23, 0.2) 0%, transparent 70%)' }}></div>
       </div>
 
-      {/* Message Display (from App.js or internal) */}
       {displayMessage && (
         <div className="fixed top-20 left-0 right-0 p-4 text-center z-50 rounded-lg mx-auto max-w-md shadow-md backdrop-blur-xl" style={{
           background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.3) 0%, rgba(249, 210, 23, 0.2) 100%)',
@@ -478,23 +476,246 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
         </div>
       )}
 
-      {/* Main Content with top padding for fixed nav */}
-      <div className="w-full pt-20 pb-8">
-        {/* Hero + Features Section */}
+      {/* MOBILE LAYOUT (< lg:) */}
+      <div className="w-full pt-2 pb-24 lg:hidden">
+        <div className="px-4">
+          <div className="flex justify-between items-center py-1">
+            <div>
+              <p className="text-xs" style={{ color: 'rgba(0,0,0,0.4)' }}>{getGreeting()}</p>
+              <p className="text-lg font-bold" style={{ color: '#000b3d' }}>{user?.name || user?.email?.split('@')[0] || 'Welcome'}</p>
+            </div>
+            <NotificationBell />
+          </div>
+
+          {subscription ? (
+            <>
+              <div className="mb-2 bg-emerald-500/08 border border-emerald-500/40 rounded-2xl p-3 flex justify-between items-center" style={{ boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                  <div>
+                    <p className="text-xs" style={{ color: 'rgba(16,185,129,0.8)' }}>{subscription.plan_name || subscription.subscription_plans?.plan_name || 'Solar Plan'}</p>
+                  </div>
+                </div>
+                <p className="text-emerald-500 text-sm font-bold">{calculateKwhRemaining().toFixed(1)} kWh left today</p>
+              </div>
+
+              <div className="mb-2 bg-white/7 border rounded-2xl p-3" style={{ border: '1px solid rgba(0,0,0,0.08)', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
+                <p className="text-[10px] uppercase tracking-wider mb-1" style={{ color: 'rgba(0,0,0,0.5)' }}>Current plan</p>
+                <p className="text-base font-bold" style={{ color: '#000b3d' }}>{subscription.plan_name || subscription.subscription_plans?.plan_name || 'Solar Pro'}</p>
+                <p className="text-xs mb-2" style={{ color: 'rgba(0,0,0,0.45)' }}>Resets daily at midnight</p>
+                
+                <div className="flex gap-2 mb-2">
+                  <div className="flex-1 bg-white/6 rounded-xl p-3 text-center" style={{ border: '1px solid rgba(0,0,0,0.06)' }}>
+                    <p className="text-sky-500 text-xl font-bold">{calculateKwhUsage().toFixed(1)}</p>
+                    <p className="text-[9px]" style={{ color: 'rgba(0,0,0,0.35)' }}>kWh used</p>
+                  </div>
+                  <div className="flex-1 bg-white/6 rounded-xl p-3 text-center" style={{ border: '1px solid rgba(0,0,0,0.06)' }}>
+                    <p className="text-sky-500 text-xl font-bold">{calculateKwhRemaining().toFixed(1)}</p>
+                    <p className="text-[9px]" style={{ color: 'rgba(0,0,0,0.35)' }}>kWh left</p>
+                  </div>
+                  <div className="flex-1 bg-white/6 rounded-xl p-3 text-center" style={{ border: '1px solid rgba(0,0,0,0.06)' }}>
+                    <p className="text-sky-500 text-xl font-bold">{usage.totalSessions || 0}</p>
+                    <p className="text-[9px]" style={{ color: 'rgba(0,0,0,0.35)' }}>sessions</p>
+                  </div>
+                </div>
+                
+                <div>
+                  <div className="flex justify-between mb-2">
+                    <span className="text-xs" style={{ color: 'rgba(0,0,0,0.5)' }}>Daily usage</span>
+                    <span className="text-xs" style={{ color: 'rgba(0,0,0,0.5)' }}>{calculateUsagePercent()}% used</span>
+                  </div>
+                  <div className="h-1.5 bg-white/8 rounded-full overflow-hidden">
+                    <div className="h-full bg-sky-500 rounded-full" style={{ width: `${calculateUsagePercent()}%` }}></div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mb-2 bg-white/7 border rounded-2xl p-3" style={{ border: '1px solid rgba(0,0,0,0.08)', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
+                <p className="text-[10px] uppercase tracking-wider mb-1" style={{ color: 'rgba(0,0,0,0.5)' }}>Your device</p>
+                
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-sky-500/15 border border-sky-500/25 flex items-center justify-center">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                      <rect x="5" y="2" width="14" height="20" rx="2" stroke="#0ea5e9" strokeWidth="1.8"/>
+                      <circle cx="12" cy="17" r="1" fill="#0ea5e9"/>
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold" style={{ color: '#000b3d' }}>{userDevices[0]?.deviceName || 'Unknown Device'}</p>
+                    <p className="text-xs" style={{ color: 'rgba(0,0,0,0.4)' }}>Connected via Bluetooth</p>
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-2 mt-3">
+                  <div className="w-7 h-3.5 border rounded-sm relative" style={{ borderColor: 'rgba(0,0,0,0.3)' }}>
+                    <div className="absolute right-[-4px] top-1/2 -translate-y-1/2 w-1 h-1.5 rounded-r" style={{ background: 'rgba(0,0,0,0.3)' }}></div>
+                    <div className="h-full bg-emerald-500 rounded-sm" style={{ width: `${userDevices[0]?.batteryLevel || 0}%` }}></div>
+                  </div>
+                  <span className="text-emerald-500 text-xs font-bold">{userDevices[0]?.batteryLevel || 0}%</span>
+                  {userDevices[0]?.isCharging && (
+                    <span className="ml-auto bg-emerald-500/15 border border-emerald-500/25 rounded-lg px-2 py-1 text-emerald-500 text-xs font-semibold">Charging</span>
+                  )}
+                </div>
+              </div>
+
+              <button
+                className="w-full bg-sky-500 border-none rounded-2xl py-3 text-white text-base font-bold mb-2"
+                onClick={() => navigateTo('stations')}
+              >
+                Start charging session
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="mb-2 bg-amber-500/12 border border-amber-500/25 rounded-2xl p-3 flex items-center gap-3">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 2L2 19h20L12 2z" stroke="#f59e0b" strokeWidth="2" strokeLinejoin="round"/>
+                  <path d="M12 9v4M12 16h.01" stroke="#f59e0b" strokeWidth="2" strokeLinecap="round"/>
+                </svg>
+                <div>
+                  <p className="text-amber-500 text-sm font-bold">No active plan</p>
+                  <p className="text-amber-500/70 text-xs">Subscribe to start charging</p>
+                </div>
+              </div>
+
+              <div className="mb-2">
+                <p className="text-sm font-bold" style={{ color: '#000b3d' }}>Choose a plan</p>
+              </div>
+
+              <div className="mb-2 bg-white/6 rounded-2xl p-3" style={{ border: '1px solid rgba(0,0,0,0.08)', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    <p className="text-base font-bold" style={{ color: '#000b3d' }}>Solar Pro</p>
+                    <span className="bg-sky-500/20 border border-sky-500/40 rounded-md px-2 py-0.5 text-sky-500 text-[9px] font-bold">Most popular</span>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sky-500 text-xl font-bold">₱299</p>
+                    <p className="text-[10px]" style={{ color: 'rgba(0,0,0,0.3)' }}>/ month</p>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1.5 mb-2">
+<div className="flex items-center gap-2 text-xs" style={{ color: 'rgba(0,0,0,0.55)' }}>
+                      <div className="w-3.5 h-3.5 rounded-full bg-sky-500/20 border border-sky-500/40 flex items-center justify-center">
+                        <svg width="8" height="8" viewBox="0 0 10 10">
+                          <path d="M2 5l2.5 2.5L8 3" stroke="#0ea5e9" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+                        </svg>
+                      </div>
+                      8.6 kWh daily limit
+                    </div>
+                    <div className="flex items-center gap-2 text-xs" style={{ color: 'rgba(0,0,0,0.55)' }}>
+                      <div className="w-3.5 h-3.5 rounded-full bg-sky-500/20 border border-sky-500/40 flex items-center justify-center">
+                        <svg width="8" height="8" viewBox="0 0 10 10">
+                          <path d="M2 5l2.5 2.5L8 3" stroke="#0ea5e9" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+                        </svg>
+                      </div>
+                      All station access
+                    </div>
+                    <div className="flex items-center gap-2 text-xs" style={{ color: 'rgba(0,0,0,0.55)' }}>
+                    <div className="w-3.5 h-3.5 rounded-full bg-sky-500/20 border border-sky-500/40 flex items-center justify-center">
+                      <svg width="8" height="8" viewBox="0 0 10 10">
+                        <path d="M2 5l2.5 2.5L8 3" stroke="#0ea5e9" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+                      </svg>
+                    </div>
+                    Usage analytics
+                  </div>
+                </div>
+                <button
+                  className="w-full bg-sky-500 border-none rounded-xl py-3 text-white text-sm font-bold"
+                  onClick={() => navigateTo('subscription')}
+                >
+                  Subscribe now
+                </button>
+              </div>
+
+              <div className="mb-2 bg-white/6 rounded-2xl p-3" style={{ border: '1px solid rgba(0,0,0,0.08)', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}>
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    <p className="text-base font-bold" style={{ color: '#000b3d' }}>Solar Basic</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sky-500 text-xl font-bold">₱149</p>
+                    <p className="text-[10px]" style={{ color: 'rgba(0,0,0,0.3)' }}>/ month</p>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1.5 mb-2">
+                  <div className="flex items-center gap-2 text-xs" style={{ color: 'rgba(0,0,0,0.55)' }}>
+                    <div className="w-3.5 h-3.5 rounded-full bg-sky-500/20 border border-sky-500/40 flex items-center justify-center">
+                      <svg width="8" height="8" viewBox="0 0 10 10">
+                        <path d="M2 5l2.5 2.5L8 3" stroke="#0ea5e9" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+                      </svg>
+                    </div>
+                    4 kWh daily limit
+                  </div>
+                  <div className="flex items-center gap-2 text-xs" style={{ color: 'rgba(0,0,0,0.55)' }}>
+                    <div className="w-3.5 h-3.5 rounded-full bg-sky-500/20 border border-sky-500/40 flex items-center justify-center">
+                      <svg width="8" height="8" viewBox="0 0 10 10">
+                        <path d="M2 5l2.5 2.5L8 3" stroke="#0ea5e9" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
+                      </svg>
+                    </div>
+                    3 station locations
+                  </div>
+                </div>
+                <button
+                  className="w-full bg-transparent border rounded-xl py-3 text-sm font-bold" style={{ borderColor: 'rgba(0,0,0,0.2)', color: 'rgba(0,0,0,0.6)' }}
+                  onClick={() => navigateTo('subscription')}
+                >
+                  Get started
+                </button>
+              </div>
+            </>
+          )}
+
+          <div className="flex justify-between items-center mb-2 mt-4">
+            <p className="text-sm font-bold" style={{ color: '#000b3d' }}>Nearby stations</p>
+            <p className="text-sky-500 text-xs" onClick={() => navigateTo('stations')}>See all</p>
+          </div>
+
+          {loadingStations ? (
+            <div className="text-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-2 border-t-transparent mx-auto mb-2" style={{ borderColor: '#38b6ff', borderTopColor: 'transparent' }}></div>
+              <p className="text-xs" style={{ color: 'rgba(0,0,0,0.4)' }}>Loading stations...</p>
+            </div>
+          ) : stations.length > 0 ? (
+            stations.slice(0, 5).map((station) => (
+              <div
+                key={station.station_id}
+                className="mb-2.5 bg-white/6 rounded-2xl p-3.5 flex items-center gap-3 cursor-pointer" style={{ border: '1px solid rgba(0,0,0,0.08)', boxShadow: '0 2px 12px rgba(0,0,0,0.06)' }}
+                onClick={() => handleStationClick(station)}
+              >
+                <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: getStationAvailabilityColor(station) }}></div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold truncate" style={{ color: '#000b3d' }}>{station.station_name}</p>
+                  <p className="text-xs truncate" style={{ color: 'rgba(0,0,0,0.35)' }}>{station.location_description}</p>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <p className="text-sm font-bold" style={{ color: getStationAvailabilityColor(station) }}>{getStationAvailabilityText(station)}</p>
+                  <p className="text-[9px] mt-0.5" style={{ color: 'rgba(0,0,0,0.3)' }}>{station.distance || '0.0'} km</p>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="text-center py-8">
+              <p className="text-sm" style={{ color: 'rgba(0,0,0,0.4)' }}>No stations available</p>
+            </div>
+          )}
+
+          <div className="h-6"></div>
+        </div>
+      </div>
+
+      {/* DESKTOP LAYOUT (lg: and above) */}
+      <div className="hidden lg:block w-full pt-20 pb-8">
         <section id="hero-features" className="w-full max-w-6xl mx-auto mb-16 relative z-10 animate-fade-in px-4 sm:px-6 lg:px-8">
-          {/* Glass card effect */}
           <div className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-12 sm:py-16 px-6 sm:px-8 lg:px-12" style={{ 
             background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
             boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
           }}>
-            {/* Shimmer effect overlay */}
             <div className="absolute inset-0 opacity-30" style={{
               background: 'linear-gradient(135deg, transparent 0%, rgba(249, 210, 23, 0.1) 50%, transparent 100%)',
               animation: 'shimmer 3s ease-in-out infinite'
             }}></div>
             
             <div className="relative z-10">
-              {/* Welcome Header */}
               <div className="text-center mb-8 animate-fade-in-down">
                 <div className="flex items-center justify-center space-x-3 mb-4">
                   <img 
@@ -517,7 +738,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
               </div>
             {subscription ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full animate-fade-in-up">
-                {/* Left Panel - Current Plan */}
                 <div className="group relative backdrop-blur-xl rounded-3xl p-6 sm:p-8 flex flex-col transform transition-all duration-500 hover:scale-105 hover:-translate-y-2" style={{
                   background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.15) 100%)',
                   border: '1px solid rgba(255, 255, 255, 0.3)',
@@ -528,7 +748,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
                   </h4>
                   <div className="mb-6 text-sm sm:text-base" style={{ color: '#000b3d', opacity: 0.7 }}><strong>Daily Limit:</strong> {subscription.subscription_plans?.daily_mah_limit || subscription.daily_mah_limit || 0} mAh</div>
                   
-                  {/* Usage Analytics - Made more compact */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3 w-full mb-6">
                     <div className="flex flex-col items-center rounded-xl px-3 py-3 backdrop-blur-md" style={{
                       background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.1) 100%)',
@@ -553,7 +772,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
                     </div>
                   </div>
                   
-                  {/* Energy Consumed */}
                   <div className="w-full mb-6">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-sm font-medium" style={{ color: '#000b3d', opacity: 0.8 }}>Energy Consumed (This Month)</span>
@@ -577,7 +795,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
                   </button>
                 </div>
 
-                {/* Right Panel - Device Details */}
                 <div className="group relative backdrop-blur-xl rounded-3xl p-6 sm:p-8 flex flex-col transform transition-all duration-500 hover:scale-105 hover:-translate-y-2" style={{
                   background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.15) 100%)',
                   border: '1px solid rgba(255, 255, 255, 0.3)',
@@ -593,7 +810,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
                           <div className="text-lg sm:text-xl font-semibold mb-1" style={{ color: '#000b3d' }}>{device.deviceName}</div>
                           <div className="text-sm sm:text-base mb-4" style={{ color: '#000b3d', opacity: 0.7 }}>{device.deviceModel}</div>
                           
-                          {/* Device Type Icon */}
                           <div className="flex justify-center mb-4">
                             <span className="text-4xl sm:text-5xl">
                               {device.deviceType === 'phone' ? '📱' : 
@@ -604,7 +820,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
                           </div>
                         </div>
 
-                        {/* Battery Level */}
                         {device.batteryLevel !== null && (
                           <div className="mb-4">
                             <div className="flex items-center justify-center gap-2 p-3 rounded-xl backdrop-blur-md" style={{
@@ -641,7 +856,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
                           </div>
                         )}
 
-                        {/* Charging Status */}
                         <div className="mt-auto">
                           <div className="flex items-center justify-center gap-2 p-3 rounded-xl backdrop-blur-md" style={{
                             background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.1) 100%)',
@@ -702,7 +916,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
           </div>
         </section>
 
-        {/* Available Stations Section */}
         <section id="stations" className="w-full max-w-6xl mx-auto mb-16 relative z-10 animate-fade-in delay-400 px-4 sm:px-6 lg:px-8">
           <div className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-12 sm:py-16 px-6 sm:px-8 lg:px-12" style={{
             background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
@@ -744,7 +957,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
                       </p>
                     </div>
 
-                    {/* Conditional rendering for subscribed users */}
                     {subscription && (
                       <>
                         <div className="space-y-3 mt-6">
@@ -804,7 +1016,6 @@ const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
           </div>
         </section>
 
-        {/* Footer */}
         <footer className="w-full max-w-6xl mx-auto mb-16 relative z-10 animate-fade-in delay-600 px-4 sm:px-6 lg:px-8">
           <div className="relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden text-center py-10 sm:py-12 px-6 sm:px-8 lg:px-12" style={{
             background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.3) 0%, rgba(255, 255, 255, 0.15) 100%)',
