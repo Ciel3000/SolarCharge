@@ -4,7 +4,6 @@ import { useAuth } from '../contexts/AuthContext';
 import { openGoogleMaps } from '../utils/mapUtils';
 import { filterActivePlans } from '../utils/planUtils';
 import { useIntervalWithVisibility } from '../utils/usePageVisibility';
-import NotificationBell from '../components/NotificationBell';
 
 
 function HomePage({ navigateTo, message, stations: propStations, loadingStations: propLoadingStations }) {
@@ -316,21 +315,21 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
       const deviceInfo = detectDeviceInfo();
       console.log('Detected device info:', deviceInfo);
       
-      getChargingStatus().then(chargingInfo => {
-        console.log('Charging info:', chargingInfo);
-        
-        const device = {
-          ...deviceInfo,
-          isCharging: chargingInfo?.charging || false,
-          batteryLevel: chargingInfo?.batteryLevel
-        };
-        
-        console.log('Final device object:', device);
-        setUserDevices([device]);
-        
-        saveDeviceToDatabase(device);
-      });
-    }
+        getChargingStatus().then(chargingInfo => {
+          console.log('Charging info:', chargingInfo);
+          
+          const device = {
+            ...deviceInfo,
+            isCharging: chargingInfo?.charging || false,
+            batteryLevel: chargingInfo?.batteryLevel
+          };
+          
+          console.log('Final device object:', device);
+          setUserDevices([device]);
+          
+          saveDeviceToDatabase(device);
+        });
+      }
   }, [subscription, session]);
 
   const saveDeviceToDatabase = async (device) => {
@@ -479,7 +478,6 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
               <p className="text-xs" style={{ color: 'rgba(0,0,0,0.4)' }}>{getGreeting()}</p>
               <p className="text-lg font-bold" style={{ color: '#000b3d' }}>{user?.name || user?.email?.split('@')[0] || 'Welcome'}</p>
             </div>
-            <NotificationBell />
           </div>
 
           {subscription ? (
@@ -589,7 +587,7 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
                   </div>
                 </div>
                 <div className="flex flex-col gap-1.5 mb-2">
-<div className="flex items-center gap-2 text-xs" style={{ color: 'rgba(0,0,0,0.55)' }}>
+                    <div className="flex items-center gap-2 text-xs" style={{ color: 'rgba(0,0,0,0.55)' }}>
                       <div className="w-3.5 h-3.5 rounded-full bg-sky-500/20 border border-sky-500/40 flex items-center justify-center">
                         <svg width="8" height="8" viewBox="0 0 10 10">
                           <path d="M2 5l2.5 2.5L8 3" stroke="#0ea5e9" strokeWidth="1.5" strokeLinecap="round" fill="none"/>
@@ -1032,5 +1030,4 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
     </div>
   );
 }
-
 export default HomePage;

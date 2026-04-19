@@ -299,7 +299,7 @@ function AppContent() {
       )}
 
       {/* Add top padding to content if navigation is shown, bottom padding for mobile bottom nav */}
-      <div className={showNavigation ? "pt-16 pb-20 md:pb-0" : ""}>
+      <div className={showNavigation ? "pt-16 pb-0 md:pb-0" : ""}>
         <PageVisibilityDebug />
         <Routes>
           {/* Default routes: Redirects handled by useEffect above for '/' */}
