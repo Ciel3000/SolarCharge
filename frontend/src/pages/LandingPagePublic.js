@@ -302,13 +302,24 @@ function LandingPage({ stations, loading, navigateTo }) {
           </button>
         </div>
 
-        {/* Scroll down indicator */}
-        <div className="flex-auto flex flex-col items-center gap-1 animate-bounce">
-          <span className="text-[10px] text-white/40">Scroll down</span>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-white/40">
-            <path d="M12 5v14M5 12l7 7 7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-        </div>
+        {/* Scroll down indicator - stacking arrow heads */}
+        <button 
+          onClick={() => document.getElementById('stations')?.scrollIntoView({ behavior: 'smooth' })}
+          className="absolute bottom-20 left-1/2 -translate-x-1/2 flex flex-col items-center gap-0.5 cursor-pointer active:scale-95 transition-transform"
+        >
+          <span className="text-[9px] font-medium tracking-widest text-white/50 uppercase">Scroll</span>
+          <div className="flex flex-col items-center">
+            <svg width="12" height="8" viewBox="0 0 12 8" className="text-white/80">
+              <path d="M1 1l5 5 5-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            <svg width="12" height="8" viewBox="0 0 12 8" className="text-white/50 -mt-0.5">
+              <path d="M1 1l5 5 5-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+            <svg width="12" height="8" viewBox="0 0 12 8" className="text-white/25 -mt-0.5">
+              <path d="M1 1l5 5 5-5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
+        </button>
       </section>
 
       {/* =============================================================================
