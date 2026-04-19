@@ -126,7 +126,8 @@ function Navigation({ navigateTo, handleSignOut }) {
         ...(isOnLandingPage && isMobileNav ? {
           background: 'linear-gradient(160deg, #0f172a 0%, #1e293b 100%)',
           borderBottom: '1px solid rgba(255,255,255,0.06)',
-          boxShadow: 'none'
+          boxShadow: 'none',
+          
         } : {
           // Desktop/other pages: glassmorphism light
           background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',

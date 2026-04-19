@@ -237,46 +237,51 @@ function LandingPage({ stations, loading, navigateTo }) {
   // =============================================================================
 
   return (
-    <div className="min-h-dvh flex flex-col p-0 mb-0 " style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
+    <div className="min-h-dvh flex flex-col pt-10 mb-0 " style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
 
       {/* =============================================================================
          SECTION: MOBILE HERO (Dark background)
          Contains: Logo badge, Title, Subtitle, CTA buttons
       ============================================================================= */}
       {/* Mobile Hero Section - Full width dark */}
-      <section id="hero" className="md:hidden relative overflow-hidden px-4 pt-5 pb-8"
+      <section id="hero" className="md:hidden relative overflow-hidden px-4 pt-12 pb-8 min-h-screen flex flex-col justify-between"
         style={{ background: 'linear-gradient(160deg, #0f172a 0%, #1e293b 100%)' }}>
-        {/* Decorative orbs */}
-        <div className="absolute top-[-60px] right-[-60px] w-40 h-40 rounded-full blur-[40px] pointer-events-none"
-          style={{ background: 'rgba(56,182,255,0.15)' }}></div>
-        <div className="absolute bottom-[-40px] left-[-40px] w-36 h-36 rounded-full blur-[40px] pointer-events-none"
-          style={{ background: 'rgba(249,210,23,0.08)' }}></div>
+        
+        <div className="flex-none flex flex-col"> 
+          {/* Decorative orbs */}
+          <div className="absolute top-[-60px] right-[-60px] w-40 h-40 rounded-full blur-[40px] pointer-events-none"
+            style={{ background: 'rgba(56,182,255,0.15)' }}></div>
+          <div className="absolute bottom-[-40px] left-[-40px] w-36 h-36 rounded-full blur-[40px] pointer-events-none"
+            style={{ background: 'rgba(249,210,23,0.08)' }}></div>
 
-        {/* Badge */}
-        <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full mb-3"
-          style={{
-            background: 'rgba(56,182,255,0.12)',
-            border: '1px solid rgba(56,182,255,0.25)'
-          }}>
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none">
-            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" fill="#38b6ff"/>
-          </svg>
-          <span className="text-[10px] font-bold" style={{ color: '#38b6ff' }}>
-            Powered by Solar Energy
-          </span>
+          {/* Badge */}
+          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full mb-3"
+            style={{
+              background: 'rgba(56,182,255,0.12)',
+              border: '1px solid rgba(56,182,255,0.25)'
+            }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none">
+              <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" fill="#38b6ff"/>
+            </svg>
+            <span className="text-[10px] font-bold" style={{ color: '#38b6ff' }}>
+              Powered by Solar Energy
+            </span>
+          </div>
+
+          {/* Title */}
+          <h1 className="text-4xl sm:text-5xl font-black text-white leading-tight mb-2">
+            Solar<span style={{ color: '#38b6ff' }}>Charge</span><br />
+            Powering Your<br />World.
+          </h1>
+          
+          {/* Subtitle */}
+          <p className="text-xs text-white/50 leading-relaxed mb-5 max-w-xs">
+            Clean, smart, solar-powered charging stations across Iloilo City. Charge your devices sustainably.
+          </p>
         </div>
 
-        {/* Title */}
-        <h1 className="text-4xl sm:text-5xl font-black text-white leading-tight mb-2">
-          Solar<span style={{ color: '#38b6ff' }}>Charge</span><br />
-          Powering Your<br />World.
-        </h1>
-
-        <p className="text-xs text-white/50 leading-relaxed mb-5 max-w-xs">
-          Clean, smart, solar-powered charging stations across Iloilo City. Charge your devices sustainably.
-        </p>
-
-        <div className="flex flex-col gap-2">
+      {/* Buttons */}
+        <div className="flex-auto flex flex-col gap-2">
           <button
             onClick={() => navigateTo('signup')}
             className="w-full py-3.5 rounded-2xl text-white text-sm font-bold"
@@ -295,6 +300,14 @@ function LandingPage({ stations, loading, navigateTo }) {
           >
             Log in to charge
           </button>
+        </div>
+
+        {/* Scroll down indicator */}
+        <div className="flex-auto flex flex-col items-center gap-1 animate-bounce">
+          <span className="text-[10px] text-white/40">Scroll down</span>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-white/40">
+            <path d="M12 5v14M5 12l7 7 7-7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
         </div>
       </section>
 
@@ -1001,7 +1014,7 @@ function LandingPage({ stations, loading, navigateTo }) {
          Contains: Tab bar with 4 icons (Home, Stations, Features, Join)
       ============================================================================= */}
       {/* Public Bottom Navigation - Mobile Only */}
-      <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden pb-[env(safe-area-inset-bottom)]">
+      {/* <nav className="fixed bottom-0 left-0 right-0 z-50 md:hidden pb-[env(safe-area-inset-bottom)]">
         <div className="mx-2.5 mb-3 flex items-center justify-around h-14 rounded-[22px]"
           style={{
             background: 'rgba(15,23,42,0.92)',
@@ -1048,10 +1061,10 @@ function LandingPage({ stations, loading, navigateTo }) {
               </span>
             </button>
           ))}
-        </div>
+        </div> */}
         {/* Home indicator placeholder */}
-        <div className="home-ind" style={{ width: '100px', height: '4px', background: 'rgba(255,255,255,0.2)', borderRadius: '3px', margin: '4px auto 8px' }}></div>
-      </nav>
+        {/* <div className="home-ind" style={{ width: '100px', height: '4px', background: 'rgba(255,255,255,0.2)', borderRadius: '3px', margin: '4px auto 8px' }}></div>
+      </nav> */}
 
       
     </div>

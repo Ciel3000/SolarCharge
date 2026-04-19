@@ -1,15 +1,26 @@
-// frontend/src/App.js
-// This is the main application component, handling routing and global state.
+// ============================================================
+// SolarCharge Main Application
+// This file handles routing, authentication, and global state
+// ============================================================
 
+// React and Router imports
 import React, { useState, useEffect, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+
+// Context providers for authentication and notifications
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { NotificationProvider } from './contexts/NotificationContext';
+
+// Global components for error handling and debugging
 import ErrorBoundary from './components/ErrorBoundary';
 import PageVisibilityDebug from './components/PageVisibilityDebug';
 import SessionStatusIndicator from './components/SessionStatusIndicator';
 
-// Import the new page components
+// Navigation components
+import Navigation from './components/Navigation';
+import BottomNavigation from './components/BottomNavigation';
+
+// Public and user pages
 import HomePage from './pages/HomePage';
 import LandingPage from './pages/LandingPagePublic';
 import LoginPage from './pages/LoginPage';
@@ -21,10 +32,8 @@ import UsagePage from './pages/UsagePage';
 import StationPage from './pages/StationPage';
 import StationsPage from './pages/StationsPage';
 import UserProfilePage from './pages/UserProfilePage';
-import Navigation from './components/Navigation';
-import BottomNavigation from './components/BottomNavigation';
 
-// Import admin pages
+// Admin pages
 import AdminDashboard from './pages/AdminDashboard';
 import AdminLogs from './pages/AdminLogs';
 import AdminPlans from './pages/AdminPlans';
@@ -35,70 +44,90 @@ import AdminSystemStatus from './pages/AdminSystemStatus';
 import AdminUsers from './pages/AdminUsers';
 import AdminQuotaPricing from './pages/AdminQuotaPricing';
 
-// ---
-// AppContent component to house routing logic and context consumers
+
+// ============================================================
+// AppContent Component
+// Handles all routing logic, navigation, and user interactions
+// ============================================================
+
 function AppContent() {
-  const { session, isAdmin, isLoading, signOut, subscription, error, clearError, recoverSession, isRecovering } = useAuth();
+  // Get authentication info from AuthContext
+  const {
+    session,
+    isAdmin,
+    isLoading,
+    signOut,
+    subscription,
+    error,
+    clearError,
+    recoverSession,
+    isRecovering
+  } = useAuth();
+
+  // Router hooks for navigation
   const navigate = useNavigate();
   const location = useLocation();
 
+  // State for station data
   const [stations, setStations] = useState([]);
   const [loadingStations, setLoadingStations] = useState(true);
   const [stationsInitialized, setStationsInitialized] = useState(false);
   const [stationData, setStationData] = useState(null);
+
+  // State for messages and loading timeout
   const [globalMessage, setGlobalMessage] = useState('');
   const [loadingTimeout, setLoadingTimeout] = useState(false);
 
-  // Effect to handle loading timeout
+  // ---- Effect: Show loading timeout message after 5 seconds ----
   useEffect(() => {
     if (isLoading) {
       const timer = setTimeout(() => {
         setLoadingTimeout(true);
-      }, 5000); // Increased to 5 seconds
-      
+      }, 5000);
+
       return () => clearTimeout(timer);
     } else {
       setLoadingTimeout(false);
     }
   }, [isLoading]);
 
-  // Effect to handle navigation based on auth state changes
+  // ---- Effect: Handle navigation based on login status ----
   useEffect(() => {
+    // Skip navigation while loading or recovering session
     if (isLoading || isRecovering) {
-      // Still loading auth state or recovering, don't navigate yet
       return;
     }
 
     const currentPath = location.pathname;
 
-    // Redirect logic for different scenarios
+    // If user is logged in
     if (session) {
-      // User is logged in
       if (isAdmin) {
-        // Admin user redirects
+        // Admin users go to dashboard
         if (['/login', '/signup', '/landing', '/', '/home'].includes(currentPath)) {
           navigate('/admin/dashboard', { replace: true });
         }
       } else {
-        // Regular user redirects  
+        // Regular users go to home page
         if (['/login', '/signup', '/landing', '/'].includes(currentPath)) {
           navigate('/home', { replace: true });
         }
       }
     } else {
-      // User is not logged in
+      // Unauthenticated users go to landing page
       if (currentPath === '/') {
         navigate('/landing', { replace: true });
       }
     }
   }, [session, isAdmin, isLoading, isRecovering, location.pathname, navigate]);
 
-  // Effect to fetch public station data
+  // ---- Effect: Fetch public station data from database ----
   useEffect(() => {
     async function fetchStations() {
       try {
         setLoadingStations(true);
         setStationsInitialized(true);
+
         const { supabase } = await import('./supabaseClient');
         const { data, error } = await supabase
           .from('public_station_view')
@@ -107,6 +136,7 @@ function AppContent() {
         if (error) {
           throw error;
         }
+
         setStations(data);
       } catch (error) {
         console.error('Error fetching stations:', error.message);
@@ -116,7 +146,7 @@ function AppContent() {
       }
     }
 
-    // Only fetch stations if we haven't already initialized them
+    // Only fetch if not yet loaded
     if (!stationsInitialized && stations.length === 0) {
       fetchStations();
     } else if (stations.length > 0) {
@@ -127,10 +157,11 @@ function AppContent() {
     }
   }, [stationsInitialized, stations.length]);
 
-  // Custom navigate function using React Router's navigate
+  // ---- Function: Navigate to different pages ----
   const navigateTo = useCallback((path, params) => {
     setGlobalMessage('');
 
+    // Navigate to station detail page
     if (path === 'station' && params && params.station) {
       setStationData(params.station);
       navigate(`/station?stationId=${params.station.station_id}`, {
@@ -140,11 +171,16 @@ function AppContent() {
           ...params.state
         }
       });
-    } else if (path === 'login' && session) {
+    }
+    // Already logged in, redirect to home or admin
+    else if (path === 'login' && session) {
       navigate(isAdmin ? '/admin/dashboard' : '/home');
-    } else if (path === 'signup' && session) {
+    }
+    else if (path === 'signup' && session) {
       navigate(isAdmin ? '/admin/dashboard' : '/home');
-    } else if (path === 'login' && params?.reason) {
+    }
+    // Navigate to login with reason message
+    else if (path === 'login' && params?.reason) {
       navigate('/login', {
         state: {
           from: params.from || location.pathname,
@@ -152,7 +188,9 @@ function AppContent() {
           message: params.message
         }
       });
-    } else if (path === 'signup' && params?.email) {
+    }
+    // Navigate to signup with user details
+    else if (path === 'signup' && params?.email) {
       navigate('/signup', {
         state: {
           email: params.email,
@@ -162,7 +200,9 @@ function AppContent() {
           message: params.message
         }
       });
-    } else if (path === 'subscription' && params?.action) {
+    }
+    // Navigate to subscription page
+    else if (path === 'subscription' && params?.action) {
       navigate('/subscription', {
         state: {
           from: location.pathname,
@@ -171,7 +211,9 @@ function AppContent() {
           action: params.action
         }
       });
-    } else {
+    }
+    // Default navigation
+    else {
       const targetPath = path.startsWith('/') ? path : `/${path}`;
       navigate(targetPath, {
         state: params?.state || {}
@@ -179,29 +221,33 @@ function AppContent() {
     }
   }, [navigate, session, isAdmin, location.pathname]);
 
+  // ---- Function: Handle user sign out ----
   const handleSignOut = async () => {
     console.log('handleSignOut called!');
     setGlobalMessage('');
+
     try {
       console.log('Calling signOut...');
-      
+
       const signOutPromise = signOut();
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Sign out timeout')), 5000) // Increased timeout
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Sign out timeout')), 5000)
       );
-      
+
       const { error } = await Promise.race([signOutPromise, timeoutPromise]);
       console.log('signOut result:', { error });
-      
+
       if (error) {
         throw error;
       }
+
       console.log('Sign out successful, navigating to landing...');
       setGlobalMessage('Signed out successfully!');
       navigate('/landing');
     } catch (error) {
       console.error('Sign out error:', error);
-      
+
+      // Handle timeout - clear storage and redirect
       if (error.message === 'Sign out timeout') {
         console.log('Sign out timed out, forcing manual logout...');
         localStorage.clear();
@@ -209,18 +255,34 @@ function AppContent() {
         window.location.href = '/landing';
         return;
       }
-      
+
       setGlobalMessage(`Sign out error: ${error.message}`);
     }
   };
 
-  // Determine if Navigation component should be shown
-  //const showNavigation = !['/login', '/signup', '/landing'].includes(location.pathname);
-  const showNavigation = true;
-  const showAdminNavigation = showNavigation && isAdmin;
-  const showUserNavigation = showNavigation && !isAdmin;
+  // Determine which navigation to show based on current route and user type
+  const currentPath = location.pathname;
 
-  // Show error message if there's an auth error
+  // Show header navigation on landing or any protected page (not on auth pages)
+  const showHeaderNav = currentPath !== '/login' && 
+                        currentPath !== '/signup' && 
+                        currentPath !== '/forgot-password' && 
+                        currentPath !== '/reset-password';
+
+  // Show bottom navigation only on logged-in user protected pages (not landing, not admin)
+  const showBottomNav = session && !isAdmin && 
+    currentPath !== '/landing' && 
+    currentPath !== '/login' &&
+    currentPath !== '/signup' &&
+    currentPath !== '/forgot-password' &&
+    currentPath !== '/reset-password';
+
+  // Navigation visibility flags
+  const showPublicNavigation = currentPath === '/landing';
+  const showAdminNavigation = showHeaderNav && isAdmin;
+  const showUserNavigation = showHeaderNav && !isAdmin;
+
+  // ---- Render: Show error screen if auth error exists ----
   if (error) {
     return (
       <div className="min-h-screen flex items-center justify-center relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
@@ -239,7 +301,7 @@ function AppContent() {
           <p className="mb-6" style={{ color: '#000b3d', opacity: 0.7 }}>
             {error}
           </p>
-          
+
           <div className="space-y-3">
             <button
               onClick={() => {
@@ -256,7 +318,7 @@ function AppContent() {
             >
               {isRecovering ? '🔄 Recovering...' : '🔄 Retry'}
             </button>
-            
+
             <button
               onClick={() => {
                 clearError();
@@ -278,31 +340,34 @@ function AppContent() {
     );
   }
 
-  // Render content based on React Router's active route
+  // ---- Main Render: Application content and routing ----
   return (
     <>
-      {/* Display global message at the top, if any */}
+      {/* Global message bar */}
       {globalMessage && (
         <div className="fixed top-0 left-0 right-0 p-4 bg-yellow-100 text-yellow-800 border-b border-yellow-300 text-center z-50">
           {globalMessage}
         </div>
       )}
 
-      {/* Session Status Indicator */}
+      {/* Session status indicator */}
       <SessionStatusIndicator />
-      
-      {showNavigation && (
+
+      {/* Top navigation bar - show on landing, admin or user pages */}
+      {showHeaderNav && (
         <Navigation
           navigateTo={navigateTo}
           handleSignOut={handleSignOut}
+          isAdmin={isAdmin}
         />
       )}
 
-      {/* Add top padding to content if navigation is shown, bottom padding for mobile bottom nav */}
-      <div className={showNavigation ? "pt-16 pb-0 md:pb-0" : ""}>
+      {/* Main content area with padding for navigation */}
+      <div className={showHeaderNav ? "pt-0 pb-0 md:pb-0" : ""}>
         <PageVisibilityDebug />
+
         <Routes>
-          {/* Default routes: Redirects handled by useEffect above for '/' */}
+          {/* ---- Loading Screen ---- */}
           <Route path="/" element={
             isLoading || isRecovering ? (
               <div className="min-h-screen flex items-center justify-center relative overflow-hidden" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
@@ -324,7 +389,8 @@ function AppContent() {
                     <p className="text-sm mb-4" style={{ color: '#000b3d', opacity: 0.7 }}>
                       {isRecovering ? 'Recovering your session...' : 'Checking your session...'}
                     </p>
-                    
+
+                    {/* Extended loading timeout options */}
                     {loadingTimeout && (
                       <div className="mt-4 p-4 rounded-xl backdrop-blur-md text-center w-full" style={{
                         background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.2) 0%, rgba(249, 210, 23, 0.1) 100%)',
@@ -368,6 +434,7 @@ function AppContent() {
             ) : null
           } />
 
+          {/* ---- Public Routes ---- */}
           <Route
             path="/landing"
             element={<LandingPage stations={stations} loading={loadingStations} navigateTo={navigateTo} />}
@@ -393,7 +460,7 @@ function AppContent() {
             element={<ResetPasswordPage navigateTo={navigateTo} />}
           />
 
-          {/* User Protected Routes */}
+          {/* ---- User Protected Routes ---- */}
           <Route
             path="/home"
             element={
@@ -412,6 +479,7 @@ function AppContent() {
               )
             }
           />
+
           <Route
             path="/subscription"
             element={
@@ -424,6 +492,7 @@ function AppContent() {
               )
             }
           />
+
           <Route
             path="/usage"
             element={
@@ -436,6 +505,7 @@ function AppContent() {
               )
             }
           />
+
           <Route
             path="/station"
             element={
@@ -448,6 +518,7 @@ function AppContent() {
               )
             }
           />
+
           <Route
             path="/stations"
             element={
@@ -460,6 +531,7 @@ function AppContent() {
               )
             }
           />
+
           <Route
             path="/profile"
             element={
@@ -473,7 +545,7 @@ function AppContent() {
             }
           />
 
-          {/* Admin Protected Routes - Check isLoading first to prevent "Access Denied" during auth init */}
+          {/* ---- Admin Protected Routes ---- */}
           <Route path="/admin/dashboard" element={
             isLoading || isRecovering ? (
               <div className="min-h-screen flex items-center justify-center">
@@ -483,6 +555,7 @@ function AppContent() {
             !isAdmin ? <HomePage navigateTo={navigateTo} message={'Access Denied: You do not have administrator privileges.'} stations={stations} loadingStations={loadingStations} /> :
             <AdminDashboard navigateTo={navigateTo} handleSignOut={handleSignOut} />
           } />
+
           <Route path="/admin/logs" element={
             isLoading || isRecovering ? (
               <div className="min-h-screen flex items-center justify-center">
@@ -492,6 +565,7 @@ function AppContent() {
             !isAdmin ? <HomePage navigateTo={navigateTo} message={'Access Denied: You do not have administrator privileges.'} stations={stations} loadingStations={loadingStations} /> :
             <AdminLogs navigateTo={navigateTo} handleSignOut={handleSignOut} />
           } />
+
           <Route path="/admin/plans" element={
             isLoading || isRecovering ? (
               <div className="min-h-screen flex items-center justify-center">
@@ -501,6 +575,7 @@ function AppContent() {
             !isAdmin ? <HomePage navigateTo={navigateTo} message={'Access Denied: You do not have administrator privileges.'} stations={stations} loadingStations={loadingStations} /> :
             <AdminPlans navigateTo={navigateTo} handleSignOut={handleSignOut} />
           } />
+
           <Route path="/admin/revenue" element={
             isLoading || isRecovering ? (
               <div className="min-h-screen flex items-center justify-center">
@@ -510,6 +585,7 @@ function AppContent() {
             !isAdmin ? <HomePage navigateTo={navigateTo} message={'Access Denied: You do not have administrator privileges.'} stations={stations} loadingStations={loadingStations} /> :
             <AdminRevenue navigateTo={navigateTo} handleSignOut={handleSignOut} />
           } />
+
           <Route path="/admin/sessions" element={
             isLoading || isRecovering ? (
               <div className="min-h-screen flex items-center justify-center">
@@ -519,6 +595,7 @@ function AppContent() {
             !isAdmin ? <HomePage navigateTo={navigateTo} message={'Access Denied: You do not have administrator privileges.'} stations={stations} loadingStations={loadingStations} /> :
             <AdminSessions navigateTo={navigateTo} handleSignOut={handleSignOut} />
           } />
+
           <Route path="/admin/stations" element={
             isLoading || isRecovering ? (
               <div className="min-h-screen flex items-center justify-center">
@@ -528,6 +605,7 @@ function AppContent() {
             !isAdmin ? <HomePage navigateTo={navigateTo} message={'Access Denied: You do not have administrator privileges.'} stations={stations} loadingStations={loadingStations} /> :
             <AdminStations navigateTo={navigateTo} handleSignOut={handleSignOut} />
           } />
+
           <Route path="/admin/system-status" element={
             isLoading || isRecovering ? (
               <div className="min-h-screen flex items-center justify-center">
@@ -537,6 +615,7 @@ function AppContent() {
             !isAdmin ? <HomePage navigateTo={navigateTo} message={'Access Denied: You do not have administrator privileges.'} stations={stations} loadingStations={loadingStations} /> :
             <AdminSystemStatus navigateTo={navigateTo} handleSignOut={handleSignOut} />
           } />
+
           <Route path="/admin/users" element={
             isLoading || isRecovering ? (
               <div className="min-h-screen flex items-center justify-center">
@@ -546,6 +625,7 @@ function AppContent() {
             !isAdmin ? <HomePage navigateTo={navigateTo} message={'Access Denied: You do not have administrator privileges.'} stations={stations} loadingStations={loadingStations} /> :
             <AdminUsers navigateTo={navigateTo} handleSignOut={handleSignOut} />
           } />
+
           <Route path="/admin/quota-pricing" element={
             isLoading || isRecovering ? (
               <div className="min-h-screen flex items-center justify-center">
@@ -556,7 +636,7 @@ function AppContent() {
             <AdminQuotaPricing />
           } />
 
-          {/* Catch-all for undefined routes */}
+          {/* ---- 404 Not Found Route ---- */}
           <Route path="*" element={
             <div className="min-h-screen flex items-center justify-center bg-gray-100">
               <div className="text-center">
@@ -572,14 +652,20 @@ function AppContent() {
             </div>
           } />
         </Routes>
-        {showNavigation && !isAdmin && <BottomNavigation />}
+
+        {/* Bottom navigation - only for logged-in non-admin users */}
+        {showBottomNav && <BottomNavigation />}
       </div>
     </>
   );
 }
 
-// ---
-// App component to provide AuthProvider and Router context
+
+// ============================================================
+// App Component
+// Provides context providers and router
+// ============================================================
+
 function App() {
   return (
     <ErrorBoundary>
