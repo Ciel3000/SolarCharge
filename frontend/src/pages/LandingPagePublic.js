@@ -200,11 +200,6 @@ function LandingPage({ stations, loading, navigateTo }) {
 
   // Render station card for mobile list
   const renderMobileStationCard = (station) => {
-    const availablePorts = station.available_ports || 0;
-    let availableColor = '#10b981';
-    if (availablePorts === 0) availableColor = '#ef4444';
-    else if (availablePorts === 1) availableColor = '#f59e0b';
-
     return (
       <a
         key={station.station_id}
@@ -218,17 +213,11 @@ function LandingPage({ stations, loading, navigateTo }) {
           boxShadow: '0 2px 8px rgba(0,0,0,0.04)'
         }}
       >
-        <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: availableColor }} />
         <div className="flex-1 min-w-0">
           <p className="text-xs font-bold text-gray-800 truncate">{station.station_name}</p>
           <p className="text-[10px] text-gray-500 mt-0.5 truncate">{station.location_description}</p>
         </div>
-        <div className="text-right flex-shrink-0">
-          <p className="text-xs font-bold" style={{ color: availableColor }}>
-            {availablePorts > 0 ? `${availablePorts} open` : 'Full'}
-          </p>
-        </div>
-      </a>
+        </a>
     );
   };
 
