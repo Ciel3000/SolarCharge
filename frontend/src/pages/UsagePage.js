@@ -383,7 +383,7 @@ function UsagePage() {
     return (
         <div className="min-h-dvh flex flex-col justify-start text-gray-800" style={{ background: '#f1f3e0' }}>
             {/* MOBILE LAYOUT (< lg:) */}
-            <div className="lg:hidden">
+            <div className="lg:hidden pt-16">
                 {/* Page Header */}
                 <div className="flex justify-between items-start px-4 pt-3 pb-3">
                     <div>

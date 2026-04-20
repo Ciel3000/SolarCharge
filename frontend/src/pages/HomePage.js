@@ -471,7 +471,7 @@ function HomePage({ navigateTo, message, stations: propStations, loadingStations
       )}
 
       {/* MOBILE LAYOUT (< lg:) */}
-      <div className="w-full pt-2 pb-24 lg:hidden">
+      <div className="w-full pt-16 pb-24 lg:hidden">
         <div className="px-4">
           <div className="flex justify-between items-center py-1">
             <div>

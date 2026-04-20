@@ -43,6 +43,9 @@ function SubscriptionPage() {
     const [selectedPlanForPayment, setSelectedPlanForPayment] = useState(null);
     const [showPayPal, setShowPayPal] = useState(false);
     const [createdOrderId, setCreatedOrderId] = useState(null);
+    const [showConfirmation, setShowConfirmation] = useState(false);
+    const [purchaseReceipt, setPurchaseReceipt] = useState(null);
+    const [selectedHistoryItem, setSelectedHistoryItem] = useState(null);
     const paypalSectionRef = useRef(null);
     
     // New state for subscription history
@@ -246,12 +249,17 @@ function SubscriptionPage() {
         }
 
         console.log('Payment captured successfully:', result);
-        setFeedback('Payment successful! Your subscription has been activated.');
+        setPurchaseReceipt({
+            plan_name: selectedPlanForPayment?.plan_name,
+            price: selectedPlanForPayment?.price,
+            daily_mah_limit: selectedPlanForPayment?.daily_mah_limit,
+            duration_type: selectedPlanForPayment?.duration_type,
+            duration_value: selectedPlanForPayment?.duration_value,
+            transaction_id: orderId,
+            purchase_date: new Date().toISOString()
+        });
         setShowPayPal(false);
-        setSelectedPlanForPayment(null);
-        setCreatedOrderId(null);
-        
-        window.location.reload();
+        setShowConfirmation(true);
         
     } catch (error) {
         console.error('PayPal capture error:', error);
@@ -259,7 +267,7 @@ function SubscriptionPage() {
     } finally {
         setPaypalLoading(false);
     }
-    }, [session]);
+    }, [session, selectedPlanForPayment]);
 
     const onPayPalError = useCallback((err) => {
         console.error('PayPal error:', err);
@@ -333,7 +341,7 @@ function SubscriptionPage() {
 return (
         <div className="min-h-dvh flex flex-col justify-start text-gray-800 relative" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
             {/* MOBILE LAYOUT (< lg:) */}
-            <div className="lg:hidden">
+            <div className="lg:hidden pt-16">
                 {/* Page Header */}
                 <div className="flex justify-between items-center px-4 pt-3 pb-2">
                     <div>
@@ -399,7 +407,7 @@ return (
                 {/* Tab Navigation - Mobile */}
                 <div className="mx-4 mb-3 flex rounded-xl bg-white/60 border border-white/80 overflow-hidden">
                     <button onClick={() => setActiveTab('current')} className={`flex-1 py-2 text-xs font-bold transition-all ${activeTab === 'current' ? 'bg-[#38b6ff] text-white' : 'text-gray-500'}`}>
-                        {activeSubscriptions && activeSubscriptions.length > 0 ? 'Your Plans' : 'Plans'}
+                        {activeSubscriptions && activeSubscriptions.length > 0 ? 'Your Plans' : 'Explore Plans'}
                     </button>
                     <button onClick={() => setActiveTab('history')} className={`flex-1 py-2 text-xs font-bold transition-all ${activeTab === 'history' ? 'bg-[#38b6ff] text-white' : 'text-gray-500'}`}>
                         History
@@ -410,9 +418,17 @@ return (
                 {activeTab === 'current' && (
                     <div className="px-4 pb-24">
                         {availablePlans.length > 0 ? (
-                            <div className="space-y-3">
-                                {availablePlans.map((plan) => (
-                                    <div key={plan.plan_id} className="rounded-2xl p-4" style={{ background: 'rgba(255,255,255,0.65)', border: '1px solid rgba(255,255,255,0.9)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
+                            <div className="grid grid-cols-2 gap-3">
+                                {availablePlans.map((plan) => {
+                                    const isOwned = activeSubscriptions?.some(active => active.plan_id === plan.plan_id);
+                                    return (
+                                    <div key={plan.plan_id} className="rounded-2xl p-4" style={{ 
+                                        background: isOwned 
+                                            ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.25) 0%, rgba(16, 185, 129, 0.1) 100%)'
+                                            : 'rgba(255,255,255,0.65)', 
+                                        border: isOwned ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(255,255,255,0.9)', 
+                                        boxShadow: '0 2px 8px rgba(0,0,0,0.04)' 
+                                    }}>
                                         <div className="flex justify-between items-start mb-2">
                                             <div>
                                                 <div className="text-base font-bold" style={{ color: '#1e293b' }}>{plan.plan_name}</div>
@@ -424,13 +440,10 @@ return (
                                             </div>
                                         </div>
                                         <div className="text-xs mb-3" style={{ color: '#64748b' }}>Daily Limit: {plan.daily_mah_limit} mAh</div>
-                                        {subscription?.plan_id === plan.plan_id ? (
-                                            <div className="py-2 rounded-xl text-center text-xs font-bold" style={{ background: 'rgba(16,185,129,0.15)', color: '#059669' }}>Current Plan</div>
-                                        ) : (
-                                            <button onClick={() => handleSelectPlan(plan)} className="w-full py-2 rounded-xl text-xs font-bold text-white" style={{ background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)' }}>Subscribe</button>
-                                        )}
+                                        <button onClick={() => handleSelectPlan(plan)} className="w-full py-2 rounded-xl text-xs font-bold text-white" style={{ background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)' }}>Subscribe</button>
                                     </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         ) : (
                             <div className="text-center py-12">
@@ -445,7 +458,12 @@ return (
                         {subscriptionHistory.length > 0 ? (
                             <div className="space-y-3">
                                 {subscriptionHistory.slice(0, 5).map((sub) => (
-                                    <div key={sub.user_subscription_id} className="rounded-2xl p-3" style={{ background: 'rgba(255,255,255,0.65)', border: '1px solid rgba(255,255,255,0.9)' }}>
+                                    <div 
+                                        key={sub.user_subscription_id} 
+                                        onClick={() => setSelectedHistoryItem(sub)}
+                                        className="rounded-2xl p-3 cursor-pointer" 
+                                        style={{ background: 'rgba(255,255,255,0.65)', border: '1px solid rgba(255,255,255,0.9)' }}
+                                    >
                                         <div className="flex justify-between items-start">
                                             <div>
                                                 <div className="text-sm font-bold" style={{ color: '#1e293b' }}>{sub.plan_name}</div>
@@ -466,20 +484,129 @@ return (
                     </div>
                 )}
 
-                {/* PayPal - Mobile */}
+                {/* PayPal - Mobile Modal */}
                 {showPayPal && selectedPlanForPayment && (
-                    <div ref={paypalSectionRef} className="mx-4 p-4 rounded-2xl" style={{ background: 'rgba(255,255,255,0.8)' }}>
-                        <div className="text-sm font-bold mb-4 text-center">Complete Payment for {selectedPlanForPayment.plan_name}</div>
-                        <PayPalScriptProvider options={PAYPAL_OPTIONS}>
-                            <PayPalButtons
-                                createOrder={createPayPalOrder}
-                                onApprove={onPayPalApprove}
-                                onError={onPayPalError}
-                                onCancel={onPayPalCancel}
-                                style={{ layout: "vertical" }}
-                            />
-                        </PayPalScriptProvider>
-                        <button onClick={() => { setShowPayPal(false); setSelectedPlanForPayment(null); }} className="w-full mt-3 py-2 text-xs" style={{ color: '#64748b' }}>Cancel</button>
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                        <div className="absolute inset-0 bg-black/50" onClick={() => { setShowPayPal(false); setSelectedPlanForPayment(null); }}></div>
+                        <div ref={paypalSectionRef} className="relative w-full max-w-sm p-4 rounded-2xl" style={{ background: 'rgba(255,255,255,0.95)' }}>
+                            <button onClick={() => { setShowPayPal(false); setSelectedPlanForPayment(null); }} className="absolute top-2 right-2 text-gray-500 hover:text-gray-700">
+                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                            </button>
+                            <div className="text-sm font-bold mb-4 text-center" style={{ color: '#000b3d' }}>Complete Payment for {selectedPlanForPayment.plan_name}</div>
+                            <PayPalScriptProvider options={PAYPAL_OPTIONS}>
+                                <PayPalButtons
+                                    createOrder={createPayPalOrder}
+                                    onApprove={onPayPalApprove}
+                                    onError={onPayPalError}
+                                    onCancel={onPayPalCancel}
+                                    style={{ layout: "vertical" }}
+                                />
+                            </PayPalScriptProvider>
+                        </div>
+                    </div>
+                )}
+
+                {/* Purchase Confirmation Modal */}
+                {showConfirmation && purchaseReceipt && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                        <div className="absolute inset-0 bg-black/50" onClick={() => { setShowConfirmation(false); setPurchaseReceipt(null); window.location.reload(); }}></div>
+                        <div className="relative w-full max-w-sm p-5 rounded-2xl" style={{ background: 'rgba(255,255,255,0.98)' }}>
+                            <div className="text-center mb-4">
+                                <div className="w-16 h-16 mx-auto mb-3 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(16, 185, 129, 0.1) 100%)' }}>
+                                    <svg className="w-8 h-8" fill="none" stroke="#10b981" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                                </div>
+                                <h3 className="text-xl font-bold" style={{ color: '#10b981' }}>Payment Successful!</h3>
+                                <p className="text-sm" style={{ color: '#64748b' }}>Your subscription has been activated</p>
+                            </div>
+                            
+                            <div className="rounded-xl p-4 mb-4" style={{ background: 'rgba(249, 250, 251, 0.8)', border: '1px solid rgba(229, 231, 235, 0.5)' }}>
+                                <h4 className="text-sm font-bold mb-3" style={{ color: '#000b3d' }}>Receipt</h4>
+                                <div className="space-y-2 text-sm">
+                                    <div className="flex justify-between">
+                                        <span style={{ color: '#64748b' }}>Plan</span>
+                                        <span className="font-medium" style={{ color: '#000b3d' }}>{purchaseReceipt.plan_name}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span style={{ color: '#64748b' }}>Daily Limit</span>
+                                        <span className="font-medium" style={{ color: '#000b3d' }}>{purchaseReceipt.daily_mah_limit} mAh</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span style={{ color: '#64748b' }}>Duration</span>
+                                        <span className="font-medium" style={{ color: '#000b3d' }}>{purchaseReceipt.duration_value} {purchaseReceipt.duration_type}</span>
+                                    </div>
+                                    <div className="flex justify-between pt-2 border-t" style={{ borderColor: '#e5e7eb' }}>
+                                        <span className="font-bold" style={{ color: '#000b3d' }}>Total Paid</span>
+                                        <span className="font-bold" style={{ color: '#10b981' }}>{formatCurrency(purchaseReceipt.price)}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="text-xs text-center mb-4" style={{ color: '#9ca3af' }}>
+                                Transaction ID: {purchaseReceipt.transaction_id}
+                            </div>
+                            
+                            <button 
+                                onClick={() => { setShowConfirmation(false); setPurchaseReceipt(null); window.location.reload(); }}
+                                className="w-full py-3 rounded-xl font-bold text-white"
+                                style={{ background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)' }}
+                            >
+                                Done
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* History Item Detail Modal - Mobile */}
+                {selectedHistoryItem && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                        <div className="absolute inset-0 bg-black/50" onClick={() => setSelectedHistoryItem(null)}></div>
+                        <div className="relative w-full max-w-sm p-5 rounded-2xl" style={{ background: 'rgba(255,255,255,0.98)' }}>
+                            <button onClick={() => setSelectedHistoryItem(null)} className="absolute top-2 right-2 text-gray-500 hover:text-gray-700">
+                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                            </button>
+                            <div className="text-center mb-4">
+                                <h3 className="text-lg font-bold" style={{ color: '#000b3d' }}>Subscription Details</h3>
+                                <span className="inline-block mt-2 text-xs font-bold px-3 py-1 rounded-full" style={{ 
+                                    background: selectedHistoryItem.subscription_status === 'Active' ? 'rgba(16,185,129,0.15)' : 'rgba(107,114,128,0.15)', 
+                                    color: selectedHistoryItem.subscription_status === 'Active' ? '#059669' : '#6b7280' 
+                                }}>
+                                    {selectedHistoryItem.subscription_status}
+                                </span>
+                            </div>
+                            
+                            <div className="rounded-xl p-4 mb-4" style={{ background: 'rgba(249, 250, 251, 0.8)', border: '1px solid rgba(229, 231, 235, 0.5)' }}>
+                                <div className="space-y-2 text-sm">
+                                    <div className="flex justify-between">
+                                        <span style={{ color: '#64748b' }}>Plan</span>
+                                        <span className="font-medium" style={{ color: '#000b3d' }}>{selectedHistoryItem.plan_name}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span style={{ color: '#64748b' }}>Daily Limit</span>
+                                        <span className="font-medium" style={{ color: '#000b3d' }}>{selectedHistoryItem.daily_mah_limit} mAh</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span style={{ color: '#64748b' }}>Price</span>
+                                        <span className="font-medium" style={{ color: '#000b3d' }}>{formatCurrency(selectedHistoryItem.price)}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span style={{ color: '#64748b' }}>Start Date</span>
+                                        <span className="font-medium" style={{ color: '#000b3d' }}>{new Date(selectedHistoryItem.start_date).toLocaleDateString()}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span style={{ color: '#64748b' }}>End Date</span>
+                                        <span className="font-medium" style={{ color: '#000b3d' }}>{new Date(selectedHistoryItem.end_date).toLocaleDateString()}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <button 
+                                onClick={() => setSelectedHistoryItem(null)}
+                                className="w-full py-3 rounded-xl font-bold text-white"
+                                style={{ background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)' }}
+                            >
+                                Close
+                            </button>
+                        </div>
                     </div>
                 )}
             </div>
@@ -659,7 +786,7 @@ return (
                                             opacity: 0.7
                                         }}
                                     >
-                                        {subscription ? 'Current Plan' : 'Available Plans'}
+                                        {activeSubscriptions && activeSubscriptions.length > 0 ? 'Your Plans' : 'Explore Plans'}
                                     </button>
                                     <button
                                         onClick={() => setActiveTab('history')}
@@ -695,15 +822,9 @@ return (
                                                 key={plan.plan_id} 
                                                 className="group relative backdrop-blur-xl rounded-3xl p-6 sm:p-8 transform transition-all duration-500 hover:scale-105 hover:-translate-y-2 overflow-hidden"
                                                 style={{
-                                                    background: subscription?.plan_id === plan.plan_id
-                                                        ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.35) 0%, rgba(16, 185, 129, 0.15) 100%)'
-                                                        : 'linear-gradient(135deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.15) 100%)',
-                                                    border: subscription?.plan_id === plan.plan_id
-                                                        ? '1px solid rgba(16, 185, 129, 0.4)'
-                                                        : '1px solid rgba(255, 255, 255, 0.3)',
-                                                    boxShadow: subscription?.plan_id === plan.plan_id
-                                                        ? '0 8px 32px 0 rgba(16, 185, 129, 0.2), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
-                                                        : '0 8px 32px 0 rgba(56, 182, 255, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)',
+                                                    background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.35) 0%, rgba(255, 255, 255, 0.15) 100%)',
+                                                    border: '1px solid rgba(255, 255, 255, 0.3)',
+                                                    boxShadow: '0 8px 32px 0 rgba(56, 182, 255, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)',
                                                     animationDelay: `${index * 100}ms`
                                                 }}
                                             >
@@ -721,28 +842,20 @@ return (
                                                     </div>
                                                     <div className="text-sm mb-6" style={{ color: '#000b3d', opacity: 0.7 }}>Daily Limit: {plan.daily_mah_limit} mAh</div>
                                             
-                                                    {subscription?.plan_id === plan.plan_id ? (
-                                                        <div className="py-3 px-4 rounded-xl font-semibold backdrop-blur-md" style={{
-                                                            background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.3) 0%, rgba(16, 185, 129, 0.2) 100%)',
-                                                            border: '1px solid rgba(16, 185, 129, 0.4)',
-                                                            color: '#10b981'
-                                                        }}>Current Plan</div>
-                                                    ) : (
-                                                        <button
-                                                            onClick={() => handleSelectPlan(plan)}
-                                                            className="group relative px-6 py-3 rounded-xl font-bold text-white overflow-hidden transition-all duration-300 hover:scale-105 focus:outline-none focus:ring-4 focus:ring-opacity-50 w-full"
-                                                            style={{
-                                                                background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
-                                                                boxShadow: '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
-                                                                focusRingColor: 'rgba(56, 182, 255, 0.5)'
-                                                            }}
-                                                        >
-                                                            <span className="relative z-10">Subscribe</span>
-                                                            <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" style={{
-                                                                background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.3) 0%, rgba(56, 182, 255, 0.3) 100%)'
-                                                            }}></div>
-                                                        </button>
-                                                    )}
+                                                    <button
+                                                        onClick={() => handleSelectPlan(plan)}
+                                                        className="group relative px-6 py-3 rounded-xl font-bold text-white overflow-hidden transition-all duration-300 hover:scale-105 focus:outline-none focus:ring-4 focus:ring-opacity-50 w-full"
+                                                        style={{
+                                                            background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)',
+                                                            boxShadow: '0 8px 24px rgba(56, 182, 255, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
+                                                            focusRingColor: 'rgba(56, 182, 255, 0.5)'
+                                                        }}
+                                                    >
+                                                        <span className="relative z-10">Subscribe</span>
+                                                        <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300" style={{
+                                                            background: 'linear-gradient(135deg, rgba(249, 210, 23, 0.3) 0%, rgba(56, 182, 255, 0.3) 100%)'
+                                                        }}></div>
+                                                    </button>
                                                 </div>
                                             </div>
                                         ))}
@@ -796,7 +909,8 @@ return (
                                             {subscriptionHistory.map((sub) => (
                                                 <div 
                                                     key={sub.user_subscription_id} 
-                                                    className="relative backdrop-blur-xl rounded-3xl p-6 transform transition-all duration-500 hover:scale-[1.02] overflow-hidden"
+                                                    onClick={() => setSelectedHistoryItem(sub)}
+                                                    className="relative backdrop-blur-xl rounded-3xl p-6 transform transition-all duration-500 hover:scale-[1.02] overflow-hidden cursor-pointer"
                                                     style={{
                                                         background: sub.subscription_status === 'Active'
                                                             ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.35) 0%, rgba(16, 185, 129, 0.15) 100%)'
@@ -915,6 +1029,110 @@ return (
                                             style={{ color: '#000b3d', opacity: 0.7 }}
                                         >
                                             Cancel Payment
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Purchase Confirmation Modal - Desktop */}
+                            {showConfirmation && purchaseReceipt && (
+                                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                                    <div className="absolute inset-0 bg-black/50" onClick={() => { setShowConfirmation(false); setPurchaseReceipt(null); window.location.reload(); }}></div>
+                                    <div className="relative w-full max-w-md p-6 rounded-3xl" style={{ background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.9) 100%)', backdropFilter: 'blur(20px)' }}>
+                                        <div className="text-center mb-6">
+                                            <div className="w-20 h-20 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.3) 0%, rgba(16, 185, 129, 0.1) 100%)', border: '1px solid rgba(16, 185, 129, 0.4)' }}>
+                                                <svg className="w-10 h-10" fill="none" stroke="#10b981" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                                            </div>
+                                            <h3 className="text-2xl font-bold" style={{ color: '#10b981' }}>Payment Successful!</h3>
+                                            <p className="text-base mt-1" style={{ color: '#64748b' }}>Your subscription has been activated</p>
+                                        </div>
+                                        
+                                        <div className="rounded-2xl p-5 mb-5" style={{ background: 'rgba(249, 250, 251, 0.6)', border: '1px solid rgba(229, 231, 235, 0.5)' }}>
+                                            <h4 className="text-base font-bold mb-4" style={{ color: '#000b3d' }}>Purchase Receipt</h4>
+                                            <div className="space-y-3 text-base">
+                                                <div className="flex justify-between">
+                                                    <span style={{ color: '#64748b' }}>Plan</span>
+                                                    <span className="font-semibold" style={{ color: '#000b3d' }}>{purchaseReceipt.plan_name}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span style={{ color: '#64748b' }}>Daily Limit</span>
+                                                    <span className="font-semibold" style={{ color: '#000b3d' }}>{purchaseReceipt.daily_mah_limit} mAh</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span style={{ color: '#64748b' }}>Duration</span>
+                                                    <span className="font-semibold" style={{ color: '#000b3d' }}>{purchaseReceipt.duration_value} {purchaseReceipt.duration_type}</span>
+                                                </div>
+                                                <div className="flex justify-between pt-3 border-t" style={{ borderColor: '#e5e7eb' }}>
+                                                    <span className="font-bold" style={{ color: '#000b3d' }}>Total Paid</span>
+                                                    <span className="font-bold" style={{ color: '#10b981' }}>{formatCurrency(purchaseReceipt.price)}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="text-xs text-center mb-5" style={{ color: '#9ca3af' }}>
+                                            Transaction ID: {purchaseReceipt.transaction_id}
+                                        </div>
+                                        
+                                        <button 
+                                            onClick={() => { setShowConfirmation(false); setPurchaseReceipt(null); window.location.reload(); }}
+                                            className="w-full py-4 rounded-2xl font-bold text-white transition-transform hover:scale-[1.02]"
+                                            style={{ background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)', boxShadow: '0 4px 20px rgba(56, 182, 255, 0.3)' }}
+                                        >
+                                            Done
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* History Item Detail Modal - Desktop */}
+                            {selectedHistoryItem && (
+                                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                                    <div className="absolute inset-0 bg-black/50" onClick={() => setSelectedHistoryItem(null)}></div>
+                                    <div className="relative w-full max-w-md p-6 rounded-3xl" style={{ background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.9) 100%)', backdropFilter: 'blur(20px)' }}>
+                                        <button onClick={() => setSelectedHistoryItem(null)} className="absolute top-4 right-4 text-gray-500 hover:text-gray-700">
+                                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                                        </button>
+                                        <div className="text-center mb-6">
+                                            <h3 className="text-2xl font-bold" style={{ color: '#000b3d' }}>Subscription Details</h3>
+                                            <span className="inline-block mt-3 text-sm font-bold px-4 py-2 rounded-full" style={{ 
+                                                background: selectedHistoryItem.subscription_status === 'Active' ? 'rgba(16,185,129,0.15)' : selectedHistoryItem.subscription_status === 'Discontinued' ? 'rgba(239,68,68,0.15)' : 'rgba(107,114,128,0.15)', 
+                                                color: selectedHistoryItem.subscription_status === 'Active' ? '#059669' : selectedHistoryItem.subscription_status === 'Discontinued' ? '#dc2626' : '#6b7280' 
+                                            }}>
+                                                {selectedHistoryItem.subscription_status}
+                                            </span>
+                                        </div>
+                                        
+                                        <div className="rounded-2xl p-5 mb-5" style={{ background: 'rgba(249, 250, 251, 0.6)', border: '1px solid rgba(229, 231, 235, 0.5)' }}>
+                                            <div className="space-y-3 text-base">
+                                                <div className="flex justify-between">
+                                                    <span style={{ color: '#64748b' }}>Plan</span>
+                                                    <span className="font-semibold" style={{ color: '#000b3d' }}>{selectedHistoryItem.plan_name}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span style={{ color: '#64748b' }}>Daily Limit</span>
+                                                    <span className="font-semibold" style={{ color: '#000b3d' }}>{selectedHistoryItem.daily_mah_limit} mAh</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span style={{ color: '#64748b' }}>Price</span>
+                                                    <span className="font-semibold" style={{ color: '#000b3d' }}>{formatCurrency(selectedHistoryItem.price)}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span style={{ color: '#64748b' }}>Start Date</span>
+                                                    <span className="font-semibold" style={{ color: '#000b3d' }}>{new Date(selectedHistoryItem.start_date).toLocaleDateString()}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                    <span style={{ color: '#64748b' }}>End Date</span>
+                                                    <span className="font-semibold" style={{ color: '#000b3d' }}>{new Date(selectedHistoryItem.end_date).toLocaleDateString()}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <button 
+                                            onClick={() => setSelectedHistoryItem(null)}
+                                            className="w-full py-4 rounded-2xl font-bold text-white"
+                                            style={{ background: 'linear-gradient(135deg, #38b6ff 0%, #000b3d 100%)' }}
+                                        >
+                                            Close
                                         </button>
                                     </div>
                                 </div>

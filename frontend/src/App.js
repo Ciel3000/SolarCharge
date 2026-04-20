@@ -263,11 +263,9 @@ function AppContent() {
   // Determine which navigation to show based on current route and user type
   const currentPath = location.pathname;
 
-  // Show header navigation on landing or any protected page (not on auth pages)
-  const showHeaderNav = currentPath !== '/login' && 
-                        currentPath !== '/signup' && 
-                        currentPath !== '/forgot-password' && 
-                        currentPath !== '/reset-password';
+   // Show header navigation on landing, admin, user pages, AND auth pages (login/signup)
+   const showHeaderNav = currentPath !== '/forgot-password' && 
+                         currentPath !== '/reset-password';
 
   // Show bottom navigation only on logged-in user protected pages (not landing, not admin)
   const showBottomNav = session && !isAdmin && 

@@ -257,7 +257,7 @@ const renderStationCard = (station, showDistance = true) => {
   return (
     <div className="min-h-dvh flex flex-col justify-start text-gray-800 relative" style={{ background: 'linear-gradient(135deg, #f1f3e0 0%, #e8eae0 50%, #f1f3e0 100%)' }}>
       {/* MOBILE LAYOUT (< lg:) */}
-      <div className="lg:hidden">
+      <div className="lg:hidden pt-16">
         {/* Page Header */}
         <div className="flex justify-between items-center px-4 pt-3 pb-2">
           <div>

@@ -585,7 +585,7 @@ const slotIndicatorState = getSlotIndicatorState();
   const premiumPortsCount = stationData?.available_premium_ports || 0;
 
   return (
-    <div className="min-h-dvh flex flex-col relative" style={{ background: '#f1f3e0' }}>
+    <div className="min-h-dvh flex flex-col pt-16 relative" style={{ background: '#f1f3e0' }}>
       {/* Main scrollable area */}
       <div className="flex-1 overflow-y-auto">
         {/* Sticky Header */}
