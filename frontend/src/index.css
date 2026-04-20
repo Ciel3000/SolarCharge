@@ -114,6 +114,22 @@ code {
   }
 }
 
+
+@keyframes scroll-down-fade {
+  0%, 100% { 
+    opacity: 0.2; 
+    transform: translateY(0); 
+  }
+  33% { 
+    opacity: 1; 
+    transform: translateY(2px); 
+  }
+}
+
+.animate-scroll-fade {
+  animation: scroll-down-fade 1.8s infinite;
+}
+
 /* Shimmer effect for glass cards */
 @keyframes shimmer {
   0% {
