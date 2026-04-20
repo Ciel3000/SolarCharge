@@ -100,64 +100,64 @@ export const AuthProvider = ({ children }) => {
     }
   }, [handleSessionTimeout]);
 
-   // --- Helper to fetch user subscription and all plans ---
-   const fetchSubscriptionAndPlans = useCallback(async (currentSession) => {
-if (!currentSession) {
-        setSubscription(null);
-        setActiveSubscriptions([]);
-        setUsageAggregate({ daily_limit: 0, total_consumed: 0, remaining: 0 });
-        setPlans([]);
-        return;
+// --- Helper to fetch user subscription and all plans ---
+  const fetchSubscriptionAndPlans = useCallback(async (currentSession) => {
+    if (!currentSession) {
+      setSubscription(null);
+      setActiveSubscriptions([]);
+      setUsageAggregate({ daily_limit: 0, total_consumed: 0, remaining: 0 });
+      setPlans([]);
+      return;
+    }
+    try {
+      // First, fetch all available plans from Supabase (fast, direct)
+      const { data: plansData, error: plansError } = await supabase
+        .from('subscription_plans')
+        .select('*');
+
+      if (plansError) {
+        console.error("AuthContext: Error fetching plans:", plansError);
+      } else {
+        setPlans(plansData || []);
       }
-     try {
-       // First, fetch all available plans from Supabase (fast, direct)
-       const { data: plansData, error: plansError } = await supabase
-         .from('subscription_plans')
-         .select('*');
 
-       if (plansError) {
-         console.error("AuthContext: Error fetching plans:", plansError);
-       } else {
-         setPlans(plansData || []);
-       }
+      // Then fetch user's active subscription from backend API (consistent shape with history)
+      try {
+        const res = await fetch(`${getBackendBaseUrl()}/api/user/subscription`, {
+          headers: {
+            Authorization: `Bearer ${currentSession.access_token}`
+          }
+        });
 
-       // Then fetch user's active subscription from backend API (consistent shape with history)
-       try {
-         const res = await fetch(`${getBackendBaseUrl()}/api/user/subscription`, {
-           headers: {
-             Authorization: `Bearer ${currentSession.access_token}`
-           }
-         });
-
-if (res.ok) {
-            const data = await res.json();
-            setSubscription(data.subscription);
-            setActiveSubscriptions(data.active_subscriptions || []);
-            setUsageAggregate(data.aggregate || { daily_limit: 0, total_consumed: 0, remaining: 0 });
-} else if (res.status === 404) {
-            // No active subscription - this is fine
-            setSubscription(null);
-            setActiveSubscriptions([]);
-            setUsageAggregate({ daily_limit: 0, total_consumed: 0, remaining: 0 });
-          } else {
-           console.error("AuthContext: Error fetching subscription from API:", res.status);
-           setSubscription(null);
-         }
-} catch (subscriptionError) {
-          console.error("AuthContext: Subscription fetch failed:", subscriptionError);
+        if (res.ok) {
+          const data = await res.json();
+          setSubscription(data.subscription);
+          setActiveSubscriptions(data.active_subscriptions || []);
+          setUsageAggregate(data.aggregate || { daily_limit: 0, total_consumed: 0, remaining: 0 });
+        } else if (res.status === 404) {
+          // No active subscription - this is fine
           setSubscription(null);
           setActiveSubscriptions([]);
           setUsageAggregate({ daily_limit: 0, total_consumed: 0, remaining: 0 });
+        } else {
+          console.error("AuthContext: Error fetching subscription from API:", res.status);
+          setSubscription(null);
         }
-
-     } catch (error) {
-       console.error("AuthContext: Error fetching subscription or plans:", error.message);
-setSubscription(null);
+      } catch (subscriptionError) {
+        console.error("AuthContext: Subscription fetch failed:", subscriptionError);
+        setSubscription(null);
         setActiveSubscriptions([]);
         setUsageAggregate({ daily_limit: 0, total_consumed: 0, remaining: 0 });
-        setPlans([]);
       }
-    }, []);
+
+    } catch (error) {
+      console.error("AuthContext: Error fetching subscription or plans:", error.message);
+      setSubscription(null);
+      setActiveSubscriptions([]);
+      setUsageAggregate({ daily_limit: 0, total_consumed: 0, remaining: 0 });
+      setPlans([]);
+    }
+  }, []);
 
   // Refresh function to avoid page reload
   const refreshSubscription = useCallback(async (currentSession) => {

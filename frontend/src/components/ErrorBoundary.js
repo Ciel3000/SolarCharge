@@ -1,3 +1,9 @@
+// =============================================================================
+// ERROR BOUNDARY COMPONENT
+// =============================================================================
+// This component catches JavaScript errors in the React component tree.
+// It displays a fallback UI when an error occurs instead of crashing the app.
+
 import React from 'react';
 
 class ErrorBoundary extends React.Component {
@@ -6,13 +12,13 @@ class ErrorBoundary extends React.Component {
     this.state = { hasError: false, error: null, errorInfo: null };
   }
 
+  // Update state when an error is caught
   static getDerivedStateFromError(error) {
-    // Update state so the next render will show the fallback UI
     return { hasError: true };
   }
 
+  // Log error details for debugging
   componentDidCatch(error, errorInfo) {
-    // Log error details
     console.error('ErrorBoundary caught an error:', error, errorInfo);
     this.setState({
       error: error,
@@ -20,11 +26,10 @@ class ErrorBoundary extends React.Component {
     });
   }
 
+  // Retry handler - clears error state and tries to recover
   handleRetry = () => {
-    // Clear error state and try to recover
     this.setState({ hasError: false, error: null, errorInfo: null });
-    
-    // Force reload the page if needed
+
     if (this.props.onRetry) {
       this.props.onRetry();
     } else {
@@ -32,15 +37,14 @@ class ErrorBoundary extends React.Component {
     }
   };
 
+  // Navigate to home page
   handleGoHome = () => {
-    // Clear error state and navigate to home
     this.setState({ hasError: false, error: null, errorInfo: null });
     window.location.href = '/';
   };
 
   render() {
     if (this.state.hasError) {
-      // Custom error UI
       return (
         <div className="min-h-screen flex items-center justify-center bg-gray-100">
           <div className="max-w-md mx-auto bg-white rounded-xl shadow-2xl p-8 text-center">
@@ -51,7 +55,7 @@ class ErrorBoundary extends React.Component {
             <p className="text-gray-600 mb-6">
               The app encountered an unexpected error. This usually happens due to network issues or when returning to the app after being away.
             </p>
-            
+
             <div className="space-y-3">
               <button
                 onClick={this.handleRetry}
@@ -59,7 +63,7 @@ class ErrorBoundary extends React.Component {
               >
                 🔄 Try Again
               </button>
-              
+
               <button
                 onClick={this.handleGoHome}
                 className="w-full bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded-lg transition-colors duration-200"
@@ -76,7 +80,7 @@ class ErrorBoundary extends React.Component {
                 <div className="mt-2 p-4 bg-red-50 rounded border text-sm font-mono">
                   <div className="text-red-800 font-bold mb-2">Error:</div>
                   <div className="text-red-700 mb-4">{this.state.error && this.state.error.toString()}</div>
-                  
+
                   <div className="text-red-800 font-bold mb-2">Stack Trace:</div>
                   <div className="text-red-700 text-xs whitespace-pre-wrap">
                     {this.state.errorInfo.componentStack}

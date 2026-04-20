@@ -1,15 +1,25 @@
-// frontend/src/components/Navigation.js
+// =============================================================================
+// NAVIGATION COMPONENT
+// =============================================================================
+// This component provides the top navigation bar for the application.
+// It shows different links based on user authentication status and subscription.
+
 import React, { useState, useCallback, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import NotificationBell from './NotificationBell';
 
 function Navigation({ navigateTo, handleSignOut }) {
+  // Get authentication and user data from context
   const { session, user, isAdmin, isLoading, subscription } = useAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
 
+  // =============================================================================
+  // STATE: Track current page and screen size
+  // =============================================================================
+  
   // Check if we're on the landing page (public/mobile view)
   const isOnLandingPage = location.pathname === '/landing' || location.pathname === '/';
 
@@ -23,35 +33,37 @@ function Navigation({ navigateTo, handleSignOut }) {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Helper function for scroll-to-section.
+  // =============================================================================
+  // HELPER FUNCTIONS: Navigation
+  // =============================================================================
+
+  // Scroll to section on landing page
   const scrollToSection = useCallback((sectionId) => {
-    setIsMenuOpen(false); // Close mobile menu immediately
+    setIsMenuOpen(false);
 
     if (location.pathname !== '/landing') {
-      // If not on the landing page, navigate there first, passing scroll target in state
       navigate('/landing', { state: { scrollTo: sectionId } });
     } else {
-      // Already on landing page, just scroll
       const section = document.getElementById(sectionId);
       if (section) {
         section.scrollIntoView({ behavior: 'smooth' });
       }
     }
-  }, [navigate, location.pathname]); // Dependencies for useCallback
+  }, [navigate, location.pathname]);
 
-  // Helper function to check if a route is active (for better visual feedback)
+  // Check if a route is currently active
   const isActiveRoute = useCallback((routePath) => {
-    if (routePath === '/home' && location.pathname === '/') return false; // Don't highlight home for root
+    if (routePath === '/home' && location.pathname === '/') return false;
     return location.pathname === routePath || location.pathname.startsWith(routePath + '/');
   }, [location.pathname]);
 
-  // Define navigation links based on user's authentication and subscription status
+  // Get navigation links based on user status
   const getNavLinks = useCallback(() => {
     const links = [];
 
     if (session) {
-      // Admin links (only if isAdmin is true)
       if (isAdmin) {
+        // Admin navigation links
         links.push({ name: 'Dashboard', path: '/admin/dashboard', type: 'internal', admin: true });
         links.push({ name: 'Users', path: '/admin/users', type: 'internal', admin: true });
         links.push({ name: 'Plans', path: '/admin/plans', type: 'internal', admin: true });
@@ -61,7 +73,7 @@ function Navigation({ navigateTo, handleSignOut }) {
         links.push({ name: 'System', path: '/admin/system-status', type: 'internal', admin: true });
         links.push({ name: 'Logs', path: '/admin/logs', type: 'internal', admin: true });
       } else {
-        // Regular user links (not admin)
+        // Regular user navigation links
         links.push({ name: 'Home', path: '/home', type: 'internal' });
         
         if (subscription) {
@@ -78,23 +90,26 @@ function Navigation({ navigateTo, handleSignOut }) {
         }
       }
     } else {
-      // Public/unauthenticated user links (for landing page sections)
+      // Public navigation links (landing page)
       links.push({ name: 'Home', path: 'hero', type: 'scroll' });
       links.push({ name: 'Why Choose Us', path: 'features', type: 'scroll' });
       links.push({ name: 'Stations', path: 'stations', type: 'scroll' });
     }
 
     return links;
-  }, [session, isAdmin, subscription]); // Dependencies for useCallback
+  }, [session, isAdmin, subscription]);
 
   const navLinks = getNavLinks();
 
-  // Check if we're on login or signup page to highlight the opposite button
+  // Check which auth pages are active
   const isOnLoginPage = location.pathname === '/login';
   const isOnSignupPage = location.pathname === '/signup';
-  // isOnLandingPage already defined above at line 83
 
-  // Only show loading during initial app load, not for tab switches or minor updates
+  // =============================================================================
+  // RENDER: Loading state
+  // =============================================================================
+  
+  // Only show loading during initial app load
   if (isLoading && !session) {
     return (
       <nav 
@@ -118,28 +133,31 @@ function Navigation({ navigateTo, handleSignOut }) {
     );
    }
 
+// =============================================================================
+   // RENDER: Main navigation
+   // =============================================================================
    return (
-    <nav
-      className="fixed top-0 left-0 right-0 z-50"
-      style={{
-        // Mobile landing page: dark theme
-        ...(isOnLandingPage && isMobileNav ? {
-          background: 'linear-gradient(160deg, #0f172a 0%, #1e293b 100%)',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          boxShadow: 'none',
-          
-        } : {
-          // Desktop/other pages: glassmorphism light
-          background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
-          borderBottom: '1px solid rgba(255,255,255,0.3)',
-          boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
-        })
-      }}
-    >
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-16">
-          {/* Logo */}
-          <div className="flex items-center">
+     <nav
+       className="fixed top-0 left-0 right-0 z-50"
+       style={{
+         // Mobile landing page: dark theme
+         ...(isOnLandingPage && isMobileNav ? {
+           background: 'linear-gradient(160deg, #0f172a 0%, #1e293b 100%)',
+           borderBottom: '1px solid rgba(255,255,255,0.06)',
+           boxShadow: 'none',
+           
+         } : {
+           // Desktop/other pages: glassmorphism light
+           background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+           borderBottom: '1px solid rgba(255,255,255,0.3)',
+           boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+         })
+       }}
+     >
+       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+         <div className="flex justify-between items-center h-16">
+           {/* Logo and brand name */}
+           <div className="flex items-center">
             <Link
               to={session ? (isAdmin ? "/admin/dashboard" : "/home") : "/landing"}
               className="flex items-center space-x-2 focus:outline-none hover:opacity-80 transition-opacity"
@@ -157,7 +175,9 @@ function Navigation({ navigateTo, handleSignOut }) {
             </Link>
           </div>
 
-          {/* Desktop Navigation */}
+          {/* =============================================================================
+             SECTION: Desktop Navigation (hidden on mobile)
+          ============================================================================= */}
           <div className="hidden md:flex items-center space-x-8">
             {navLinks.map((link) => (
               link.type === 'scroll' ? (
@@ -384,7 +404,9 @@ function Navigation({ navigateTo, handleSignOut }) {
             )}
           </div>
 
-          {/* Mobile Navigation Controls */}
+          {/* =============================================================================
+             SECTION: Mobile Navigation (hidden on desktop)
+          ============================================================================= */}
           <div className="md:hidden flex items-center space-x-2">
             {/* On landing page: show login button directly (no hamburger) */}
             {isOnLandingPage && !session ? (

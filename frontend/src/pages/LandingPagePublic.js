@@ -1,22 +1,23 @@
 // =============================================================================
 // IMPORTS & CONFIGURATION
 // =============================================================================
+// This is the public landing page that shows to users who are not logged in.
+// It displays the hero section, station locations, and features.
 
-// React and router imports
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { generateGoogleMapsUrl } from '../utils/mapUtils';
 
-// Leaflet map components
+// Leaflet map for showing station locations
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 
 // =============================================================================
-// LEAFLET MAP CONFIGURATION
+// MAP CONFIGURATION
 // =============================================================================
+// Configure Leaflet map marker icons
 
-// Fix Leaflet default marker icons for webpack
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
@@ -25,10 +26,10 @@ L.Icon.Default.mergeOptions({
 });
 
 // =============================================================================
-// HELPER COMPONENTS (Map Utilities)
+// HELPER COMPONENTS
 // =============================================================================
 
-// Component to update map bounds after markers are rendered
+// Updates map view to fit all markers
 function MapBoundsUpdater({ bounds }) {
   const map = useMap();
   useEffect(() => {
@@ -39,7 +40,7 @@ function MapBoundsUpdater({ bounds }) {
   return null;
 }
 
-// Component to invalidate map size when it becomes visible
+// Fixes map display size when it becomes visible
 function MapSizeHandler({ isVisible }) {
   const map = useMap();
   useEffect(() => {

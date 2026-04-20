@@ -255,6 +255,15 @@ html {
   scroll-behavior: smooth;
 }
 
+/* Hide scrollbar for horizontal scroll containers */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
 /* Glassmorphism backdrop blur support */
 @supports (backdrop-filter: blur(10px)) {
   .backdrop-blur-xl {

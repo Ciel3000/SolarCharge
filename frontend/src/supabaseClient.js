@@ -1,27 +1,21 @@
-// src/supabaseClient.js
+// =============================================================================
+// SUPABASE CLIENT CONFIGURATION
+// =============================================================================
+// This module creates the Supabase клиент (client) for connecting to the backend database.
+// It uses environment variables for API credentials stored in the .env file.
+
 import { createClient } from '@supabase/supabase-js';
 
-// *** ABSOLUTELY ESSENTIAL DEBUG LOGS - DO NOT REMOVE ***
-console.log('--- SUPABASE CLIENT DEBUG START ---');
-console.log('Current directory (from process.cwd if available):', typeof process !== 'undefined' && process.cwd ? process.cwd() : 'N/A');
-console.log('Attempting to read environment variables...');
-console.log('Full process.env object:', typeof process !== 'undefined' && process.env ? process.env : 'process.env is undefined/not accessible');
-
+// Read credentials from environment variables
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
 const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
 
-console.log('Value of REACT_APP_SUPABASE_URL (read from env):', supabaseUrl);
-console.log('Value of REACT_APP_SUPABASE_ANON_KEY (read from env, first 5 chars):', supabaseAnonKey ? supabaseAnonKey.substring(0, 5) + '...' : 'N/A');
-console.log('--- SUPABASE CLIENT DEBUG END ---');
-// ******************************************************
-
+// Validate that required credentials are present
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.error('ERROR: Supabase URL or Anon Key is missing. Check .env in root and ensure REACT_APP_ prefix.');
-  console.error('supabaseUrl:', supabaseUrl);
-  console.error('supabaseAnonKey:', supabaseAnonKey ? 'SET' : 'NOT SET');
+  console.error('Missing Supabase credentials. Please check your .env file.');
+  console.error('Required: REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_ANON_KEY');
   throw new Error('Supabase credentials are not set. Please check your .env file.');
 }
 
+// Create and export the Supabase client instance
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
-
-console.log('Supabase client creation attempted.');
