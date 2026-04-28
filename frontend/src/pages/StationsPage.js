@@ -226,21 +226,13 @@ const renderStationCard = (station, showDistance = true) => {
       <div
         key={station.station_id}
         onClick={() => handleStationClick(station)}
-        className="flex items-center gap-3 p-4 rounded-2xl cursor-pointer"
+        className="flex items-center mb-3 gap-3 p-4 rounded-2xl cursor-pointer"
         style={{ background: 'rgba(255,255,255,0.65)', border: '1px solid rgba(255,255,255,0.9)', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}
       >
         <div className="w-2.5 h-2.5 rounded-full flex-shrink-0 mt-0.5" style={{ background: availableColor }} />
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold text-gray-800 truncate">{station.station_name}</p>
           <p className="text-[10px] text-gray-500 mt-0.5 truncate">{station.location_description}</p>
-          <div className="flex gap-1.5 mt-1.5 items-center">
-            <span className="px-1.5 py-0.5 rounded-md text-[9px] font-semibold" style={{ background: `${availableColor}15`, color: availableColor, border: `1px solid ${availableColor}30` }}>
-              {availablePorts > 0 ? `${availablePorts} open` : 'Full'}
-            </span>
-            <span className="px-1.5 py-0.5 rounded-md text-[9px] font-semibold" style={{ background: 'rgba(56,182,255,0.08)', color: '#38b6ff', border: '1px solid rgba(56,182,255,0.2)' }}>
-              Solar
-            </span>
-          </div>
         </div>
         <div className="text-right flex-shrink-0">
           {showDistance && !showAllStations && station.distance && (
@@ -264,12 +256,6 @@ const renderStationCard = (station, showDistance = true) => {
             <h1 className="text-xl font-bold text-gray-800">Stations</h1>
             <p className="text-xs text-gray-500 mt-0.5">Find a charging station near you</p>
           </div>
-          <button className="w-9 h-9 rounded-full flex items-center justify-center" style={{ background: 'rgba(56,182,255,0.12)', border: '1px solid rgba(56,182,255,0.25)' }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
-              <circle cx="11" cy="11" r="8" stroke="#38b6ff" strokeWidth="2"/>
-              <path d="M21 21l-4.35-4.35" stroke="#38b6ff" strokeWidth="2" strokeLinecap="round"/>
-            </svg>
-          </button>
         </div>
 
         {/* Location Bar (Compact Pill) */}
@@ -394,7 +380,7 @@ const renderStationCard = (station, showDistance = true) => {
           </div>
         ) : displayStations.length > 0 ? (
           /* Station Cards */
-          <div className="px-4">
+          <div className="px-4 mt-2">
             {displayStations.map((station) => renderStationCard(station, true))}
           </div>
         ) : (

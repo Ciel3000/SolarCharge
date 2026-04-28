@@ -375,9 +375,9 @@ function UsagePage() {
     const usageData = calculateSubscriptionUsage();
     const usageStatus = getUsageStatus();
 
-    // Helper function to convert mAh to kWh
-    const convertMhToKWh = (mah) => {
-        return (mah / 1000000 * 3.7).toFixed(1);
+    // Helper function to format mAh with commas
+    const formatMah = (mah) => {
+        return mah.toLocaleString();
     };
 
     return (
@@ -396,7 +396,7 @@ function UsagePage() {
                             border: '1px solid rgba(56, 182, 255, 0.25)'
                         }}>
                             <div className="text-lg font-extrabold" style={{ color: '#38b6ff', lineHeight: 1 }}>
-                                {convertMhToKWh(usageData.remaining)} kWh
+                                {formatMah(usageData.remaining)} mAh
                             </div>
                             <div className="text-[9px]" style={{ color: '#64748b', marginTop: 2 }}>remaining today</div>
                         </div>
@@ -436,7 +436,7 @@ function UsagePage() {
                                         {usageStatus.status === 'critical' ? 'Daily quota reached' : 'Quota almost full'}
                                     </div>
                                     <div className="text-xs" style={{ color: usageStatus.status === 'critical' ? '#ef4444' : '#d97706', opacity: 0.8 }}>
-                                        {usageStatus.status === 'critical' ? 'Extend to continue charging' : `${convertMhToKWh(usageData.remaining)} kWh remaining`}
+                                        {usageStatus.status === 'critical' ? 'Extend to continue charging' : `${formatMah(usageData.remaining)} mAh remaining`}
                                     </div>
                                 </div>
                             </div>
@@ -503,21 +503,21 @@ function UsagePage() {
                                 border: '1px solid rgba(56, 182, 255, 0.12)'
                             }}>
                                 <div className="text-lg font-extrabold" style={{ color: '#38b6ff', lineHeight: 1 }}>
-                                    {convertMhToKWh(Math.min(usageData.consumed, usageData.dailyLimit))}
+                                    {formatMah(Math.min(usageData.consumed, usageData.dailyLimit))}
                                 </div>
-                                <div className="text-[9px]" style={{ color: '#94a3b8', marginTop: 3 }}>kWh used</div>
+                                <div className="text-[9px]" style={{ color: '#94a3b8', marginTop: 3 }}>mAh used</div>
                             </div>
                             <div className="flex-1 text-center p-2 rounded-xl" style={{
                                 background: 'rgba(16, 185, 129, 0.06)',
                                 border: '1px solid rgba(16, 185, 129, 0.12)'
                             }}>
-                                <div className="text-lg font-extrabold" style={{ 
+                                <div className="text-lg font-extrabold" style={{
                                     color: usageStatus?.color === 'red' ? '#ef4444' : usageStatus?.color === 'orange' ? '#f59e0b' : '#10b981',
-                                    lineHeight: 1 
+                                    lineHeight: 1
                                 }}>
-                                    {convertMhToKWh(usageData.remaining)}
+                                    {formatMah(usageData.remaining)}
                                 </div>
-                                <div className="text-[9px]" style={{ color: '#94a3b8', marginTop: 3 }}>kWh left</div>
+                                <div className="text-[9px]" style={{ color: '#94a3b8', marginTop: 3 }}>mAh left</div>
                             </div>
                             <div className="flex-1 text-center p-2 rounded-xl" style={{
                                 background: 'rgba(0, 0, 0, 0.03)',
@@ -602,24 +602,9 @@ function UsagePage() {
                                 <div className="text-base font-extrabold" style={{ color: '#b45309', lineHeight: 1 }}>
                                     {usage?.totalEnergyMAH ? (parseFloat(usage.totalEnergyMAH) / 1000).toFixed(0) : 0}
                                 </div>
-                                <div className="text-[9px]" style={{ color: '#94a3b8', marginTop: 3 }}>kWh total</div>
+                                <div className="text-[9px]" style={{ color: '#94a3b8', marginTop: 3 }}>mAh total</div>
                             </div>
 
-                            {/* Total Cost */}
-                            <div className="w-24 p-3 rounded-2xl flex-shrink-0" style={{
-                                background: 'rgba(255, 255, 255, 0.65)',
-                                border: '1px solid rgba(255, 255, 255, 0.9)',
-                                boxShadow: '0 2px 6px rgba(0, 0, 0, 0.04)'
-                            }}>
-                                <div className="w-7 h-7 rounded-lg flex items-center justify-center mb-2" style={{ background: 'rgba(139, 92, 246, 0.1)' }}>
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
-                                        <rect x="2" y="5" width="20" height="14" rx="2" stroke="#7c3aed" strokeWidth="2"/>
-                                        <path d="M2 10h20" stroke="#7c3aed" strokeWidth="2"/>
-                                    </svg>
-                                </div>
-                                <div className="text-base font-extrabold" style={{ color: '#7c3aed', lineHeight: 1 }}>{formatCurrency(usage?.totalCost || 0)}</div>
-                                <div className="text-[9px]" style={{ color: '#94a3b8', marginTop: 3 }}>Total cost</div>
-                            </div>
                         </div>
                     </div>
 
@@ -748,7 +733,7 @@ function UsagePage() {
                                                     {usageStatus.status === 'critical' ? 'Daily quota reached' : 'Quota almost full'}
                                                 </div>
                                                 <div className="text-sm" style={{ color: usageStatus.status === 'critical' ? '#ef4444' : '#d97706', opacity: 0.8 }}>
-                                                    {usageStatus.status === 'critical' ? 'Extend to continue charging' : `${convertMhToKWh(usageData.remaining)} kWh remaining`}
+                                                    {usageStatus.status === 'critical' ? 'Extend to continue charging' : `${formatMah(usageData.remaining)} mAh remaining`}
                                                 </div>
                                             </div>
                                         </div>
@@ -806,15 +791,15 @@ function UsagePage() {
                                             background: 'linear-gradient(135deg, rgba(56, 182, 255, 0.2) 0%, rgba(56, 182, 255, 0.1) 100%)',
                                             border: '1px solid rgba(56, 182, 255, 0.3)'
                                         }}>
-                                            <span className="text-xl font-bold" style={{ color: '#38b6ff' }}>{convertMhToKWh(Math.min(usageData.consumed, usageData.dailyLimit))}</span>
-                                            <span className="text-xs mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>kWh used</span>
+                                            <span className="text-xl font-bold" style={{ color: '#38b6ff' }}>{formatMah(Math.min(usageData.consumed, usageData.dailyLimit))}</span>
+                                            <span className="text-xs mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>mAh used</span>
                                         </div>
                                         <div className="flex flex-col items-center rounded-xl px-3 py-3 backdrop-blur-md" style={{
                                             background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(16, 185, 129, 0.1) 100%)',
                                             border: '1px solid rgba(16, 185, 129, 0.3)'
                                         }}>
-                                            <span className="text-xl font-bold" style={{ color: '#10b981' }}>{convertMhToKWh(usageData.remaining)}</span>
-                                            <span className="text-xs mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>kWh left</span>
+                                            <span className="text-xl font-bold" style={{ color: '#10b981' }}>{formatMah(usageData.remaining)}</span>
+                                            <span className="text-xs mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>mAh left</span>
                                         </div>
                                         <div className="flex flex-col items-center rounded-xl px-3 py-3 backdrop-blur-md" style={{
                                             background: 'linear-gradient(135deg, rgba(0, 11, 61, 0.2) 0%, rgba(0, 11, 61, 0.1) 100%)',
@@ -890,14 +875,7 @@ function UsagePage() {
                                             <span className="text-xl font-bold" style={{ color: '#f9d217' }}>
                                                 {usage?.totalEnergyMAH ? (parseFloat(usage.totalEnergyMAH) / 1000).toFixed(0) : 0}
                                             </span>
-                                            <span className="text-xs mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>kWh Total</span>
-                                        </div>
-                                        <div className="flex flex-col items-center rounded-xl px-3 py-4 backdrop-blur-md" style={{
-                                            background: 'linear-gradient(135deg, rgba(139, 92, 246, 0.2) 0%, rgba(139, 92, 246, 0.1) 100%)',
-                                            border: '1px solid rgba(139, 92, 246, 0.3)'
-                                        }}>
-                                            <span className="text-xl font-bold" style={{ color: '#7c3aed' }}>{formatCurrency(usage?.totalCost || 0)}</span>
-                                            <span className="text-xs mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>Total Cost</span>
+                                            <span className="text-xs mt-1" style={{ color: '#000b3d', opacity: 0.7 }}>mAh Total</span>
                                         </div>
                                     </div>
                                 </div>

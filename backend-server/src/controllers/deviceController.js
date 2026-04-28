@@ -53,13 +53,22 @@ async function controlPort(req, res, next) {
   }
 
   try {
-    const result = await chargingService.startSession({
-      deviceId,
-      portNumber,
-      userId,
-      stationId: station_id,
-      isPremium: command === 'ON' ? true : false, // We'll determine isPremium via service internal; but better to fetch.
-    });
+    let result;
+    if (command === 'ON') {
+      result = await chargingService.startSession({
+        deviceId,
+        portNumber,
+        userId,
+        stationId: station_id,
+        isPremium: true, // Will be determined in service based on port
+      });
+    } else { // OFF
+      result = await chargingService.stopSession({
+        deviceId,
+        portNumber,
+        userId,
+      });
+    }
     res.json(result);
   } catch (err) {
     if (err.status) {

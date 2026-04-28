@@ -51,8 +51,8 @@ function validateConsumption(consumption) {
   return consumption;
 }
 
-// Helper: calculate cost for a session
-async function calculateSessionCost(sessionId, energyKWH) {
+// Helper: calculate cost for a session using total mAh consumed
+async function calculateSessionCost(sessionId, totalMah) {
   try {
     const sessionResult = await pool.query(
       'SELECT station_id FROM charging_session WHERE session_id = $1',
@@ -65,8 +65,7 @@ async function calculateSessionCost(sessionId, energyKWH) {
         [stationId]
       );
       const pricePerMAH = stationPricing.rows[0]?.price_per_mah || CONFIG.DEFAULT_PRICE_PER_MAH;
-      const energyMAH = energyKWH / 12; // Convert kWh to mAh (assuming 12V nominal)
-      return energyMAH * pricePerMAH;
+      return totalMah * pricePerMAH;
     }
   } catch (error) {
     console.error(`Error calculating session cost for session ${sessionId}:`, error);
@@ -308,7 +307,7 @@ async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortI
           });
         }
 
-        const sessionCost = await calculateSessionCost(sessionId, energyConsumed);
+        const sessionCost = await calculateSessionCost(sessionId, mAhConsumed);
 
         await pool.query(
           `UPDATE charging_session
@@ -407,7 +406,7 @@ async function finalizeSessionFromDeviceEvent({ deviceId, portNumberInDevice, ac
 
   const energyConsumed = parseFloat(sessionRow.energy_consumed_kwh) || 0;
   const mAhConsumed = parseFloat(sessionRow.energy_consumed_mah) || 0;
-  const sessionCost = await calculateSessionCost(sessionId, energyConsumed);
+  const sessionCost = await calculateSessionCost(sessionId, mAhConsumed);
 
   const updateResult = await pool.query(
     `UPDATE charging_session
@@ -551,33 +550,96 @@ async function processUsageMessage(payload, deviceId, portNumberInDevice, actual
 
   if (validatedConsumption > 0) {
     const sessionKey = `${deviceId}_${portNumberInDevice}`;
-    const currentSessionId = activeChargerSessions[sessionKey];
+    let currentSessionId = activeChargerSessions[sessionKey];
+
+    // If not in memory (e.g., after backend restart), look up active session from DB
+    if (!currentSessionId) {
+      const portIdResult = await pool.query(
+        'SELECT port_id FROM charging_port WHERE device_mqtt_id = $1 AND port_number_in_device = $2',
+        [deviceId, portNumberInDevice]
+      );
+      if (portIdResult.rows.length > 0) {
+        const actualPortId = portIdResult.rows[0].port_id;
+        const sessionResult = await pool.query(
+          'SELECT session_id FROM charging_session WHERE port_id = $1 AND session_status = $2',
+          [actualPortId, SESSION_STATUS.ACTIVE]
+        );
+        if (sessionResult.rows.length > 0) {
+          currentSessionId = sessionResult.rows[0].session_id;
+          // Cache it for future messages
+          activeChargerSessions[sessionKey] = currentSessionId;
+          console.log(`MQTT: Reconnected session ${currentSessionId} for ${sessionKey} from DB`);
+        }
+      }
+    }
 
     if (currentSessionId) {
-      const intervalSeconds = 10;
-      const kwhIncrement = (consumptionAmps * CONFIG.NOMINAL_CHARGING_VOLTAGE_DC * intervalSeconds) / (1000 * 3600);
-      const mAhIncrement = (consumptionAmps * 1000) * (intervalSeconds / 3600);
-
-      await pool.query(
-        `UPDATE charging_session
-         SET energy_consumed_kwh = COALESCE(energy_consumed_kwh, 0) + $1,
-             energy_consumed_mah = COALESCE(energy_consumed_mah, 0) + $2,
-             total_mah_consumed = COALESCE(total_mah_consumed, 0) + $3,
-             last_status_update = $4
-         WHERE session_id = $5`,
-        [kwhIncrement, mAhIncrement, mAhIncrement, serverTimestamp, currentSessionId]
+      const totalMahFromDevice = Number(payload.total_mah) || 0;
+      
+      // Check if this is the first MQTT message for this session (initial_total_mah not set yet)
+      const sessionResult = await pool.query(
+        'SELECT initial_total_mah FROM charging_session WHERE session_id = $1',
+        [currentSessionId]
       );
+      const initialTotalMah = sessionResult.rows[0]?.initial_total_mah;
+      
+      let sessionMahConsumed = 0;
+      let shouldUpdateInitial = false;
+      
+      if (initialTotalMah === null || initialTotalMah === undefined || initialTotalMah === 0) {
+        // First message: establish baseline
+        shouldUpdateInitial = true;
+        sessionMahConsumed = 0; // No consumption recorded yet for this session
+        console.log(`MQTT: Setting initial_total_mah=${totalMahFromDevice} for session ${currentSessionId}`);
+      } else {
+        // Subsequent messages: compute delta
+        if (totalMahFromDevice >= initialTotalMah) {
+          sessionMahConsumed = totalMahFromDevice - initialTotalMah;
+        } else {
+          // ESP32 reset its counter - treat current total as consumed and reset baseline
+          sessionMahConsumed = totalMahFromDevice;
+          shouldUpdateInitial = true;
+          console.warn(`MQTT: ESP32 reset detected for ${sessionKey}. Resetting baseline.`);
+        }
+      }
+      
+      // Calculate kWh from session mAh using nominal voltage (3.7V for Li-ion)
+      const kwhFromSession = (sessionMahConsumed * 3.7) / (1000 * 1000);
 
-      // Update daily consumption via UPSERT on user_usage
+      // Build UPDATE query dynamically based on whether we need to set initial_total_mah
+      if (shouldUpdateInitial) {
+        await pool.query(
+          `UPDATE charging_session
+           SET energy_consumed_kwh = $1,
+               energy_consumed_mah = $2::real,
+               total_mah_consumed = $3,
+               initial_total_mah = $4,
+               last_status_update = $5
+           WHERE session_id = $6`,
+          [kwhFromSession, sessionMahConsumed, sessionMahConsumed, totalMahFromDevice, serverTimestamp, currentSessionId]
+        );
+      } else {
+        await pool.query(
+          `UPDATE charging_session
+           SET energy_consumed_kwh = $1,
+               energy_consumed_mah = $2::real,
+               total_mah_consumed = $3,
+               last_status_update = $4
+           WHERE session_id = $5`,
+          [kwhFromSession, sessionMahConsumed, sessionMahConsumed, serverTimestamp, currentSessionId]
+        );
+      }
+
+      // Update daily consumption - accumulate session delta
       const userResult = await pool.query('SELECT user_id FROM charging_session WHERE session_id = $1', [currentSessionId]);
       if (userResult.rows.length > 0) {
         const userId = userResult.rows[0].user_id;
         await pool.query(
           `INSERT INTO user_usage (user_id, total_consumed_mah, last_reset_at)
-           VALUES ($2, $1, NOW())
+           VALUES ($1, $2::integer, NOW())
            ON CONFLICT (user_id) DO UPDATE
              SET total_consumed_mah = user_usage.total_consumed_mah + EXCLUDED.total_consumed_mah`,
-          [mAhIncrement, userId]
+          [userId, Math.round(sessionMahConsumed)]
         );
       }
 
@@ -691,7 +753,7 @@ async function startSession({ deviceId, portNumber, userId, stationId }) {
   try {
     // Validate user and quota
     const quotaCheck = await subscriptionService.checkUserQuota(userId);
-    if (!quotaCheck.allowed) {
+    if (!quotaCheck.canCharge) {
       throw { status: 403, message: 'Daily quota exceeded', quotaInfo: quotaCheck };
     }
 
@@ -723,8 +785,8 @@ async function startSession({ deviceId, portNumber, userId, stationId }) {
     if (existingSession.rows.length === 0) {
       const sessionResult = await pool.query(
         `INSERT INTO charging_session
-         (user_id, port_id, station_id, start_time, session_status, is_premium, energy_consumed_kwh, total_mah_consumed, last_status_update)
-         VALUES ($1, $2, $3, NOW(), $4, $5, 0, 0, NOW())
+         (user_id, port_id, station_id, start_time, session_status, is_premium, energy_consumed_kwh, total_mah_consumed, initial_total_mah, last_status_update)
+         VALUES ($1, $2, $3, NOW(), $4, $5, 0, 0, NULL, NOW())
          RETURNING session_id`,
         [userId, actualPortId, stationId, SESSION_STATUS.ACTIVE, isPremiumPort]
       );
@@ -821,9 +883,10 @@ async function stopSession({ deviceId, portNumber, userId }) {
 
       const sessionId = dbSession.session_id;
       const energyConsumed = parseFloat(dbSession.energy_consumed_kwh) || 0;
-      const mAhConsumed = parseFloat(dbSession.energy_consumed_mah) || 0;
+      // user_usage.total_consumed_mah is INTEGER, so round to whole number
+      const mAhConsumed = Math.round(parseFloat(dbSession.energy_consumed_mah) || 0);
 
-      const sessionCost = await calculateSessionCost(sessionId, energyConsumed);
+      const sessionCost = await calculateSessionCost(sessionId, mAhConsumed);
 
       await pool.query(
         `UPDATE charging_session

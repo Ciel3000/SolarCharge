@@ -1,0 +1,183 @@
+#include <Arduino.h>
+
+// This sketch is for testing the functionality of the ACS712 current sensors and
+// the relay modules without any WiFi, MQTT, or JSON overhead.
+
+// --- Hardware Pins (Adjust as per your actual wiring for 2 ports) ---
+const int CHARGER_RELAY_PIN_1 = 25; // Example: GPIO 25 for Port 1 relay
+const int CHARGER_RELAY_PIN_2 = 26; // Example: GPIO 26 for Port 2 relay
+const int HALL_EFFECT_SENSOR_PIN_1 = 34; // RECOMMENDED: GPIO 34 for sensor 1
+const int HALL_EFFECT_SENSOR_PIN_2 = 35; // RECOMMENDED: GPIO 35 for sensor 2
+
+// --- ACS712 Sensor Specifications (adjust based on your sensor's version) ---
+// VCC_ESP32 is the ADC reference voltage, which is typically 3.3V for ESP32.
+// The original code had 2.3V which is unusual, but for a test sketch, we'll
+// use the more common 3.3V to ensure accurate calculations.
+const float VCC_ESP32 = 3.3; // ESP32's supply voltage for ADC reference
+// Sensitivity in Volts per Amp (e.g., 0.185 V/A for 5A, 0.100 V/A for 20A, 0.066 V/A for 30A)
+const float SENSOR_SENSITIVITY = 0.066; // Set based on your 30A module
+
+// These will hold the dynamically calibrated quiescent voltages for each sensor.
+float quiescentVoltage1 = 0.0;
+float quiescentVoltage2 = 0.0;
+
+// A small current threshold below which the reading is considered zero, to filter out noise.
+const float CURRENT_THRESHOLD_AMPS = 0.030; // 30mA, as per your original code
+
+// --- Relay Control & State ---
+bool relayState1 = false;
+bool relayState2 = false;
+
+// --- Timing for Relay Testing ---
+unsigned long lastRelayToggleTime = 0;
+const unsigned long RELAY_TOGGLE_INTERVAL_MS = 5000; // Toggle relays every 5 seconds
+
+// Function prototypes
+void calibrateSensors();
+float readCurrent(int sensorPin, float quiescentV);
+void controlRelay(int portNumber, bool state);
+
+void setup() {
+  Serial.begin(115200); // Start serial communication for output
+  delay(100);
+  Serial.println("--- ESP32 Module Tester ---");
+  Serial.println("Monitoring current sensors and cycling relays...");
+
+  // Configure relay pins as OUTPUT
+  pinMode(CHARGER_RELAY_PIN_1, OUTPUT);
+  pinMode(CHARGER_RELAY_PIN_2, OUTPUT);
+
+  // Ensure relays are initially OFF
+  digitalWrite(CHARGER_RELAY_PIN_1, LOW); // Adjust LOW/HIGH based on your relay module
+  digitalWrite(CHARGER_RELAY_PIN_2, LOW); // Adjust LOW/HIGH based on your relay module
+
+  Serial.println("\n--- Calibrating Hall Effect Sensors ---");
+  Serial.println("IMPORTANT: Ensure NO current is flowing through the sensors during this step!");
+  delay(3000); // Give user time to read the message
+
+  // Calibrate both sensors at startup
+  calibrateSensors();
+  
+  Serial.println("\n--- Calibration Complete ---");
+  Serial.println("Ready to test. Check serial output for readings and relay status changes.");
+  
+  lastRelayToggleTime = millis();
+}
+
+void loop() {
+  // --- Relay Cycling for Testing ---
+  if (millis() - lastRelayToggleTime >= RELAY_TOGGLE_INTERVAL_MS) {
+    lastRelayToggleTime = millis(); // Reset the timer
+
+    // Toggle relay 1
+    relayState1 = !relayState1;
+    digitalWrite(CHARGER_RELAY_PIN_1, relayState1 ? HIGH : LOW);
+    Serial.print("Relay 1 toggled ");
+    Serial.println(relayState1 ? "ON" : "OFF");
+    
+    // Toggle relay 2
+    relayState2 = !relayState2;
+    digitalWrite(CHARGER_RELAY_PIN_2, relayState2 ? HIGH : LOW);
+    Serial.print("Relay 2 toggled ");
+    Serial.println(relayState2 ? "ON" : "OFF");
+    
+    Serial.println("----------------------------------------");
+  }
+
+  // --- Current Sensor Readings ---
+  float current1 = readCurrent(HALL_EFFECT_SENSOR_PIN_1, quiescentVoltage1);
+  float current2 = readCurrent(HALL_EFFECT_SENSOR_PIN_2, quiescentVoltage2);
+
+  // Print readings for Sensor 1
+  Serial.print("Sensor 1 -> Current: ");
+  Serial.print(current1, 3);
+  Serial.print(" A\t\t");
+  
+  // Print readings for Sensor 2
+  Serial.print("Sensor 2 -> Current: ");
+  Serial.print(current2, 3);
+  Serial.println(" A");
+
+  delay(500); // Wait half a second before the next reading
+}
+
+/**
+ * @brief Calibrates both ACS712 sensors by taking multiple readings
+ * when no current is flowing to determine their quiescent voltages.
+ */
+void calibrateSensors() {
+  const int numReadings = 500; // Number of readings to average
+  long sumRawValue1 = 0;
+  long sumRawValue2 = 0;
+
+  for (int i = 0; i < numReadings; i++) {
+    sumRawValue1 += analogRead(HALL_EFFECT_SENSOR_PIN_1);
+    sumRawValue2 += analogRead(HALL_EFFECT_SENSOR_PIN_2);
+    delay(2); // Small delay between readings for stability
+  }
+
+  float avgRaw1 = (float)sumRawValue1 / numReadings;
+  quiescentVoltage1 = (avgRaw1 / 4095.0) * VCC_ESP32;
+  
+  float avgRaw2 = (float)sumRawValue2 / numReadings;
+  quiescentVoltage2 = (avgRaw2 / 4095.0) * VCC_ESP32;
+
+  Serial.println("Calibration completed for both sensors.");
+  Serial.print("Sensor 1 Quiescent Voltage: ");
+  Serial.print(quiescentVoltage1, 4);
+  Serial.println("V");
+  Serial.print("Sensor 2 Quiescent Voltage: ");
+  Serial.print(quiescentVoltage2, 4);
+  Serial.println("V");
+}
+
+/**
+ * @brief Reads a specific Hall effect sensor, converts the analog reading to voltage,
+ * and then calculates the current in Amps.
+ * @param sensorPin The GPIO pin connected to the sensor's output.
+ * @param quiescentV The calibrated quiescent voltage for this specific sensor.
+ * @return The calculated current in Amps.
+ */
+float readCurrent(int sensorPin, float quiescentV) {
+  const int numSamples = 100; // Number of samples to average for noise reduction
+  long sumRawValue = 0;
+
+  for (int i = 0; i < numSamples; i++) {
+    sumRawValue += analogRead(sensorPin);
+    // The delayMicroseconds(1000) from your previous code is quite long (1ms).
+    // Let's remove it for faster readings, as analogRead is quite fast on ESP32.
+    // delayMicroseconds(100); // If you need a small delay, use this.
+  }
+  float avgRawValue = (float)sumRawValue / numSamples;
+
+  // Convert the average raw analog value to voltage
+  float voltage = (avgRawValue / 4095.0) * VCC_ESP32;
+
+  // Calculate the current
+  float current = (voltage - quiescentV) / SENSOR_SENSITIVITY;
+
+  // Apply the current threshold: if current is very small, consider it zero
+  if (abs(current) < CURRENT_THRESHOLD_AMPS) {
+    current = 0.0;
+  }
+
+  return current;
+}
+
+/**
+ * @brief This function is not used in this test sketch but is included
+ * for completeness to match the original code's structure.
+ * @param portNumber The charger port number (1 or 2).
+ * @param state The desired state (true for ON, false for OFF).
+ */
+void controlRelay(int portNumber, bool state) {
+  int relayPin;
+  if (portNumber == 1) {
+    relayPin = CHARGER_RELAY_PIN_1;
+  } else if (portNumber == 2) {
+    relayPin = CHARGER_RELAY_PIN_2;
+  } else {
+    return;
+  }
+  digitalWrite(relayPin, state ? HIGH : LOW);
+}

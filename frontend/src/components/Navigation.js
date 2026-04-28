@@ -380,7 +380,7 @@ function Navigation({ navigateTo, handleSignOut }) {
               </div>
             ) : (
               <div className="flex items-center space-x-4">
-                <NotificationBell />
+                {/* <NotificationBell /> */}
                 <button
                   onClick={(e) => {
                     e.preventDefault();
@@ -424,7 +424,7 @@ function Navigation({ navigateTo, handleSignOut }) {
             ) : (
               <>
                 {/* Notification Bell for Mobile (only when logged in and not on landing) */}
-                {session && <NotificationBell />}
+                {/* {session && <NotificationBell />} */}
 
                 {/* Mobile menu button */}
                 <button

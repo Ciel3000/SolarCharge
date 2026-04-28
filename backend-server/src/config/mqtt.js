@@ -2,7 +2,7 @@
 // Creates MQTT client, connects, subscribes, and dispatches messages to chargingService
 
 const mqtt = require('mqtt');
-const { MQTT_TOPICS, ESP32_STATION_CLIENT_ID } = require('../utils/constants');
+const { MQTT_TOPICS, BACKEND_MQTT_CLIENT_ID } = require('../utils/constants');
 
 // MQTT connection options from environment
 const options = {
@@ -11,7 +11,7 @@ const options = {
   protocol: 'mqtts', // TLS/SSL for port 8883
   username: process.env.EMQX_USERNAME,
   password: process.env.EMQX_PASSWORD,
-  clientId: ESP32_STATION_CLIENT_ID,
+  clientId: BACKEND_MQTT_CLIENT_ID,
   clean: true,
   reconnectPeriod: 5000,
   connectTimeout: 30 * 1000,

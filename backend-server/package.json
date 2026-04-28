@@ -19,7 +19,7 @@
     "jsonwebtoken": "^9.0.2",
     "mqtt": "^4.3.7",
     "node-cron": "^4.2.1",
-    "pg": "^8.11.3",
+    "pg": "^8.20.0",
     "uuid": "^11.1.0"
   },
   "devDependencies": {

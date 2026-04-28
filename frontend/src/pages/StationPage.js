@@ -473,12 +473,11 @@ function StationPage({ station, navigateTo }) {
       isUserSession = false;
     }
     
-    // Get current consumption (real-time, updates every 10 seconds)
-    // Show current consumption if there's an active session on this port
-    let currentConsumption = 0;
+    // Get total mAh consumed (cumulative)
+    let totalConsumed = 0;
     if (userActiveSession) {
-      // Show real-time current consumption from the API
-      currentConsumption = consumptionInfo.current_consumption || 0;
+      // Show total mAh consumed from ESP32
+      totalConsumed = consumptionInfo.total_mah || 0;
     }
     
     return {
@@ -486,63 +485,49 @@ function StationPage({ station, navigateTo }) {
       buttonText,
       buttonDisabled,
       isUserSession,
-      consumption: currentConsumption, // Real-time current consumption in mA
+      totalConsumed: totalConsumed, // Total mAh consumed
       energyKwh: 0 // Not available in old endpoint
     };
   }, [chargerPortStatus, portConsumption, activeSessions, stationData?.device_mqtt_id]);
 
-  // Compute slot indicator colors based on state
-  const getSlotIndicatorState = useCallback(() => {
-    const isChargingActive = userActiveSessions > 0;
-    const isStationFull = stationData?.num_premium_ports > 0 && 
-      (stationData.available_premium_ports || 0) === 0;
-    const hasOfflinePort = Object.values(chargerPortStatus).some(
-      (s) => s.status_message === 'offline'
-    );
-
-    if (hasOfflinePort) {
-      return {
-        bg: 'rgba(245,158,11,0.08)',
-        border: '1px solid rgba(245,158,11,0.2)',
-        color: '#b45309',
-        label: 'Partial outage',
-        subLabel: hasOfflinePort ? '1 port offline' : 'Your sessions'
-      };
+  // Compute premium port availability from real-time chargerPortStatus
+  const premiumPortsAvailable = useMemo(() => {
+    if (!stationData) return 0;
+    const deviceId = stationData.device_mqtt_id || 'ESP32_CHARGER_STATION_001';
+    let availableCount = 0;
+    // Check premium ports 1 and 2
+    for (let portNum = 1; portNum <= 2; portNum++) {
+      const statusKey = `${deviceId}_${portNum}`;
+      const statusData = chargerPortStatus[statusKey] || {};
+      // Port is available if it's not offline and not currently ON (charging)
+      if (statusData.status_message !== 'offline' && statusData.charger_state !== 'ON') {
+        availableCount++;
+      }
     }
-    if (isStationFull) {
+    return availableCount;
+  }, [chargerPortStatus, stationData]);
+  const totalPremiumPorts = 2; // Fixed: system has 2 premium ports
+  const isPremiumFull = premiumPortsAvailable === 0 && totalPremiumPorts > 0;
+
+  // Slot indicator state - simplified to show premium port availability
+  const slotIndicatorState = useMemo(() => {
+    if (isPremiumFull) {
       return {
         bg: 'rgba(239,68,68,0.06)',
         border: '1px solid rgba(239,68,68,0.2)',
         color: '#dc2626',
-        label: 'Station full',
+        label: 'No premium slots',
         subLabel: 'All slots occupied'
-      };
-    }
-    if (isChargingActive) {
-      return {
-        bg: 'rgba(56,182,255,0.08)',
-        border: '1px solid rgba(56,182,255,0.2)',
-        color: '#38b6ff',
-        label: 'Charging active',
-        subLabel: `Your sessions: ${userActiveSessions} of ${maxActiveSlots} max`
       };
     }
     return {
       bg: 'rgba(16,185,129,0.08)',
       border: '1px solid rgba(16,185,129,0.2)',
       color: '#059669',
-      label: 'Slots available',
-      subLabel: `Your sessions: ${userActiveSessions} of ${maxActiveSlots} max`
+      label: 'Premium ports',
+      subLabel: `${premiumPortsAvailable} of ${totalPremiumPorts} available`
     };
-  }, [userActiveSessions, maxActiveSlots, stationData, chargerPortStatus]);
-
-  // Compute port counts
-  const portCounts = useMemo(() => {
-    const freePorts = stationData?.num_free_ports || 0;
-    const premiumPorts = stationData?.available_premium_ports || 0;
-    const totalPorts = freePorts + premiumPorts;
-    return { freePorts, premiumPorts, totalPorts };
-  }, [stationData]);
+  }, [premiumPortsAvailable, totalPremiumPorts, isPremiumFull]);
 
   // Show error if no station data
   if (!stationData) {
@@ -576,13 +561,12 @@ function StationPage({ station, navigateTo }) {
     );
   }
 
-const slotIndicatorState = getSlotIndicatorState();
-  const googleMapsUrl = stationData?.latitude && stationData?.longitude 
+  const googleMapsUrl = stationData?.latitude && stationData?.longitude
     ? `https://www.google.com/maps/search/?api=1&query=${stationData.latitude},${stationData.longitude}`
     : null;
 
   const freePortsCount = stationData?.num_free_ports || 0;
-  const premiumPortsCount = stationData?.available_premium_ports || 0;
+  const premiumPortsCount = stationData?.num_premium_ports || 0;
 
   return (
     <div className="min-h-dvh flex flex-col pt-16 relative" style={{ background: '#f1f3e0' }}>
@@ -636,9 +620,11 @@ const slotIndicatorState = getSlotIndicatorState();
           </div>
           <div className="text-right">
             <p className="text-xl font-black" style={{ color: slotIndicatorState.color }}>
-              {activeSessions?.length || 0}/{maxActiveSlots * 2}
+              {premiumPortsAvailable}/{totalPremiumPorts}
             </p>
-            <p className="text-[9px] text-gray-400">active now</p>
+            <p className="text-[9px] text-gray-400">
+              {isPremiumFull ? 'full' : 'available'}
+            </p>
           </div>
         </div>
 
@@ -799,19 +785,9 @@ const slotIndicatorState = getSlotIndicatorState();
                           <div className="flex-1 text-center p-2 rounded-xl"
                             style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.05)' }}>
                             <p className="text-sm font-bold text-gray-800 leading-none">
-                              {consumptionInfo.current_consumption ? (consumptionInfo.current_consumption / 1000).toFixed(2) : '0.00'} kWh
+                              {consumptionInfo.total_mah ? consumptionInfo.total_mah.toLocaleString() : '0'} mAh
                             </p>
                             <p className="text-[9px] text-gray-400 mt-1">consumed</p>
-                          </div>
-                          <div className="flex-1 text-center p-2 rounded-xl"
-                            style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.05)' }}>
-                            <p className="text-sm font-bold text-gray-800 leading-none">--</p>
-                            <p className="text-[9px] text-gray-400 mt-1">duration</p>
-                          </div>
-                          <div className="flex-1 text-center p-2 rounded-xl"
-                            style={{ background: 'rgba(0,0,0,0.03)', border: '1px solid rgba(0,0,0,0.05)' }}>
-                            <p className="text-sm font-bold text-gray-800 leading-none">--</p>
-                            <p className="text-[9px] text-gray-400 mt-1">cost</p>
                           </div>
                         </div>
                       )}

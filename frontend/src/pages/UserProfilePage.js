@@ -521,15 +521,6 @@ function UserProfilePage({ navigateTo }) {
                         <p className="text-sm font-bold text-gray-800">{formData.firstName} {formData.lastName}</p>
                         <p className="text-[11px] text-gray-500 mt-0.5 truncate">{formData.email}</p>
                         {/* Premium badge */}
-                        <div 
-                            className="inline-flex items-center gap-1 mt-1.5 px-2 py-0.5 rounded-lg" 
-                            style={{ background: 'rgba(56,182,255,0.1)', border: '1px solid rgba(56,182,255,0.2)' }}
-                        >
-                            <svg className="w-2.5 h-2.5" style={{ color: '#38b6ff' }} fill="currentColor" viewBox="0 0 20 20">
-                                <path d="M11.3 1.046A1 1 0 0112 1v2.519a7.51 7.51 0 01-.211 1.233l-.534.438-.894 1.233-1.233-.894-.538-.438A1 1 0 0110 7.519V10a1 1 0 01-.894.553l-.447.224-.447-.224A1 1 0 018 10v-.781a7.51 7.51 0 01-.894-.894l-.447-.224-.447.224A7.51 7.51 0 012 8.519V10a1 1 0 001-1V7a1 1 0 011-1h2a1 1 0 011 1v2a7.51 7.51 0 01-1 1.894l-.447.224.447.224A7.51 7.51 0 0110 10v-.781a7.51 7.51 0 01-.894.894l-.447.224.447-.224A7.51 7.51 0 0114 10.519V10a1 1 0 011-1h-2a1 1 0 01-1 1v2a7.51 7.51 01.894.894l.447.224.447-.224A7.51 7.51 0 0116 11v1.519a7.51 7.51 0 01-.211 1.233l-.894.894-.447.224-.447-.224-.894-.894A7.51 7.51 0 0114 10.519V10a1 1 0 01-1 1h-2a1 1 0 01-1-1v-1.519a7.51 7.51 0 01.211-1.233l1.233-.894.894-.894.447-.224.447.224.894.894 1.233.894A7.51 7.51 0 0118 14.519V14a1 1 0 01-1 1h-1a1 1 0 01-1-1v-.481z"/>
-                            </svg>
-                            <span className="text-[9px] font-bold" style={{ color: '#38b6ff' }}>Premium</span>
-                        </div>
                     </div>
                     
                     {/* Edit button - Opens edit profile modal */}
@@ -540,7 +531,7 @@ function UserProfilePage({ navigateTo }) {
                         style={{ background: 'rgba(56,182,255,0.1)', border: '1px solid rgba(56,182,255,0.2)' }}
                     >
                         <svg className="w-4 h-4" style={{ color: '#38b6ff' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 15.232l5.074 5.074M5.668 5.668a2 2 0 010-2.828l1.768-1.768a2 2 0 012.828 0l1.768 1.768a2 2 0 010 2.828l-1.768 1.768a2 2 0 01-2.828 0l-1.768-1.768a2 2 0 010-2.828z"/>
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
                         </svg>
                     </button>
                 </div>
@@ -687,7 +678,7 @@ function UserProfilePage({ navigateTo }) {
                         </button>
                         
                         {/* Notifications toggle */}
-                        <div className="flex items-center justify-between px-3.5 py-3 transition-all hover:bg-gray-50">
+                        {/* <div className="flex items-center justify-between px-3.5 py-3 transition-all hover:bg-gray-50">
                             <div className="flex items-center gap-2.5">
                                 <div className="w-7 h-7 rounded-[9px] flex items-center justify-center" style={{ background: 'rgba(16,185,129,0.1)' }}>
                                     <svg className="w-3.5 h-3.5" style={{ color: '#059669' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -702,7 +693,7 @@ function UserProfilePage({ navigateTo }) {
                             <div className="w-9 h-5 rounded-full relative cursor-pointer transition-colors" style={{ background: '#10b981' }}>
                                 <div className="absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all" style={{ left: 'calc(100% - 18px)' }}></div>
                             </div>
-                        </div>
+                        </div> */}
                     </div>
 
                     {/* App Section */}
@@ -765,7 +756,7 @@ function UserProfilePage({ navigateTo }) {
                         </button>
                         
                         {/* Delete account (disabled) */}
-                        <div className="flex items-center gap-2.5 px-3.5 py-3 opacity-50">
+                        {/* <div className="flex items-center gap-2.5 px-3.5 py-3 opacity-50">
                             <div className="w-7 h-7 rounded-[9px] flex items-center justify-center" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.12)' }}>
                                 <svg className="w-3.5 h-3.5" style={{ color: '#ef4444' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
@@ -775,7 +766,7 @@ function UserProfilePage({ navigateTo }) {
                                 <p className="text-xs font-semibold" style={{ color: '#ef4444' }}>Delete account</p>
                                 <p className="text-[10px]" style={{ color: 'rgba(220,38,38,0.5)' }}>Permanently remove all data</p>
                             </div>
-                        </div>
+                        </div> */}
                     </div>
 
                     {/* Bottom spacing for navigation bar */}

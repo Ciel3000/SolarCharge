@@ -46,17 +46,21 @@ async function checkUserQuota(userId) {
 
     const totalLimit = Number(quotaRes.rows[0]?.total_limit || 0);
     const totalConsumed = Number(usageRes.rows[0]?.total_consumed_mah || 0);
+    const remaining = Math.max(0, totalLimit - totalConsumed);
+    const canCharge = totalConsumed < totalLimit;
 
     return {
-      allowed: totalConsumed < totalLimit,
+      canCharge,
+      reason: canCharge ? 'Quota available' : 'Daily quota reached. Please purchase an extension.',
       totalLimit,
       totalConsumed,
-      remaining: Math.max(0, totalLimit - totalConsumed),
+      remaining,
     };
   } catch (error) {
     console.error('Error checking user quota:', error);
     return {
-      allowed: false,
+      canCharge: false,
+      reason: 'Error checking quota',
       totalLimit: 0,
       totalConsumed: 0,
       remaining: 0,

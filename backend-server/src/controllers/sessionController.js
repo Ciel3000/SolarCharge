@@ -31,7 +31,14 @@ async function getActiveSessionsPublic(req, res, next) {
       WHERE cs.session_status = $1
       ORDER BY cs.start_time DESC
     `, [SESSION_STATUS.ACTIVE]);
-    res.json(result.rows);
+
+    // Transform to match frontend expectations: alias port_number_in_device as port_number
+    const activeSessions = result.rows.map(session => ({
+      ...session, // include all original fields
+      port_number: session.port_number_in_device // add alias for frontend compatibility
+    }));
+
+    res.json(activeSessions);
   } catch (err) {
     next(err);
   }
@@ -57,7 +64,20 @@ async function getUserActiveSessions(req, res, next) {
       WHERE cs.user_id = $1 AND cs.session_status = $2
       ORDER BY cs.start_time DESC
     `, [user_id, SESSION_STATUS.ACTIVE]);
-    res.json(result.rows);
+
+    // Transform to match frontend expectations: alias port_number_in_device as port_number
+    const sessions = result.rows.map(row => ({
+      session_id: row.session_id,
+      start_time: row.start_time,
+      total_mah_consumed: row.total_mah_consumed,
+      energy_consumed_kwh: row.energy_consumed_kwh,
+      port_number: row.port_number_in_device, // Alias to match frontend
+      device_mqtt_id: row.device_mqtt_id,
+      station_name: row.station_name,
+      station_id: row.station_id
+    }));
+
+    res.json(sessions);
   } catch (err) {
     next(err);
   }
