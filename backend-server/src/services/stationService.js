@@ -15,7 +15,7 @@ const {
 // Public: Get all active stations with summary
 function getAllStations() {
   return pool.query(`
-    SELECT 
+    SELECT
       s.station_id,
       s.station_name,
       s.location_description,
@@ -26,12 +26,13 @@ function getAllStations() {
       s.price_per_mah,
       s.num_free_ports,
       s.num_premium_ports,
+      s.device_mqtt_id,
       COUNT(p.port_id) as total_ports,
       COUNT(CASE WHEN p.current_status = 'available' THEN 1 END) as available_ports,
       COUNT(CASE WHEN p.current_status = 'available' AND p.is_premium = true THEN 1 END) as available_premium_ports
     FROM charging_station s
     LEFT JOIN charging_port p ON s.station_id = p.station_id
-    GROUP BY s.station_id
+    GROUP BY s.station_id, s.device_mqtt_id
     ORDER BY s.station_name
   `).then(res => res.rows);
 }
@@ -124,13 +125,22 @@ async function createStation({
 
     const stationId = stationResult.rows[0].station_id;
 
-    // Only create premium ports (since system detects them)
-    for (let i = 0; i < num_premium_ports; i++) {
+    // Create all ports (both free and premium)
+    const totalPorts = num_free_ports + num_premium_ports;
+    for (let i = 0; i < totalPorts; i++) {
+      const isPremium = i >= num_free_ports; // First num_free_ports are free, rest are premium
       await client.query(
         `INSERT INTO charging_port
-         (station_id, port_number_in_device, is_premium, is_occupied, current_status, device_mqtt_id)
-         VALUES ($1, $2, true, false, $3, $4)`,
-        [stationId, i + 1, PORT_STATUS.AVAILABLE, device_mqtt_id]
+         (station_id, port_number, port_number_in_device, port_type, is_premium, is_occupied, current_status, device_mqtt_id)
+         VALUES ($1, $2, $2, $3, $4, false, $5, $6)`,
+        [
+          stationId,
+          i + 1,
+          'Type2',
+          isPremium,
+          PORT_STATUS.AVAILABLE,
+          device_mqtt_id
+        ]
       );
     }
 
@@ -357,23 +367,201 @@ async function getSessionsAdmin({ range = 'week', station = 'all', status = 'all
 }
 
 async function getRevenueStats({ range = 'week' }) {
-  let timeFilter;
-  switch (range) {
-    case 'day': timeFilter = "start_time > CURRENT_DATE"; break;
-    case 'week': timeFilter = "start_time > CURRENT_DATE - INTERVAL '7 days'"; break;
-    case 'month': timeFilter = "start_time > CURRENT_DATE - INTERVAL '30 days'"; break;
-    case 'year': timeFilter = "start_time > CURRENT_DATE - INTERVAL '365 days'"; break;
-    default: timeFilter = "start_time > CURRENT_DATE - INTERVAL '7 days'";
+  try {
+    // --- Payments revenue queries only (subscriptions, quota extensions, etc.) ---
+    const dailyPaymentsQuery = `
+      SELECT
+        DATE(created_at) as date,
+        SUM(amount) as amount,
+        COUNT(*) as sessions
+      FROM
+        payments
+      WHERE
+        status = 'completed' AND created_at > CURRENT_DATE - INTERVAL '7 days'
+      GROUP BY
+        DATE(created_at)
+      ORDER BY
+        date
+    `;
+
+    const weeklyPaymentsQuery = `
+      SELECT
+        DATE_TRUNC('week', created_at) as date,
+        SUM(amount) as amount,
+        COUNT(*) as sessions
+      FROM
+        payments
+      WHERE
+        status = 'completed' AND created_at > CURRENT_DATE - INTERVAL '28 days'
+      GROUP BY
+        DATE_TRUNC('week', created_at)
+      ORDER BY
+        date
+    `;
+
+    const monthlyPaymentsQuery = `
+      SELECT
+        DATE_TRUNC('month', created_at) as date,
+        SUM(amount) as amount,
+        COUNT(*) as sessions
+      FROM
+        payments
+      WHERE
+        status = 'completed' AND created_at > CURRENT_DATE - INTERVAL '6 months'
+      GROUP BY
+        DATE_TRUNC('month', created_at)
+      ORDER BY
+        date
+    `;
+
+    const totalPaymentsQuery = `
+      SELECT SUM(amount) as total FROM payments WHERE status = 'completed'
+    `;
+
+    // Execute all queries in parallel
+    const [dailyPayments, weeklyPayments, monthlyPayments, totalPayments] = await Promise.all([
+      pool.query(dailyPaymentsQuery),
+      pool.query(weeklyPaymentsQuery),
+      pool.query(monthlyPaymentsQuery),
+      pool.query(totalPaymentsQuery)
+    ]);
+
+    // Convert rows to expected format with proper number conversion
+    const formatRows = (rows) => {
+      return rows.map(item => ({
+        date: item.date,
+        amount: Number(item.amount) || 0,
+        sessions: Number(item.sessions) || 0
+      })).sort((a, b) => new Date(a.date) - new Date(b.date));
+    };
+
+    const daily = formatRows(dailyPayments.rows);
+    const weekly = formatRows(weeklyPayments.rows);
+    const monthly = formatRows(monthlyPayments.rows);
+    const total = Number(totalPayments.rows[0]?.total) || 0;
+
+    return { daily, weekly, monthly, total };
+  } catch (error) {
+    console.error('Error fetching revenue stats:', error);
+    throw error;
   }
-  const result = await pool.query(`
-    SELECT
-      COALESCE(SUM(CASE WHEN start_time > CURRENT_DATE THEN cost ELSE 0 END), 0) as today,
-      COALESCE(SUM(CASE WHEN start_time > CURRENT_DATE - INTERVAL '7 days' THEN cost ELSE 0 END), 0) as week,
-      COALESCE(SUM(CASE WHEN start_time > CURRENT_DATE - INTERVAL '30 days' THEN cost ELSE 0 END), 0) as month
-    FROM charging_session
-    WHERE ${timeFilter}
-  `);
-  return result.rows[0];
+}
+
+// Get subscription analytics: most sold plans, revenue by plan, active subscriptions
+async function getSubscriptionAnalytics() {
+  try {
+    // Query to get plan-level aggregation from paypal_orders (successful completed payments)
+    const planAnalyticsQuery = `
+      SELECT
+        sp.plan_id,
+        sp.plan_name,
+        sp.price,
+        sp.duration_type,
+        COUNT(po.plan_id) as total_sales,
+        SUM(po.amount) as total_revenue,
+        MAX(po.created_at) as last_sale_date
+      FROM
+        paypal_orders po
+      JOIN
+        subscription_plans sp ON po.plan_id = sp.plan_id
+      WHERE
+        po.status = 'completed' AND po.plan_id IS NOT NULL
+      GROUP BY
+        sp.plan_id, sp.plan_name, sp.price, sp.duration_type
+      ORDER BY
+        total_sales DESC
+      LIMIT 10
+    `;
+
+    // Query to get active subscriptions count by plan
+    const activeSubscriptionsQuery = `
+      SELECT
+        sp.plan_id,
+        sp.plan_name,
+        COUNT(us.user_subscription_id) as active_count
+      FROM
+        user_subscription us
+      JOIN
+        subscription_plans sp ON us.plan_id = sp.plan_id
+      WHERE
+        us.is_active = true AND us.end_date > NOW()
+      GROUP BY
+        sp.plan_id, sp.plan_name
+      ORDER BY
+        active_count DESC
+    `;
+
+    // Query to get payment type breakdown
+    const paymentTypeBreakdownQuery = `
+      SELECT
+        payment_type,
+        COUNT(*) as count,
+        SUM(amount) as total_amount
+      FROM
+        payments
+      WHERE
+        status = 'completed'
+      GROUP BY
+        payment_type
+      ORDER BY
+        total_amount DESC
+    `;
+
+    // Execute all queries with individual error handling
+    let planAnalytics, activeSubscriptions, paymentBreakdown;
+    try {
+      planAnalytics = await pool.query(planAnalyticsQuery);
+    } catch (e) {
+      console.error('Plan analytics query failed:', e.message);
+      throw new Error(`Plan analytics query failed: ${e.message}`);
+    }
+    try {
+      activeSubscriptions = await pool.query(activeSubscriptionsQuery);
+    } catch (e) {
+      console.error('Active subscriptions query failed:', e.message);
+      throw new Error(`Active subscriptions query failed: ${e.message}`);
+    }
+    try {
+      paymentBreakdown = await pool.query(paymentTypeBreakdownQuery);
+    } catch (e) {
+      console.error('Payment breakdown query failed:', e.message);
+      throw new Error(`Payment breakdown query failed: ${e.message}`);
+    }
+
+    // Format plan analytics with proper number conversion
+    const topPlans = planAnalytics.rows.map(row => ({
+      planId: row.plan_id,
+      planName: row.plan_name,
+      price: Number(row.price) || 0,
+      durationType: row.duration_type,
+      totalSales: Number(row.total_sales) || 0,
+      totalRevenue: Number(row.total_revenue) || 0,
+      lastSaleDate: row.last_sale_date
+    }));
+
+    // Format active subscriptions
+    const activeSubsByPlan = activeSubscriptions.rows.map(row => ({
+      planId: row.plan_id,
+      planName: row.plan_name,
+      activeCount: Number(row.active_count) || 0
+    }));
+
+    // Format payment breakdown
+    const paymentTypes = paymentBreakdown.rows.map(row => ({
+      paymentType: row.payment_type,
+      count: Number(row.count) || 0,
+      totalAmount: Number(row.total_amount) || 0
+    }));
+
+    return {
+      topPlans,
+      activeSubscriptions: activeSubsByPlan,
+      paymentBreakdown: paymentTypes
+    };
+  } catch (error) {
+    console.error('Error fetching subscription analytics:', error);
+    throw error;
+  }
 }
 
 async function getUsageStats({ range = 'week' }) {
@@ -472,6 +660,7 @@ module.exports = {
   getBatteryLevels,
   getSessionsAdmin,
   getRevenueStats,
+  getSubscriptionAnalytics,
   getUsageStats,
   getAdminLogs,
 

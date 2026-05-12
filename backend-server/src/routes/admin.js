@@ -28,6 +28,7 @@ router.delete('/stations/:stationId', adminController.deleteStation);
 // Sessions and reports
 router.get('/sessions', adminController.getSessionsAdmin);
 router.get('/revenue', adminController.getRevenueStats);
+router.get('/revenue/subscription-analytics', adminController.getSubscriptionAnalytics);
 router.get('/usage', adminController.getUsageStats);
 
 // Logs

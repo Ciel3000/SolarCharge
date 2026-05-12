@@ -13,7 +13,6 @@ const {
   LOG_SOURCES,
   MQTT_TOPICS,
   CONFIG,
-  ESP32_STATION_CLIENT_ID,
 } = require('../utils/constants');
 
 // Destructure configuration constants for direct use
@@ -677,7 +676,8 @@ async function handleMqttMessage(topic, message) {
 
   try {
     let payload;
-    if (topic === `${MQTT_TOPICS.STATUS}${ESP32_STATION_CLIENT_ID}` && messageString === 'offline') {
+    // Handle plain-text "offline" LWT from any ESP32 station
+    if (topic.startsWith(MQTT_TOPICS.STATUS) && messageString === 'offline') {
       payload = {
         status: 'offline',
         charger_state: CHARGER_STATES.UNKNOWN,
@@ -699,7 +699,8 @@ async function handleMqttMessage(topic, message) {
       (topic.startsWith(MQTT_TOPICS.USAGE) || topic.startsWith(MQTT_TOPICS.STATUS)) &&
       (portNumberInDevice === undefined || portNumberInDevice < 1)
     ) {
-      if (topic === `${MQTT_TOPICS.STATUS}${ESP32_STATION_CLIENT_ID}` && (payload.status === 'online' || payload.status === 'offline')) {
+      // Allow any station's online/offline status (station-level message, no port_number)
+      if (payload.status === 'online' || payload.status === 'offline') {
         console.log(`MQTT: Station ${deviceId} is ${payload.status}. No specific port_id.`);
         return;
       }

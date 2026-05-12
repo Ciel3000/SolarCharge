@@ -47,7 +47,9 @@ function SignUpPage({ navigateTo }) {
         options: {
           data: {
             referral_code: referralCode || null
-          }
+          },
+          // After email confirmation, redirect to landing page
+          emailRedirectTo: `${window.location.origin}/landing`
         }
       });
 

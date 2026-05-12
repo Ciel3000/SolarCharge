@@ -196,6 +196,16 @@ async function getRevenueStats(req, res, next) {
   }
 }
 
+// Subscription analytics (most sold plans, active subscriptions, payment breakdown)
+async function getSubscriptionAnalytics(req, res, next) {
+  try {
+    const analytics = await stationService.getSubscriptionAnalytics();
+    res.json(analytics);
+  } catch (err) {
+    next(err);
+  }
+}
+
 // Usage stats
 async function getUsageStats(req, res, next) {
   const { range = 'week' } = req.query;
@@ -289,10 +299,11 @@ module.exports = {
   updateStation,
   deleteStation,
 
-  // Sessions & Reports
-  getSessionsAdmin,
-  getRevenueStats,
-  getUsageStats,
+   // Sessions & Reports
+   getSessionsAdmin,
+   getRevenueStats,
+   getSubscriptionAnalytics,
+   getUsageStats,
 
   // Logs
   getAdminLogs,

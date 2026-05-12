@@ -12,33 +12,40 @@ function AdminRevenue({ navigateTo, handleSignOut }) {
     monthly: [],
     total: 0
   });
+  const [subscriptionAnalytics, setSubscriptionAnalytics] = useState({
+    topPlans: [],
+    activeSubscriptions: [],
+    paymentBreakdown: []
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [initialLoad, setInitialLoad] = useState(true);
   const [activeTab, setActiveTab] = useState('daily'); // 'daily', 'weekly', 'monthly'
-  
+  const [activeAnalyticsTab, setActiveAnalyticsTab] = useState('top-plans'); // 'top-plans', 'active', 'payment-types'
+
   useEffect(() => {
     // Only fetch data if we haven't already initialized (prevents refetch on tab switch)
     if (initialLoad) {
       fetchRevenueData();
+      fetchSubscriptionAnalytics();
     } else {
       setLoading(false); // We already have data, no need to load
     }
   }, [initialLoad]);
-  
+
   async function fetchRevenueData() {
     try {
       setLoading(true);
       setError(null);
       setInitialLoad(false);
-      
+
       // Get authentication token
       const { data: { session } } = await supabase.auth.getSession();
-      
+
       if (!session) {
         throw new Error("Not authenticated");
       }
-      
+
       // Fetch revenue data from backend
       const res = await fetch(`${BACKEND_URL}/api/admin/revenue`, {
         headers: {
@@ -46,11 +53,11 @@ function AdminRevenue({ navigateTo, handleSignOut }) {
           'Content-Type': 'application/json'
         }
       });
-      
+
       if (!res.ok) {
         throw new Error(`Error fetching revenue data: ${res.statusText}`);
       }
-      
+
       const data = await res.json();
       setRevenueData(data);
     } catch (error) {
@@ -58,6 +65,35 @@ function AdminRevenue({ navigateTo, handleSignOut }) {
       setError(error.message);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function fetchSubscriptionAnalytics() {
+    try {
+      // Get authentication token
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session) {
+        throw new Error("Not authenticated");
+      }
+
+      // Fetch subscription analytics from backend
+      const res = await fetch(`${BACKEND_URL}/api/admin/revenue/subscription-analytics`, {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!res.ok) {
+        throw new Error(`Error fetching subscription analytics: ${res.statusText}`);
+      }
+
+      const data = await res.json();
+      setSubscriptionAnalytics(data);
+    } catch (error) {
+      console.error("Subscription analytics error:", error);
+      // Don't set main error, just log it
     }
   }
   
@@ -280,14 +316,201 @@ function AdminRevenue({ navigateTo, handleSignOut }) {
                       ))}
                     </tbody>
                   </table>
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
+                 </div>
+               </div>
+             </div>
+
+             {/* Subscription Analytics Section */}
+             <div className="relative backdrop-blur-xl rounded-2xl shadow-2xl border border-white/30 overflow-hidden mb-8" style={{ 
+               background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
+               boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'
+             }}>
+               <div className="p-6">
+                 <h2 className="text-2xl font-bold mb-4" style={{ color: '#000b3d' }}>
+                   Subscription Analytics
+                 </h2>
+
+                 {/* Analytics Tabs */}
+                 <div className="flex flex-wrap gap-2 mb-6">
+                   {[
+                     { id: 'top-plans', label: 'Top Selling Plans', icon: '🏆' },
+                     { id: 'active', label: 'Active Subscriptions', icon: '📊' },
+                     { id: 'payment-types', label: 'Payment Methods', icon: '💳' }
+                   ].map(tab => (
+                     <button
+                       key={tab.id}
+                       onClick={() => setActiveAnalyticsTab(tab.id)}
+                       className="px-4 py-2 rounded-full font-semibold transition-all duration-200 flex items-center gap-2"
+                       style={{
+                         background: activeAnalyticsTab === tab.id
+                           ? 'linear-gradient(135deg, #38b6ff 0%, #2563eb 100%)'
+                           : 'rgba(255, 255, 255, 0.3)',
+                         color: activeAnalyticsTab === tab.id ? '#ffffff' : '#000b3d',
+                         boxShadow: activeAnalyticsTab === tab.id
+                           ? '0 4px 12px rgba(56, 182, 255, 0.4)'
+                           : 'none'
+                       }}
+                     >
+                       <span>{tab.icon}</span>
+                       <span>{tab.label}</span>
+                     </button>
+                   ))}
+                 </div>
+
+                 {/* Top Selling Plans Chart */}
+                 {activeAnalyticsTab === 'top-plans' && (
+                   <div className="space-y-4">
+                     {subscriptionAnalytics.topPlans.length === 0 ? (
+                       <p className="text-center py-8" style={{ color: '#000b3d', opacity: 0.6 }}>
+                         No subscription sales data available yet.
+                       </p>
+                     ) : (
+                       subscriptionAnalytics.topPlans.map((plan, index) => {
+                         const maxSales = Math.max(...subscriptionAnalytics.topPlans.map(p => p.totalSales));
+                         const barWidth = maxSales > 0 ? (plan.totalSales / maxSales) * 100 : 0;
+                         const maxRevenue = Math.max(...subscriptionAnalytics.topPlans.map(p => p.totalRevenue));
+                         const revenueBarWidth = maxRevenue > 0 ? (plan.totalRevenue / maxRevenue) * 100 : 0;
+
+                         return (
+                           <div key={plan.planId} className="bg-white/30 rounded-xl p-4 backdrop-blur-sm">
+                             <div className="flex justify-between items-center mb-2">
+                               <div>
+                                 <h3 className="font-bold text-lg" style={{ color: '#000b3d' }}>
+                                   #{index + 1} {plan.planName}
+                                 </h3>
+                                 <p className="text-sm" style={{ color: '#000b3d', opacity: 0.7 }}>
+                                   {plan.durationType} • {formatCurrency(plan.price)}
+                                 </p>
+                               </div>
+                               <div className="text-right">
+                                 <p className="text-2xl font-bold" style={{ color: '#10b981' }}>
+                                   {plan.totalSales} sales
+                                 </p>
+                                 <p className="text-sm font-semibold" style={{ color: '#38b6ff' }}>
+                                   {formatCurrency(plan.totalRevenue)} revenue
+                                 </p>
+                               </div>
+                             </div>
+                             {/* Sales bar */}
+                             <div className="h-3 bg-white/50 rounded-full overflow-hidden mb-2">
+                               <div
+                                 className="h-full rounded-full transition-all duration-500"
+                                 style={{
+                                   width: `${barWidth}%`,
+                                   background: 'linear-gradient(90deg, #10b981 0%, #34d399 100%)'
+                                 }}
+                               ></div>
+                             </div>
+                             {/* Revenue bar */}
+                             <div className="h-2 bg-white/30 rounded-full overflow-hidden">
+                               <div
+                                 className="h-full rounded-full"
+                                 style={{
+                                   width: `${revenueBarWidth}%`,
+                                   background: 'linear-gradient(90deg, #38b6ff 0%, #60a5fa 100%)'
+                                 }}
+                               ></div>
+                             </div>
+                           </div>
+                         );
+                       })
+                     )}
+                   </div>
+                 )}
+
+                 {/* Active Subscriptions Chart */}
+                 {activeAnalyticsTab === 'active' && (
+                   <div className="space-y-4">
+                     {subscriptionAnalytics.activeSubscriptions.length === 0 ? (
+                       <p className="text-center py-8" style={{ color: '#000b3d', opacity: 0.6 }}>
+                         No active subscriptions data available.
+                       </p>
+                     ) : (
+                       subscriptionAnalytics.activeSubscriptions.map((sub, index) => {
+                         const maxCount = Math.max(...subscriptionAnalytics.activeSubscriptions.map(s => s.activeCount));
+                         const barWidth = maxCount > 0 ? (sub.activeCount / maxCount) * 100 : 0;
+
+                         return (
+                           <div key={sub.planId} className="bg-white/30 rounded-xl p-4 backdrop-blur-sm">
+                             <div className="flex justify-between items-center mb-2">
+                               <div>
+                                 <h3 className="font-bold text-lg" style={{ color: '#000b3d' }}>
+                                   #{index + 1} {sub.planName}
+                                 </h3>
+                               </div>
+                               <div className="text-right">
+                                 <p className="text-2xl font-bold" style={{ color: '#9333ea' }}>
+                                   {sub.activeCount} active
+                                 </p>
+                               </div>
+                             </div>
+                             <div className="h-4 bg-white/50 rounded-full overflow-hidden">
+                               <div
+                                 className="h-full rounded-full"
+                                 style={{
+                                   width: `${barWidth}%`,
+                                   background: 'linear-gradient(90deg, #9333ea 0%, #a855f7 100%)'
+                                 }}
+                               ></div>
+                             </div>
+                           </div>
+                         );
+                       })
+                     )}
+                   </div>
+                 )}
+
+                 {/* Payment Types Breakdown */}
+                 {activeAnalyticsTab === 'payment-types' && (
+                   <div className="space-y-4">
+                     {subscriptionAnalytics.paymentBreakdown.length === 0 ? (
+                       <p className="text-center py-8" style={{ color: '#000b3d', opacity: 0.6 }}>
+                         No payment data available.
+                       </p>
+                     ) : (
+                       subscriptionAnalytics.paymentBreakdown.map((payment, index) => {
+                         const maxAmount = Math.max(...subscriptionAnalytics.paymentBreakdown.map(p => p.totalAmount));
+                         const barWidth = maxAmount > 0 ? (payment.totalAmount / maxAmount) * 100 : 0;
+
+                         return (
+                           <div key={payment.paymentType} className="bg-white/30 rounded-xl p-4 backdrop-blur-sm">
+                             <div className="flex justify-between items-center mb-2">
+                               <div>
+                                 <h3 className="font-bold text-lg capitalize" style={{ color: '#000b3d' }}>
+                                   {payment.paymentType}
+                                 </h3>
+                               </div>
+                               <div className="text-right">
+                                 <p className="text-2xl font-bold" style={{ color: '#f59e0b' }}>
+                                   {formatCurrency(payment.totalAmount)}
+                                 </p>
+                                 <p className="text-sm" style={{ color: '#000b3d', opacity: 0.7 }}>
+                                   {payment.count} transactions
+                                 </p>
+                               </div>
+                             </div>
+                             <div className="h-4 bg-white/50 rounded-full overflow-hidden">
+                               <div
+                                 className="h-full rounded-full"
+                                 style={{
+                                   width: `${barWidth}%`,
+                                   background: 'linear-gradient(90deg, #f59e0b 0%, #fbbf24 100%)'
+                                 }}
+                               ></div>
+                             </div>
+                           </div>
+                         );
+                       })
+                     )}
+                   </div>
+                 )}
+               </div>
+             </div>
+           </>
+         )}
+       </div>
+     </div>
+   );
+ }
 
 export default AdminRevenue; 
