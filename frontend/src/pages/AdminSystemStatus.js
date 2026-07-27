@@ -1,8 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { supabase } from '../supabaseClient';
 import Navigation from '../components/Navigation';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const API_BASE = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
 
 function AdminSystemStatus({ navigateTo, handleSignOut }) {
   const [systemStatus, setSystemStatus] = useState({
@@ -81,16 +80,16 @@ function AdminSystemStatus({ navigateTo, handleSignOut }) {
   async function fetchSystemStatus() {
     try {
       // Get authentication token
-      const { data: { session } } = await supabase.auth.getSession();
+      const token = localStorage.getItem('access_token');
       
-      if (!session) {
+      if (!token) {
         throw new Error("Not authenticated");
       }
       
       // Fetch system status from backend
-      const res = await fetch(`${BACKEND_URL}/api/admin/system/status`, {
+      const res = await fetch(`${API_BASE}/api/admin/system/status`, {
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
@@ -110,16 +109,16 @@ function AdminSystemStatus({ navigateTo, handleSignOut }) {
   async function fetchBatteryLevels() {
     try {
       // Get authentication token
-      const { data: { session } } = await supabase.auth.getSession();
+      const token = localStorage.getItem('access_token');
       
-      if (!session) {
+      if (!token) {
         throw new Error("Not authenticated");
       }
       
       // Fetch battery levels from backend
-      const res = await fetch(`${BACKEND_URL}/api/admin/stations/battery`, {
+      const res = await fetch(`${API_BASE}/api/admin/stations/battery`, {
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
@@ -141,9 +140,9 @@ function AdminSystemStatus({ navigateTo, handleSignOut }) {
       setLoading(true);
       
       // Get authentication token
-      const { data: { session } } = await supabase.auth.getSession();
+      const token = localStorage.getItem('access_token');
       
-      if (!session) {
+      if (!token) {
         throw new Error("Not authenticated");
       }
       
@@ -155,9 +154,9 @@ function AdminSystemStatus({ navigateTo, handleSignOut }) {
       }).toString();
       
       // Fetch logs from backend
-      const res = await fetch(`${BACKEND_URL}/api/admin/logs?${queryParams}`, {
+      const res = await fetch(`${API_BASE}/api/admin/logs?${queryParams}`, {
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });

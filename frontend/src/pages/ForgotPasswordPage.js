@@ -1,7 +1,8 @@
 // frontend/src/pages/ForgotPasswordPage.js
 import React, { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { supabase } from '../supabaseClient';
+
+const API_BASE = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
 
 function ForgotPasswordPage({ navigateTo }) {
   const [email, setEmail] = useState('');
@@ -23,16 +24,15 @@ function ForgotPasswordPage({ navigateTo }) {
 
     try {
       setLoading(true);
-      const redirectUrl = process.env.REACT_APP_SITE_URL 
-        ? `${process.env.REACT_APP_SITE_URL}/reset-password`
-        : `${window.location.origin}/reset-password`;
-      
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: redirectUrl,
+      const res = await fetch(`${API_BASE}/api/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
       });
 
-      if (error) {
-        throw error;
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to send reset email');
       }
 
       setMessage('Password reset email sent! Check your inbox for further instructions.');

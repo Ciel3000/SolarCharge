@@ -7,14 +7,13 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../supabaseClient';
 import Navigation from '../components/Navigation';
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const API_BASE = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
 
 // =============================================================================
 // Main Component
@@ -71,12 +70,15 @@ function AdminPlans({ navigateTo, handleSignOut }) {
       setError('');
       setInitialLoad(false);
       
-      const { data, error: fetchError } = await supabase
-        .from('subscription_plans')
-        .select('*')
-        .order('price', { ascending: true });
+      const res = await fetch(`${API_BASE}/api/subscription/plans/all`, {
+        headers: { 'Authorization': `Bearer ${session?.access_token}` },
+      });
 
-      if (fetchError) throw fetchError;
+      if (!res.ok) {
+        throw new Error('Failed to fetch plans');
+      }
+
+      const data = await res.json();
       setPlans(data || []);
     } catch (err) {
       console.error('Error fetching subscription plans:', err);
@@ -84,7 +86,7 @@ function AdminPlans({ navigateTo, handleSignOut }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [session]);
 
   // Load plans on component mount
   useEffect(() => {
@@ -210,23 +212,33 @@ function AdminPlans({ navigateTo, handleSignOut }) {
         paypal_link: formData.paypal_link.trim() || null
       };
 
-      let result;
+      let res;
       if (modalMode === 'create') {
         // Insert new plan
-        result = await supabase
-          .from('subscription_plans')
-          .insert([planData])
-          .select();
+        res = await fetch(`${API_BASE}/api/subscription/plans`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session?.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(planData),
+        });
       } else {
         // Update existing plan
-        result = await supabase
-          .from('subscription_plans')
-          .update(planData)
-          .eq('plan_id', selectedPlan.plan_id)
-          .select();
+        res = await fetch(`${API_BASE}/api/subscription/plans/${selectedPlan.plan_id}`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${session?.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(planData),
+        });
       }
 
-      if (result.error) throw result.error;
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || `Failed to ${modalMode === 'create' ? 'create' : 'update'} plan`);
+      }
 
       setSuccess(`Plan ${modalMode === 'create' ? 'created' : 'updated'} successfully!`);
       setShowModal(false);
@@ -249,13 +261,14 @@ function AdminPlans({ navigateTo, handleSignOut }) {
       setSuccess('');
 
       // Check for active subscriptions using this plan
-      const { data: activeSubscriptions, error: checkError } = await supabase
-        .from('user_subscription')
-        .select('user_subscription_id, user_id, is_active')
-        .eq('plan_id', plan.plan_id)
-        .eq('is_active', true);
+      const checkRes = await fetch(`${API_BASE}/api/subscription/plans/${plan.plan_id}/subscriptions`, {
+        headers: { 'Authorization': `Bearer ${session?.access_token}` },
+      });
 
-      if (checkError) throw checkError;
+      let activeSubscriptions = [];
+      if (checkRes.ok) {
+        activeSubscriptions = await checkRes.json();
+      }
 
       // If plan has active subscriptions, offer to deactivate instead
       if (activeSubscriptions && activeSubscriptions.length > 0) {
@@ -270,18 +283,24 @@ function AdminPlans({ navigateTo, handleSignOut }) {
 
         if (confirmDeactivate) {
           // Deactivate the plan by marking it as discontinued
-          const { error: deactivateError } = await supabase
-            .from('subscription_plans')
-            .update({ 
+          const deactivateRes = await fetch(`${API_BASE}/api/subscription/plans/${plan.plan_id}`, {
+            method: 'PUT',
+            headers: {
+              'Authorization': `Bearer ${session?.access_token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
               plan_name: `${plan.plan_name} (DISCONTINUED)`,
               description: plan.description 
                 ? `${plan.description} - This plan has been discontinued.` 
                 : 'This plan has been discontinued.',
-              updated_at: new Date().toISOString()
-            })
-            .eq('plan_id', plan.plan_id);
+            }),
+          });
 
-          if (deactivateError) throw deactivateError;
+          if (!deactivateRes.ok) {
+            const err = await deactivateRes.json();
+            throw new Error(err.error || 'Failed to deactivate plan');
+          }
 
           setSuccess(`Plan "${plan.plan_name}" has been discontinued. It will no longer appear for new subscriptions.`);
           await fetchPlans();
@@ -290,12 +309,15 @@ function AdminPlans({ navigateTo, handleSignOut }) {
       }
 
       // Delete plan if no active subscriptions
-      const { error } = await supabase
-        .from('subscription_plans')
-        .delete()
-        .eq('plan_id', plan.plan_id);
+      const deleteRes = await fetch(`${API_BASE}/api/subscription/plans/${plan.plan_id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${session?.access_token}` },
+      });
 
-      if (error) throw error;
+      if (!deleteRes.ok) {
+        const err = await deleteRes.json();
+        throw new Error(err.error || 'Failed to delete plan');
+      }
 
       setSuccess('Plan deleted successfully!');
       await fetchPlans();

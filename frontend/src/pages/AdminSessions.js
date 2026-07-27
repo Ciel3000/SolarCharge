@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../supabaseClient';
 import Navigation from '../components/Navigation';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:3001';
 
 function AdminSessions({ navigateTo, handleSignOut }) {
   const [sessions, setSessions] = useState([]);
@@ -34,9 +33,9 @@ function AdminSessions({ navigateTo, handleSignOut }) {
       setInitialLoad(false);
       
       // Get authentication token
-      const { data: { session } } = await supabase.auth.getSession();
+      const token = localStorage.getItem('access_token');
       
-      if (!session) {
+      if (!token) {
         throw new Error("Not authenticated");
       }
       
@@ -48,9 +47,9 @@ function AdminSessions({ navigateTo, handleSignOut }) {
       }).toString();
       
       // Fetch sessions from backend
-      const res = await fetch(`${BACKEND_URL}/api/admin/sessions?${queryParams}`, {
+      const res = await fetch(`${API_BASE}/api/admin/sessions?${queryParams}`, {
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
@@ -74,16 +73,16 @@ function AdminSessions({ navigateTo, handleSignOut }) {
       setLoading(true);
       
       // Get authentication token
-      const { data: { session } } = await supabase.auth.getSession();
+      const token = localStorage.getItem('access_token');
       
-      if (!session) {
+      if (!token) {
         throw new Error("Not authenticated");
       }
       
       // Fetch session details from backend
-      const res = await fetch(`${BACKEND_URL}/api/sessions/${sessionId}/consumption`, {
+      const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/consumption`, {
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });

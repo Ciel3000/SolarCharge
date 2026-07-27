@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../supabaseClient';
 import Navigation from '../components/Navigation';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const API_BASE = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
 
 function AdminDashboard({ navigateTo, handleSignOut }) {
   const [stats, setStats] = useState({
@@ -32,16 +31,16 @@ function AdminDashboard({ navigateTo, handleSignOut }) {
       setInitialLoad(false);
       
       // Get authentication token
-      const { data: { session } } = await supabase.auth.getSession();
+      const token = localStorage.getItem('access_token');
       
-      if (!session) {
+      if (!token) {
         throw new Error("Not authenticated");
       }
       
       // Fetch dashboard stats from backend
-      const res = await fetch(`${BACKEND_URL}/api/admin/dashboard/stats`, {
+      const res = await fetch(`${API_BASE}/api/admin/dashboard/stats`, {
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });

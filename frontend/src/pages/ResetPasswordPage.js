@@ -1,7 +1,8 @@
 // frontend/src/pages/ResetPasswordPage.js
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { supabase } from '../supabaseClient';
+
+const API_BASE = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
 
 function ResetPasswordPage({ navigateTo }) {
   const [password, setPassword] = useState('');
@@ -12,31 +13,21 @@ function ResetPasswordPage({ navigateTo }) {
   const [isValidToken, setIsValidToken] = useState(null);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const token = searchParams.get('token');
 
   useEffect(() => {
-    const checkSession = async () => {
-      try {
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        
-        if (sessionError) {
-          console.error('Session error:', sessionError);
-          setIsValidToken(false);
-          return;
-        }
-
-        if (session) {
-          setIsValidToken(true);
-        } else {
-          setIsValidToken(false);
-        }
-      } catch (err) {
-        console.error('Error checking session:', err);
+    const checkToken = async () => {
+      if (!token) {
         setIsValidToken(false);
+        return;
       }
+      // For local auth, we assume token is valid if present
+      // The backend will validate it on reset-password submission
+      setIsValidToken(true);
     };
 
-    checkSession();
-  }, []);
+    checkToken();
+  }, [token]);
 
   const handleResetPassword = async (e) => {
     e.preventDefault();
@@ -61,12 +52,15 @@ function ResetPasswordPage({ navigateTo }) {
     try {
       setLoading(true);
       
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: password
+      const res = await fetch(`${API_BASE}/api/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, password }),
       });
 
-      if (updateError) {
-        throw updateError;
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to reset password');
       }
 
       setMessage('Password updated successfully! Redirecting to login...');

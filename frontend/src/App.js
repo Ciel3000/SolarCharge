@@ -128,15 +128,12 @@ function AppContent() {
         setLoadingStations(true);
         setStationsInitialized(true);
 
-        const { supabase } = await import('./supabaseClient');
-        const { data, error } = await supabase
-          .from('public_station_view')
-          .select('*');
-
-        if (error) {
-          throw error;
+        const API_BASE = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
+        const res = await fetch(`${API_BASE}/api/public/stations`);
+        if (!res.ok) {
+          throw new Error('Failed to fetch stations');
         }
-
+        const data = await res.json();
         setStations(data);
       } catch (error) {
         console.error('Error fetching stations:', error.message);

@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../supabaseClient';
 import Navigation from '../components/Navigation';
 import { formatCurrency } from '../utils/currencyUtils';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const API_BASE = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
 
 function AdminRevenue({ navigateTo, handleSignOut }) {
   const [revenueData, setRevenueData] = useState({
@@ -40,16 +39,16 @@ function AdminRevenue({ navigateTo, handleSignOut }) {
       setInitialLoad(false);
 
       // Get authentication token
-      const { data: { session } } = await supabase.auth.getSession();
+      const token = localStorage.getItem('access_token');
 
-      if (!session) {
+      if (!token) {
         throw new Error("Not authenticated");
       }
 
       // Fetch revenue data from backend
-      const res = await fetch(`${BACKEND_URL}/api/admin/revenue`, {
+      const res = await fetch(`${API_BASE}/api/admin/revenue`, {
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
@@ -71,16 +70,16 @@ function AdminRevenue({ navigateTo, handleSignOut }) {
   async function fetchSubscriptionAnalytics() {
     try {
       // Get authentication token
-      const { data: { session } } = await supabase.auth.getSession();
+      const token = localStorage.getItem('access_token');
 
-      if (!session) {
+      if (!token) {
         throw new Error("Not authenticated");
       }
 
       // Fetch subscription analytics from backend
-      const res = await fetch(`${BACKEND_URL}/api/admin/revenue/subscription-analytics`, {
+      const res = await fetch(`${API_BASE}/api/admin/revenue/subscription-analytics`, {
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });

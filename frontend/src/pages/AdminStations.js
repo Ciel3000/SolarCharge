@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '../supabaseClient';
 import Navigation from '../components/Navigation';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:3001';
 
 function AdminStations({ navigateTo, handleSignOut }) {
   const [stations, setStations] = useState([]);
@@ -49,9 +48,9 @@ function AdminStations({ navigateTo, handleSignOut }) {
       setError(null);
       
       // Get authentication token
-      const { data: { session } } = await supabase.auth.getSession();
+      const token = localStorage.getItem('access_token');
       
-      if (!session) {
+      if (!token) {
         throw new Error("Not authenticated");
       }
       
@@ -61,9 +60,9 @@ function AdminStations({ navigateTo, handleSignOut }) {
       
       try {
         // Fetch stations from backend
-        const res = await fetch(`${BACKEND_URL}/api/admin/stations`, {
+        const res = await fetch(`${API_BASE}/api/admin/stations`, {
           headers: {
-            'Authorization': `Bearer ${session.access_token}`,
+            'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json'
           },
           signal: controller.signal
@@ -102,7 +101,7 @@ function AdminStations({ navigateTo, handleSignOut }) {
       console.error("Stations error:", error);
       // Provide more detailed error message
       if (error.name === 'TypeError' && error.message.includes('fetch')) {
-        setError(`Network error: Unable to connect to backend server at ${BACKEND_URL}. The server might be down or sleeping. Please try again in a moment.`);
+        setError(`Network error: Unable to connect to backend server at ${API_BASE}. The server might be down or sleeping. Please try again in a moment.`);
       } else if (error.message.includes('timeout')) {
         setError(error.message);
       } else {
@@ -117,16 +116,16 @@ function AdminStations({ navigateTo, handleSignOut }) {
   async function fetchBatteryLevels() {
     try {
       // Get authentication token
-      const { data: { session } } = await supabase.auth.getSession();
+      const token = localStorage.getItem('access_token');
       
-      if (!session) {
+      if (!token) {
         return;
       }
       
       // Fetch battery levels from backend
-      const res = await fetch(`${BACKEND_URL}/api/admin/stations/battery`, {
+      const res = await fetch(`${API_BASE}/api/admin/stations/battery`, {
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
@@ -198,13 +197,13 @@ function AdminStations({ navigateTo, handleSignOut }) {
       setLoading(true);
       
       // Get authentication token
-      const { data: { session } } = await supabase.auth.getSession();
+      const token = localStorage.getItem('access_token');
       
-      if (!session) {
+      if (!token) {
         throw new Error("Not authenticated");
       }
       
-                              // Validate required fields
+      // Validate required fields
          if (!formData.station_name || !formData.location_description || !formData.latitude || 
              !formData.longitude || !formData.solar_panel_wattage || !formData.battery_capacity_kwh || 
              !formData.current_battery_level || !formData.price_per_kwh || !formData.device_mqtt_id || !formData.num_free_ports || !formData.num_premium_ports) {
@@ -242,11 +241,11 @@ function AdminStations({ navigateTo, handleSignOut }) {
        console.log('Sending station data:', stationData);
       
       // Create or update station
-      let url = `${BACKEND_URL}/api/admin/stations`;
+      let url = `${API_BASE}/api/admin/stations`;
       let method = 'POST';
       
       if (selectedStation) {
-        url = `${BACKEND_URL}/api/admin/stations/${selectedStation.station_id}`;
+        url = `${API_BASE}/api/admin/stations/${selectedStation.station_id}`;
         method = 'PUT';
       }
       
@@ -254,7 +253,7 @@ function AdminStations({ navigateTo, handleSignOut }) {
       const res = await fetch(url, {
         method,
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(stationData)
@@ -291,17 +290,17 @@ function AdminStations({ navigateTo, handleSignOut }) {
       setLoading(true);
       
       // Get authentication token
-      const { data: { session } } = await supabase.auth.getSession();
+      const token = localStorage.getItem('access_token');
       
-      if (!session) {
+      if (!token) {
         throw new Error("Not authenticated");
       }
       
       // Delete station
-      const res = await fetch(`${BACKEND_URL}/api/admin/stations/${stationId}`, {
+      const res = await fetch(`${API_BASE}/api/admin/stations/${stationId}`, {
         method: 'DELETE',
         headers: {
-          'Authorization': `Bearer ${session.access_token}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });

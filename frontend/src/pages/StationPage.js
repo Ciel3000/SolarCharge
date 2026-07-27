@@ -3,9 +3,8 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { apiFetch } from '../utils/apiErrorHandler';
 import { openGoogleMaps } from '../utils/mapUtils';
-import { supabase } from '../supabaseClient';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:3001';
 
 function StationPage({ station, navigateTo }) {
   const { user, session, subscription, usageAggregate, handleSessionTimeout } = useAuth();
@@ -73,7 +72,7 @@ function StationPage({ station, navigateTo }) {
   // Fetch slot limits configuration
   const fetchSlotLimits = useCallback(async () => {
     try {
-      const response = await apiFetch(`${BACKEND_URL}/api/config/slot-limits`, {}, { handleSessionTimeout });
+      const response = await apiFetch(`${API_BASE}/api/config/slot-limits`, {}, { handleSessionTimeout });
       if (response.ok) {
         const config = await response.json();
         setMaxActiveSlots(config.premiumUserMaxActiveSlots);
@@ -95,7 +94,7 @@ function StationPage({ station, navigateTo }) {
 
   const fetchChargerDeviceStatus = useCallback(async () => {
     try {
-      const response = await apiFetch(`${BACKEND_URL}/api/devices/status`, {}, { handleSessionTimeout });
+      const response = await apiFetch(`${API_BASE}/api/devices/status`, {}, { handleSessionTimeout });
       
       const data = await response.json();
       
@@ -117,7 +116,7 @@ function StationPage({ station, navigateTo }) {
     if (!user?.id || !session?.access_token) return;
     
     try {
-      const res = await apiFetch(`${BACKEND_URL}/api/sessions/active`, {
+      const res = await apiFetch(`${API_BASE}/api/sessions/active`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
       }, { handleSessionTimeout });
       if (!res.ok) throw new Error('Failed to fetch active sessions.');
@@ -152,7 +151,7 @@ function StationPage({ station, navigateTo }) {
   // Fetch consumption data using existing endpoint
   const fetchPortConsumption = useCallback(async () => {
     try {
-      const response = await fetch(`${BACKEND_URL}/api/devices/consumption`);
+      const response = await fetch(`${API_BASE}/api/devices/consumption`);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
@@ -216,7 +215,7 @@ function StationPage({ station, navigateTo }) {
     if (!stationData?.station_id) return;
 
     try {
-      const response = await apiFetch(`${BACKEND_URL}/api/stations/${stationData.station_id}/sync`, {}, { handleSessionTimeout });
+      const response = await apiFetch(`${API_BASE}/api/stations/${stationData.station_id}/sync`, {}, { handleSessionTimeout });
       if (!response.ok) {
         console.error('Station sync returned non-200 status:', response.status);
       }
@@ -325,36 +324,13 @@ function StationPage({ station, navigateTo }) {
   useEffect(() => {
     if (!stationData?.station_id) return;
 
-    const channelName = `station-sync-${stationData.station_id}`;
-    const channel = supabase.channel(channelName);
-
-    const scheduleRealtimeSync = () => {
-      if (realtimeSyncTimeoutRef.current) return;
-      realtimeSyncTimeoutRef.current = setTimeout(() => {
-        realtimeSyncTimeoutRef.current = null;
-      }, 1000);
+    // Poll for station state changes every 5 seconds
+    const pollInterval = setInterval(() => {
       syncStationState();
-    };
-
-    channel
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'charging_port', filter: `station_id=eq.${stationData.station_id}` },
-        scheduleRealtimeSync
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'charging_session', filter: `station_id=eq.${stationData.station_id}` },
-        scheduleRealtimeSync
-      )
-      .subscribe();
+    }, 5000);
 
     return () => {
-      if (realtimeSyncTimeoutRef.current) {
-        clearTimeout(realtimeSyncTimeoutRef.current);
-        realtimeSyncTimeoutRef.current = null;
-      }
-      supabase.removeChannel(channel);
+      clearInterval(pollInterval);
     };
   }, [stationData?.station_id, syncStationState]);
 
@@ -369,7 +345,7 @@ function StationPage({ station, navigateTo }) {
       
       // Check quota before starting charging
       if (command === 'ON') {
-        const quotaResponse = await apiFetch(`${BACKEND_URL}/api/user/quota-status`, {
+        const quotaResponse = await apiFetch(`${API_BASE}/api/user/quota-status`, {
           headers: {
             'Authorization': `Bearer ${session.access_token}`
           }
@@ -385,7 +361,7 @@ function StationPage({ station, navigateTo }) {
         }
       }
       
-      const response = await apiFetch(`${BACKEND_URL}/api/devices/${deviceId}/${portNumber}/control`, {
+      const response = await apiFetch(`${API_BASE}/api/devices/${deviceId}/${portNumber}/control`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

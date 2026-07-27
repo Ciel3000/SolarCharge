@@ -66,13 +66,10 @@ function SubscriptionPage() {
         try {
             setLoading(true);
 
-            const { supabase } = await import('../supabaseClient');
-            const { data, error } = await supabase
-                .from('subscription_plans')
-                .select('*')
-                .order('price', { ascending: true });
-
-            if (error) throw error;
+            const API_BASE = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
+            const res = await fetch(`${API_BASE}/api/subscription/plans`);
+            if (!res.ok) throw new Error('Failed to fetch plans');
+            const data = await res.json();
             
             // Filter out discontinued plans
             const activePlans = filterActivePlans(data || []);

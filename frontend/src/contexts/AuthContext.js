@@ -1,13 +1,12 @@
-// frontend/src/contexts/AuthContext.js
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
-import { supabase } from '../supabaseClient';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 
 const AuthContext = createContext(null);
 
-/** JWT payloads are base64url; atob() expects base64 and fails on many real tokens without this. */
-function decodeJwtPayload(accessToken) {
-  if (!accessToken || typeof accessToken !== 'string') return null;
-  const parts = accessToken.split('.');
+const API_BASE = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
+
+function decodeJwtPayload(token) {
+  if (!token || typeof token !== 'string') return null;
+  const parts = token.split('.');
   if (parts.length < 2) return null;
   try {
     let base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
@@ -19,12 +18,6 @@ function decodeJwtPayload(accessToken) {
     return null;
   }
 }
-
-const getBackendBaseUrl = () => {
-  const raw = process.env.REACT_APP_BACKEND_URL;
-  if (!raw) throw new Error('REACT_APP_BACKEND_URL is not set');
-  return String(raw).replace(/\/$/, '');
-};
 
 export const AuthProvider = ({ children }) => {
   const [session, setSession] = useState(null);
@@ -40,14 +33,186 @@ export const AuthProvider = ({ children }) => {
   });
   const [plans, setPlans] = useState([]);
   const [error, setError] = useState(null);
-  const [initialized, setInitialized] = useState(false);
-  const [isRecovering, setIsRecovering] = useState(false);
-  const [sessionTimeout, setSessionTimeout] = useState(null);
-  const [lastRecoveryAttempt, setLastRecoveryAttempt] = useState(0);
 
-  // --- Session timeout handler ---
-  const handleSessionTimeout = useCallback(() => {
-    console.log("AuthContext: Session timeout detected");
+  // Check token expiry
+  const isTokenExpired = useCallback((token) => {
+    if (!token) return true;
+    const payload = decodeJwtPayload(token);
+    if (!payload || typeof payload.exp !== 'number') return true;
+    return payload.exp < Math.floor(Date.now() / 1000);
+  }, []);
+
+  // Fetch plans from backend
+  const fetchPlans = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/subscription/plans`);
+      if (res.ok) {
+        const data = await res.json();
+        setPlans(data || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch plans:', err);
+    }
+  }, []);
+
+  // Fetch subscription data
+  const fetchSubscription = useCallback(async (token) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/user/subscription`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSubscription(data.subscription);
+        setActiveSubscriptions(data.active_subscriptions || []);
+        setUsageAggregate(data.aggregate || { daily_limit: 0, total_consumed: 0, remaining: 0 });
+      }
+    } catch (err) {
+      console.error('Failed to fetch subscription:', err);
+    }
+  }, []);
+
+  // Check admin status
+  const checkAdminStatus = useCallback(async (token) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setIsAdmin(data.is_admin);
+      }
+    } catch (err) {
+      console.error('Failed to check admin status:', err);
+    }
+  }, []);
+
+  // Initialize auth from localStorage
+  useEffect(() => {
+    const initAuth = async () => {
+      const token = localStorage.getItem('access_token');
+      const refreshToken = localStorage.getItem('refresh_token');
+
+      if (token && !isTokenExpired(token)) {
+        const payload = decodeJwtPayload(token);
+        setSession({ access_token: token, user: { id: payload.user_id, email: payload.email } });
+        setUser({ user_id: payload.user_id, email: payload.email });
+
+        await Promise.all([
+          checkAdminStatus(token),
+          fetchPlans(),
+          fetchSubscription(token),
+        ]);
+      } else if (refreshToken) {
+        // Try to refresh
+        try {
+          const res = await fetch(`${API_BASE}/api/auth/refresh`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh_token: refreshToken }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            localStorage.setItem('access_token', data.access_token);
+            localStorage.setItem('refresh_token', data.refresh_token);
+            const payload = decodeJwtPayload(data.access_token);
+            setSession({ access_token: data.access_token, user: { id: payload.user_id, email: payload.email } });
+            setUser({ user_id: payload.user_id, email: payload.email });
+            await Promise.all([
+              checkAdminStatus(data.access_token),
+              fetchPlans(),
+              fetchSubscription(data.access_token),
+            ]);
+          } else {
+            localStorage.removeItem('access_token');
+            localStorage.removeItem('refresh_token');
+          }
+        } catch (err) {
+          localStorage.removeItem('access_token');
+          localStorage.removeItem('refresh_token');
+        }
+      }
+
+      setLoading(false);
+    };
+
+    initAuth();
+  }, [isTokenExpired, checkAdminStatus, fetchPlans, fetchSubscription]);
+
+  // Sign in
+  const signIn = async (email, password) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Login failed');
+      }
+
+      const data = await res.json();
+      localStorage.setItem('access_token', data.access_token);
+      localStorage.setItem('refresh_token', data.refresh_token);
+      setSession({ access_token: data.access_token, user: data.user });
+      setUser(data.user);
+
+      await Promise.all([
+        checkAdminStatus(data.access_token),
+        fetchPlans(),
+        fetchSubscription(data.access_token),
+      ]);
+    } catch (err) {
+      setError(err.message);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Sign up
+  const signUp = async (email, password, fname, lname, contact_number) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, fname, lname, contact_number }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Signup failed');
+      }
+
+      const data = await res.json();
+      localStorage.setItem('access_token', data.access_token);
+      localStorage.setItem('refresh_token', data.refresh_token);
+      setSession({ access_token: data.access_token, user: data.user });
+      setUser(data.user);
+
+      await Promise.all([
+        checkAdminStatus(data.access_token),
+        fetchPlans(),
+        fetchSubscription(data.access_token),
+      ]);
+    } catch (err) {
+      setError(err.message);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Sign out
+  const signOut = () => {
+    localStorage.removeItem('access_token');
+    localStorage.removeItem('refresh_token');
     setSession(null);
     setUser(null);
     setIsAdmin(false);
@@ -55,347 +220,18 @@ export const AuthProvider = ({ children }) => {
     setActiveSubscriptions([]);
     setUsageAggregate({ daily_limit: 0, total_consumed: 0, remaining: 0 });
     setPlans([]);
-    setError("Session expired. Please log in again.");
-    setInitialized(false);
-  }, []);
+    setError(null);
+  };
 
-  // --- Check if session is expired ---
-  const isSessionExpired = useCallback((currentSession) => {
-    if (!currentSession?.access_token) return true;
-    const payload = decodeJwtPayload(currentSession.access_token);
-    if (!payload || typeof payload.exp !== 'number') return true;
-    const currentTime = Math.floor(Date.now() / 1000);
-    return payload.exp < currentTime;
-  }, []);
-
-  // --- Helper to check admin status by calling backend API ---
-  const checkAdminStatus = useCallback(async (currentSession) => {
-    if (!currentSession || !currentSession.access_token) {
-      setIsAdmin(false);
-      return;
+  // Refresh subscription
+  const refreshSubscription = useCallback(async () => {
+    const token = localStorage.getItem('access_token');
+    if (token) {
+      await fetchSubscription(token);
+      await fetchPlans();
     }
-    try {
-      const res = await fetch(`${getBackendBaseUrl()}/api/me`, {
-        headers: { Authorization: `Bearer ${currentSession.access_token}` },
-      });
+  }, [fetchSubscription, fetchPlans]);
 
-      if (res.ok) {
-        const userData = await res.json();
-        setIsAdmin(userData.is_admin);
-        setError(null);
-      } else if (res.status === 401) {
-        // Supabase session can be valid while the API rejects the token (wrong JWKS/JWT secret, or old deployed backend).
-        console.error('AuthContext: Backend returned 401 for /api/me — check REACT_APP_BACKEND_URL and backend SUPABASE_JWKS_URL');
-        setIsAdmin(false);
-        setError(
-          'The API server could not verify your login. On localhost, run the backend (port 3001) and set the same Supabase project in backend SUPABASE_JWKS_URL as in your frontend .env.'
-        );
-      } else {
-        console.error("AuthContext: Failed to fetch /api/me status:", res.status, await res.text());
-        setIsAdmin(false);
-      }
-    } catch (err) {
-      console.error("AuthContext: Error checking admin status:", err);
-      setIsAdmin(false);
-    }
-  }, [handleSessionTimeout]);
-
-// --- Helper to fetch user subscription and all plans ---
-  const fetchSubscriptionAndPlans = useCallback(async (currentSession) => {
-    if (!currentSession) {
-      setSubscription(null);
-      setActiveSubscriptions([]);
-      setUsageAggregate({ daily_limit: 0, total_consumed: 0, remaining: 0 });
-      setPlans([]);
-      return;
-    }
-    try {
-      // First, fetch all available plans from Supabase (fast, direct)
-      const { data: plansData, error: plansError } = await supabase
-        .from('subscription_plans')
-        .select('*');
-
-      if (plansError) {
-        console.error("AuthContext: Error fetching plans:", plansError);
-      } else {
-        setPlans(plansData || []);
-      }
-
-      // Then fetch user's active subscription from backend API (consistent shape with history)
-      try {
-        const res = await fetch(`${getBackendBaseUrl()}/api/user/subscription`, {
-          headers: {
-            Authorization: `Bearer ${currentSession.access_token}`
-          }
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          setSubscription(data.subscription);
-          setActiveSubscriptions(data.active_subscriptions || []);
-          setUsageAggregate(data.aggregate || { daily_limit: 0, total_consumed: 0, remaining: 0 });
-        } else if (res.status === 404) {
-          // No active subscription - this is fine
-          setSubscription(null);
-          setActiveSubscriptions([]);
-          setUsageAggregate({ daily_limit: 0, total_consumed: 0, remaining: 0 });
-        } else {
-          console.error("AuthContext: Error fetching subscription from API:", res.status);
-          setSubscription(null);
-        }
-      } catch (subscriptionError) {
-        console.error("AuthContext: Subscription fetch failed:", subscriptionError);
-        setSubscription(null);
-        setActiveSubscriptions([]);
-        setUsageAggregate({ daily_limit: 0, total_consumed: 0, remaining: 0 });
-      }
-
-    } catch (error) {
-      console.error("AuthContext: Error fetching subscription or plans:", error.message);
-      setSubscription(null);
-      setActiveSubscriptions([]);
-      setUsageAggregate({ daily_limit: 0, total_consumed: 0, remaining: 0 });
-      setPlans([]);
-    }
-  }, []);
-
-  // Refresh function to avoid page reload
-  const refreshSubscription = useCallback(async (currentSession) => {
-    if (currentSession) {
-      await fetchSubscriptionAndPlans(currentSession);
-    }
-  }, [fetchSubscriptionAndPlans]);
-
-  // --- Session recovery function ---
-  const recoverSession = useCallback(async () => {
-    if (isRecovering) return; // Prevent multiple simultaneous recoveries
-    
-    try {
-      console.log("AuthContext: Attempting session recovery...");
-      setIsRecovering(true);
-      setLoading(true);
-      setError(null);
-      
-      // Add timeout to prevent hanging
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Session recovery timeout')), 15000) // Increased timeout
-      );
-      
-      const sessionPromise = supabase.auth.getSession();
-      
-      const { data: { session: recoveredSession }, error } = await Promise.race([
-        sessionPromise,
-        timeoutPromise
-      ]);
-      
-      if (error) {
-        throw error;
-      }
-      
-      if (recoveredSession) {
-        console.log("AuthContext: Session recovered successfully");
-        setSession(recoveredSession);
-        setUser(recoveredSession.user);
-        
-        // Run these sequentially to avoid race conditions
-        await checkAdminStatus(recoveredSession);
-        await fetchSubscriptionAndPlans(recoveredSession);
-      } else {
-        console.log("AuthContext: No session to recover");
-        setSession(null);
-        setUser(null);
-        setIsAdmin(false);
-        setSubscription(null);
-        setPlans([]);
-      }
-    } catch (err) {
-      console.error("AuthContext: Session recovery failed:", err);
-      setError(err.message);
-      // Reset auth state on recovery failure
-      setSession(null);
-      setUser(null);
-      setIsAdmin(false);
-      setSubscription(null);
-      setPlans([]);
-    } finally {
-      setLoading(false);
-      setIsRecovering(false);
-    }
-  }, [checkAdminStatus, fetchSubscriptionAndPlans, isRecovering]);
-
-  useEffect(() => {
-    let mounted = true;
-    let authSubscription = null;
-
-    const initializeAuth = async () => {
-      try {
-        // 1. Get the initial session when the app loads
-        const { data: { session: initialSession }, error } = await supabase.auth.getSession();
-        
-        if (error) {
-          throw error;
-        }
-
-        if (mounted) {
-          setSession(initialSession);
-          setUser(initialSession?.user || null);
-          
-          if (initialSession) {
-            // Run queries in parallel
-            await Promise.all([
-              checkAdminStatus(initialSession),
-              fetchSubscriptionAndPlans(initialSession)
-            ]);
-          }
-          
-          setLoading(false);
-          setInitialized(true);
-        }
-
-        // 2. Listen for real-time authentication state changes
-        const { data: { subscription: sub } } = supabase.auth.onAuthStateChange(
-          async (event, currentSession) => {
-            if (!mounted) return;
-
-            console.log("AuthContext: onAuthStateChange event:", event, "Session:", currentSession);
-
-            // Handle different auth events
-            switch (event) {
-              case 'SIGNED_IN':
-                console.log("AuthContext: User signed in");
-                const isNewLogin = !initialized && !session;
-                if (isNewLogin) {
-                  setLoading(true);
-                }
-                setError(null);
-                setSession(currentSession);
-                setUser(currentSession?.user || null);
-                
-                if (isNewLogin) {
-                  await Promise.all([
-                    checkAdminStatus(currentSession),
-                    fetchSubscriptionAndPlans(currentSession)
-                  ]);
-                  setLoading(false);
-                  setInitialized(true);
-                }
-                break;
-                
-              case 'SIGNED_OUT':
-                console.log("AuthContext: User signed out");
-                setSession(null);
-                setUser(null);
-                setIsAdmin(false);
-                setSubscription(null);
-                setActiveSubscriptions([]);
-                setUsageAggregate({ daily_limit: 0, total_consumed: 0, remaining: 0 });
-                setPlans([]);
-                setError(null);
-                setInitialized(false);
-                break;
-                
-              case 'TOKEN_REFRESHED':
-                console.log("AuthContext: Token refreshed");
-                if (currentSession) {
-                  setSession(currentSession);
-                  setUser(currentSession.user);
-                }
-                break;
-                
-              default:
-                console.log("AuthContext: Other auth event:", event);
-                if (currentSession !== session) {
-                  setSession(currentSession);
-                  setUser(currentSession?.user || null);
-                }
-            }
-          }
-        );
-        
-        authSubscription = sub;
-
-      } catch (err) {
-        console.error("AuthContext: Initialization error:", err);
-        if (mounted) {
-          setError(err.message);
-          setLoading(false);
-        }
-      }
-    };
-
-    initializeAuth();
-
-    // Cleanup function
-    return () => {
-      mounted = false;
-      if (authSubscription) {
-        authSubscription.unsubscribe();
-      }
-      if (sessionTimeout) {
-        clearTimeout(sessionTimeout);
-      }
-    };
-  }, []);
-
-  // --- Session monitoring effect ---
-  useEffect(() => {
-    if (!session) {
-      if (sessionTimeout) {
-        clearTimeout(sessionTimeout);
-        setSessionTimeout(null);
-      }
-      return;
-    }
-
-    // Check if session is already expired
-    if (isSessionExpired(session)) {
-      handleSessionTimeout();
-      return;
-    }
-
-    // Calculate time until session expires
-    try {
-      const payload = decodeJwtPayload(session.access_token);
-      if (!payload || typeof payload.exp !== 'number') return;
-      const currentTime = Math.floor(Date.now() / 1000);
-      const timeUntilExpiry = (payload.exp - currentTime) * 1000; // Convert to milliseconds
-      
-      // Set timeout to handle session expiration
-      if (sessionTimeout) {
-        clearTimeout(sessionTimeout);
-      }
-      
-      const timeoutId = setTimeout(() => {
-        handleSessionTimeout();
-      }, timeUntilExpiry);
-      
-      setSessionTimeout(timeoutId);
-      
-      console.log(`AuthContext: Session will expire in ${Math.floor(timeUntilExpiry / 1000)} seconds`);
-    } catch (error) {
-      console.error("AuthContext: Error setting session timeout:", error);
-    }
-  }, [session, isSessionExpired, handleSessionTimeout]);
-
-  // --- Page visibility change handler ---
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (!document.hidden && session) {
-        if (isSessionExpired(session)) {
-          console.log("AuthContext: Session expired while tab was hidden");
-          handleSessionTimeout();
-        }
-        // Let Supabase handle token refresh automatically
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [session, isSessionExpired, handleSessionTimeout]);
-
-  // Error recovery function
-  const clearError = () => setError(null);
-
-  // Value provided by the context to all consuming components
   const value = {
     session,
     user,
@@ -406,15 +242,11 @@ export const AuthProvider = ({ children }) => {
     usageAggregate,
     plans,
     error,
-    clearError,
-    recoverSession,
-    isRecovering,
-    handleSessionTimeout,
-    isSessionExpired,
+    clearError: () => setError(null),
+    signIn,
+    signUp,
+    signOut,
     refreshSubscription,
-    // Authentication methods
-    signIn: (email, password) => supabase.auth.signInWithPassword({ email, password }),
-    signOut: () => supabase.auth.signOut(),
   };
 
   return (
@@ -424,7 +256,6 @@ export const AuthProvider = ({ children }) => {
   );
 };
 
-// Custom hook for easy consumption of the auth context
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (context === undefined) {

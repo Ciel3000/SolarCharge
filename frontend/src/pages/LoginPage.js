@@ -1,12 +1,12 @@
 // frontend/src/pages/LoginPage.js
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom'; // Add React Router hooks
-import { supabase } from '../supabaseClient'; // Import Supabase client
 import { useAuth } from '../contexts/AuthContext'; // Import useAuth
 
 // Add the 'message' prop here
 function LoginPage({ navigateTo, message }) {
-  const { session, isAdmin } = useAuth(); // Get auth state
+  const auth = useAuth(); // Get auth context
+  const { session, isAdmin, signIn } = auth;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -61,16 +61,8 @@ function LoginPage({ navigateTo, message }) {
     setDisplayMessage(''); // Clear previous messages on new sign-in attempt
     try {
       setLoading(true);
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      if (error) {
-        throw error;
-      }
+      await signIn(email, password);
       setDisplayMessage('Signed in successfully!');
-      console.log('Sign in data:', data);
       
       // Redirect to the intended page if there was one, otherwise let App.js handle navigation
       if (redirectFrom) {

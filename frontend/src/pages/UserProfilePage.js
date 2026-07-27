@@ -15,10 +15,9 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../supabaseClient';
 
 // Backend API URL from environment variables
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const API_BASE = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
 
 // =============================================================================
 // Main Component
@@ -94,8 +93,8 @@ function UserProfilePage({ navigateTo }) {
             try {
                 setLoading(true);
                 
-                // Try to fetch from backend API first
-                const response = await fetch(`${BACKEND_URL}/api/user/profile`, {
+                // Fetch from backend API
+                const response = await fetch(`${API_BASE}/api/user/profile`, {
                     headers: { 
                         'Authorization': `Bearer ${session.access_token}`,
                         'Content-Type': 'application/json'
@@ -103,43 +102,17 @@ function UserProfilePage({ navigateTo }) {
                 });
 
                 if (!response.ok) {
-                    // Fallback: Fetch directly from Supabase if backend fails
-                    const { data, error } = await supabase
-                        .from('users')
-                        .select('fname, lname, contact_number, email')
-                        .eq('user_id', user.id)
-                        .single();
-
-                    // Handle errors (ignore PGRST116 - no rows returned)
-                    if (error && error.code !== 'PGRST116') {
-                        throw error;
-                    }
-
-                    if (data) {
-                        // Populate form with user data
-                        setFormData({
-                            firstName: data.fname || '',
-                            lastName: data.lname || '',
-                            contactNumber: data.contact_number || '',
-                            email: data.email || user?.email || ''
-                        });
-                    } else {
-                        // No existing record - use defaults with user email
-                        setFormData(prev => ({
-                            ...prev,
-                            email: user?.email || ''
-                        }));
-                    }
-                } else {
-                    // Success from backend - parse JSON response
-                    const userData = await response.json();
-                    setFormData({
-                        firstName: userData.fname || '',
-                        lastName: userData.lname || '',
-                        contactNumber: userData.contact_number || '',
-                        email: userData.email || user?.email || ''
-                    });
+                    throw new Error('Failed to fetch profile');
                 }
+
+                const data = await response.json();
+                // Populate form with user data
+                setFormData({
+                    firstName: data.fname || '',
+                    lastName: data.lname || '',
+                    contactNumber: data.contact_number || '',
+                    email: data.email || user?.email || ''
+                });
             } catch (err) {
                 console.error('Error fetching user profile:', err);
                 setMessage('Error loading profile data. Please try again.');
@@ -227,7 +200,7 @@ function UserProfilePage({ navigateTo }) {
 
         try {
             // Try to update via backend API first
-            const response = await fetch(`${BACKEND_URL}/api/user/profile`, {
+            const response = await fetch(`${API_BASE}/api/user/profile`, {
                 method: 'PUT',
                 headers: {
                     'Authorization': `Bearer ${session.access_token}`,
@@ -242,40 +215,11 @@ function UserProfilePage({ navigateTo }) {
             });
 
             if (!response.ok) {
-                // Fallback: Direct Supabase update if backend fails
-                const { error } = await supabase
-                    .from('users')
-                    .upsert({
-                        user_id: user.id,
-                        fname: formData.firstName.trim(),
-                        lname: formData.lastName.trim(),
-                        contact_number: formData.contactNumber.trim() || null,
-                        email: formData.email.trim(),
-                        updated_at: new Date().toISOString()
-                    }, {
-                        onConflict: 'user_id'
-                    });
-
-                if (error) {
-                    throw error;
-                }
+                const err = await response.json();
+                throw new Error(err.error || 'Failed to update profile');
             }
 
-            // Handle email change notification
-            if (formData.email !== user.email) {
-                const { error: emailError } = await supabase.auth.updateUser({
-                    email: formData.email.trim()
-                });
-
-                if (emailError) {
-                    console.warn('Profile updated but email change failed:', emailError);
-                    setMessage('Profile updated! Note: Email change requires verification - check your inbox.');
-                } else {
-                    setMessage('Profile updated successfully! If you changed your email, please verify it.');
-                }
-            } else {
-                setMessage('Profile updated successfully!');
-            }
+            setMessage('Profile updated successfully!');
 
             // Clear errors on successful update
             setErrors({});
@@ -315,7 +259,7 @@ function UserProfilePage({ navigateTo }) {
         
         try {
             // Try backend API first
-            const response = await fetch(`${BACKEND_URL}/api/user/profile`, {
+            const response = await fetch(`${API_BASE}/api/user/profile`, {
                 method: 'PUT',
                 headers: {
                     'Authorization': `Bearer ${session.access_token}`,
@@ -330,21 +274,8 @@ function UserProfilePage({ navigateTo }) {
             });
 
             if (!response.ok) {
-                // Fallback to Supabase if backend fails
-                const { error } = await supabase
-                    .from('users')
-                    .upsert({
-                        user_id: user.id,
-                        fname: editData.firstName.trim(),
-                        lname: editData.lastName.trim(),
-                        contact_number: editData.contactNumber.trim() || null,
-                        email: formData.email.trim(),
-                        updated_at: new Date().toISOString()
-                    }, {
-                        onConflict: 'user_id'
-                    });
-
-                if (error) throw error;
+                const err = await response.json();
+                throw new Error(err.error || 'Failed to save profile');
             }
 
             // Update main form state with edited data

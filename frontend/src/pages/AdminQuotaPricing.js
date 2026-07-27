@@ -2,9 +2,8 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../supabaseClient';
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:3001';
 
 function AdminQuotaPricing({ navigateTo, handleSignOut }) {
     const navigate = useNavigate();
@@ -35,17 +34,17 @@ function AdminQuotaPricing({ navigateTo, handleSignOut }) {
     const fetchPricing = useCallback(async () => {
         try {
             // Get authentication token
-            const { data: { session } } = await supabase.auth.getSession();
+            const token = localStorage.getItem('access_token');
             
-            if (!session) {
+            if (!token) {
                 throw new Error("Not authenticated");
             }
             
-            console.log('Fetching pricing from:', `${BACKEND_URL}/api/admin/quota/pricing`);
-            console.log('Session token:', session.access_token ? 'Present' : 'Missing');
+            console.log('Fetching pricing from:', `${API_BASE}/api/admin/quota/pricing`);
+            console.log('Session token:', token ? 'Present' : 'Missing');
             
-            const res = await fetch(`${BACKEND_URL}/api/admin/quota/pricing`, {
-                headers: { Authorization: `Bearer ${session.access_token}` },
+            const res = await fetch(`${API_BASE}/api/admin/quota/pricing`, {
+                headers: { Authorization: `Bearer ${token}` },
             });
 
             console.log('Response status:', res.status);
@@ -78,17 +77,17 @@ function AdminQuotaPricing({ navigateTo, handleSignOut }) {
 
         try {
             // Get authentication token
-            const { data: { session } } = await supabase.auth.getSession();
+            const token = localStorage.getItem('access_token');
             
-            if (!session) {
+            if (!token) {
                 throw new Error("Not authenticated");
             }
             
-            const res = await fetch(`${BACKEND_URL}/api/admin/quota/pricing`, {
+            const res = await fetch(`${API_BASE}/api/admin/quota/pricing`, {
                 method: 'PUT',
                 headers: {
                     'Content-Type': 'application/json',
-                    Authorization: `Bearer ${session.access_token}`,
+                    Authorization: `Bearer ${token}`,
                 },
                 body: JSON.stringify({
                     direct_purchase: pricing.direct_purchase,

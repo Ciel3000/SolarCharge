@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom'; // Add React Router hooks
-import { supabase } from '../supabaseClient'; // Import Supabase client
 import { useAuth } from '../contexts/AuthContext'; // Import useAuth
 
 function SignUpPage({ navigateTo }) {
-  const { session, isAdmin } = useAuth(); // Get auth state
+  const auth = useAuth(); // Get auth context
+  const { session, isAdmin, signUp } = auth;
   const location = useLocation(); // Get location object
   const navigate = useNavigate(); // Get navigate function
   
@@ -41,29 +41,14 @@ function SignUpPage({ navigateTo }) {
     setMessage('');
     try {
       setLoading(true);
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            referral_code: referralCode || null
-          },
-          // After email confirmation, redirect to landing page
-          emailRedirectTo: `${window.location.origin}/landing`
-        }
-      });
-
-      if (error) {
-        throw error;
-      }
-      setMessage('Sign up successful! Check your email for a confirmation link.');
-      console.log('Sign up data:', data);
+      await signUp(email, password, '', '', '');
+      setMessage('Sign up successful!');
+      console.log('Sign up successful');
       
       // Redirect to intended page after signup if specified
       if (redirectFrom) {
         setTimeout(() => navigate(redirectFrom, { replace: true }), 2000);
       }
-      // App.js's onAuthStateChange listener will handle navigation to landing page
     } catch (error) {
       setMessage(`Sign up error: ${error.message}`);
       console.error('Sign up error:', error.message);

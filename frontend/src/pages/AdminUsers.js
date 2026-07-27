@@ -1,10 +1,9 @@
 // frontend/src/pages/AdminUsers.js
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { supabase } from '../supabaseClient';
 import Navigation from '../components/Navigation'; // Assuming this component exists
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:3001';
 
 // A simple modal for confirmations to avoid using window.confirm
 const ConfirmationModal = ({ message, onConfirm, onCancel, isOpen }) => {
@@ -79,11 +78,11 @@ function AdminUsers({ navigateTo, handleSignOut }) {
             setError(null);
             setInitialLoad(false);
             
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) throw new Error("Not authenticated");
+            const token = localStorage.getItem('access_token');
+            if (!token) throw new Error("Not authenticated");
             
-            const res = await fetch(`${BACKEND_URL}/api/admin/users`, {
-                headers: { 'Authorization': `Bearer ${session.access_token}` }
+            const res = await fetch(`${API_BASE}/api/admin/users`, {
+                headers: { 'Authorization': `Bearer ${token}` }
             });
             
             if (!res.ok) throw new Error(`Error fetching users: ${res.statusText}`);
@@ -101,11 +100,11 @@ function AdminUsers({ navigateTo, handleSignOut }) {
     // Fetch all available subscription plans to populate the dropdown menu.
     const fetchAvailablePlans = useCallback(async () => {
         try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) throw new Error("Not authenticated");
+            const token = localStorage.getItem('access_token');
+            if (!token) throw new Error("Not authenticated");
 
-            const res = await fetch(`${BACKEND_URL}/api/subscription/plans`, {
-                 headers: { 'Authorization': `Bearer ${session.access_token}` }
+            const res = await fetch(`${API_BASE}/api/subscription/plans`, {
+                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if(!res.ok) throw new Error('Could not fetch subscription plans.');
 
@@ -174,12 +173,12 @@ function AdminUsers({ navigateTo, handleSignOut }) {
         
         try {
             setLoading(true);
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) throw new Error("Not authenticated");
+            const token = localStorage.getItem('access_token');
+            if (!token) throw new Error("Not authenticated");
             
             const url = selectedUser 
-                ? `${BACKEND_URL}/api/admin/users/${selectedUser.user_id}`
-                : `${BACKEND_URL}/api/admin/users`;
+                ? `${API_BASE}/api/admin/users/${selectedUser.user_id}`
+                : `${API_BASE}/api/admin/users`;
             
             const method = selectedUser ? 'PUT' : 'POST';
 
@@ -188,7 +187,7 @@ function AdminUsers({ navigateTo, handleSignOut }) {
             const res = await fetch(url, {
                 method,
                 headers: {
-                    'Authorization': `Bearer ${session.access_token}`,
+                    'Authorization': `Bearer ${token}`,
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(formData)
@@ -224,12 +223,12 @@ function AdminUsers({ navigateTo, handleSignOut }) {
         const action = async () => {
             try {
                 setLoading(true);
-                const { data: { session } } = await supabase.auth.getSession();
-                if (!session) throw new Error("Not authenticated");
+                const token = localStorage.getItem('access_token');
+                if (!token) throw new Error("Not authenticated");
                 
-                const res = await fetch(`${BACKEND_URL}/api/admin/users/${userId}`, {
+                const res = await fetch(`${API_BASE}/api/admin/users/${userId}`, {
                     method: 'DELETE',
-                    headers: { 'Authorization': `Bearer ${session.access_token}` }
+                    headers: { 'Authorization': `Bearer ${token}` }
                 });
                 
                 if (!res.ok) {
