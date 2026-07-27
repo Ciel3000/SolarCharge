@@ -22,6 +22,8 @@ function startStaleSessionChecker(mqttClient) {
       console.log('Checking for stale active sessions...');
       await logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, 'Running stale session checker');
 
+      const threshold = new Date(Date.now() - INACTIVITY_TIMEOUT_SECONDS * 2 * 1000);
+
       const staleSessions = await pool.query(
         `SELECT
             cs.session_id,
@@ -30,12 +32,12 @@ function startStaleSessionChecker(mqttClient) {
             cp.port_number_in_device,
             cs.last_status_update,
             cs.energy_consumed_kwh,
-            EXTRACT(EPOCH FROM (NOW() - cs.last_status_update)) AS seconds_since_update
+            TIMESTAMPDIFF(SECOND, cs.last_status_update, NOW()) AS seconds_since_update
          FROM charging_session cs
          JOIN charging_port cp ON cs.port_id = cp.port_id
          WHERE cs.session_status = ?
-           AND cs.last_status_update < NOW() - (INTERVAL '1 second' * ?)`,
-        [SESSION_STATUS.ACTIVE, INACTIVITY_TIMEOUT_SECONDS * 2]
+           AND cs.last_status_update < ?`,
+        [SESSION_STATUS.ACTIVE, threshold]
       );
 
       if (staleSessions[0].length > 0) {

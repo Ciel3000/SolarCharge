@@ -10,10 +10,10 @@ async function runDailyUsageReset() {
       UPDATE user_usage
       SET total_consumed_mah = 0,
           last_reset_at = NOW()
-      WHERE last_reset_at <= NOW() - INTERVAL '24 hours'
+      WHERE last_reset_at <= NOW() - INTERVAL 24 HOUR
      
     `);
-    console.log(`[resetService] Reset usage for ${result.rowCount} user(s).`);
+    console.log(`[resetService] Reset usage for ${result.affectedRows} user(s).`);
   } catch (error) {
     console.error('[resetService] Error resetting usage:', error.message);
   }

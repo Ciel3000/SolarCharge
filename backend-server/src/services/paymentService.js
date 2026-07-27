@@ -95,7 +95,7 @@ async function logPaymentEvent(pool, userId, action, payload, response, status) 
  */
 async function processSuccessfulPayment(pool, orderId, captureData, userId) {
     // Start a transaction
-    const client = await pool.connect();
+    const client = await pool.getConnection();
     
     try {
         await client.query('BEGIN');

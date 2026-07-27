@@ -414,7 +414,7 @@ async function finalizeSessionFromDeviceEvent({ deviceId, portNumberInDevice, ac
     [SESSION_STATUS.COMPLETED, sessionCost, sessionId, SESSION_STATUS.ACTIVE]
   );
 
-  if (updateResult.rowCount === 0) {
+  if (updateResult.affectedRows === 0) {
     return false;
   }
 
@@ -992,7 +992,7 @@ async function getAllDeviceConsumption() {
          FROM consumption_data cd
          WHERE cd.device_id = cp.device_mqtt_id
            AND cd.port_number = cp.port_number_in_device
-           AND cd.timestamp > NOW() - INTERVAL '1 minute'
+           AND cd.timestamp > NOW() - INTERVAL 1 MINUTE
          ORDER BY cd.timestamp DESC
          LIMIT 6
        ) sub) as recent_consumption_watts
@@ -1075,7 +1075,7 @@ async function reconcileStationState(stationId) {
          FROM consumption_data cd
          WHERE cd.device_id = cp.device_mqtt_id
            AND cd.port_number = cp.port_number_in_device
-           AND cd.timestamp > NOW() - INTERVAL '1 minute'
+           AND cd.timestamp > NOW() - INTERVAL 1 MINUTE
          ORDER BY cd.timestamp DESC
          LIMIT 6
        ) sub) as recent_consumption_watts
@@ -1128,7 +1128,7 @@ async function getUserUsageStats(userId) {
   const result = await pool.query(`
     SELECT
       COUNT(session_id) as total_sessions,
-      COALESCE(SUM(EXTRACT(EPOCH FROM (COALESCE(end_time, NOW()) - start_time))/60), 0) as total_duration_minutes,
+      COALESCE(SUM(TIMESTAMPDIFF(SECOND, start_time, COALESCE(end_time, NOW()))/60), 0) as total_duration_minutes,
       COALESCE(SUM(energy_consumed_kwh), 0) as total_energy_kwh,
       COALESCE(SUM(energy_consumed_mah), 0) as total_energy_mah,
       COALESCE(SUM(cost), 0) as total_cost
@@ -1136,8 +1136,8 @@ async function getUserUsageStats(userId) {
     WHERE user_id = ?
       AND start_time >= ?
       AND start_time <= ?
-      AND session_status = ANY(?[])
-  `, [userId, startOfMonth, endOfMonth, [SESSION_STATUS.COMPLETED, SESSION_STATUS.ACTIVE]]);
+      AND session_status IN (?, ?)
+  `, [userId, startOfMonth, endOfMonth, SESSION_STATUS.COMPLETED, SESSION_STATUS.ACTIVE]);
 
   const row = result[0][0];
   return {

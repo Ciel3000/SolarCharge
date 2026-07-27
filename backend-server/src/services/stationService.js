@@ -100,7 +100,7 @@ async function createStation({
   current_battery_level,
   price_per_mah,
 }) {
-  const client = await pool.connect();
+  const client = await pool.getConnection();
   try {
     await client.query('BEGIN');
 
@@ -212,7 +212,7 @@ async function deleteStation(stationId) {
   const [check] = await pool.query('SELECT station_id FROM charging_station WHERE station_id = ?', [stationId]);
   if (check.length === 0) throw new Error('Station not found');
 
-  const client = await pool.connect();
+  const client = await pool.getConnection();
   try {
     await client.query('BEGIN');
 

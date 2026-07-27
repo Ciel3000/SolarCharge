@@ -276,9 +276,9 @@ async function fixExpiredSubscriptions() {
   await logSystemEvent(
     LOG_TYPES.INFO,
     LOG_SOURCES.SUBSCRIPTION,
-    `Fixed ${result.rowCount} expired subscriptions`
+    `Fixed ${result.affectedRows} expired subscriptions`
   );
-  return { fixed: result.rowCount };
+  return { fixed: result.affectedRows };
 }
 
 // ============= Helpers =============

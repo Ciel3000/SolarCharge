@@ -30,19 +30,19 @@ async function cleanupExpiredOrders(pool) {
              WHERE status = 'CREATED' AND expires_at < NOW()`
         );
 
-        console.log(`Cleanup: Marked ${result.rowCount} orders as FAILED`);
+        console.log(`Cleanup: Marked ${result.affectedRows} orders as FAILED`);
 
         // Log cleanup activity
-        if (result.rowCount > 0) {
+        if (result.affectedRows > 0) {
             await pool.query(
                 `INSERT INTO payment_logs (user_id, action, payload, response, status)
                  VALUES (NULL, 'CRON_CLEANUP', ?, ?, 'SUCCESS')`,
-                [JSON.stringify({ cleaned: result.rowCount }), JSON.stringify({ timestamp: new Date().toISOString() })]
+                [JSON.stringify({ cleaned: result.affectedRows }), JSON.stringify({ timestamp: new Date().toISOString() })]
             );
         }
 
         return {
-            processed: result.rowCount,
+            processed: result.affectedRows,
             timestamp: new Date().toISOString()
         };
 

@@ -79,9 +79,9 @@ async function addUserDevice(userId, deviceData) {
 
 function getAllUsers() {
   return pool.query(`
-    SELECT GROUP BY u.user_id
-           u.user_id, u.fname, u.lname, u.email, u.contact_number, u.is_admin, u.created_at, u.last_login,
-           us.plan_id, sp.plan_name, us.is_active as subscription_active, us.end_date as subscription_end_date
+    SELECT
+      u.user_id, u.fname, u.lname, u.email, u.contact_number, u.is_admin, u.created_at, u.last_login,
+      us.plan_id, sp.plan_name, us.is_active as subscription_active, us.end_date as subscription_end_date
     FROM users u
     LEFT JOIN user_subscription us ON u.user_id = us.user_id AND us.is_active = true AND us.end_date > NOW()
     LEFT JOIN subscription_plans sp ON us.plan_id = sp.plan_id
@@ -181,7 +181,7 @@ async function updateUser(userId, { fname, lname, contact_number, is_admin, plan
 }
 
 async function deleteUser(userId) {
-  const client = await pool.connect();
+  const client = await pool.getConnection();
   try {
     await client.query('BEGIN');
 
@@ -201,7 +201,7 @@ async function deleteUser(userId) {
     await client.query('DELETE FROM admin_profiles WHERE user_id = ?', [userId]);
 
     const result = await client.query('DELETE FROM users WHERE user_id = ?', [userId]);
-    if (result.rowCount === 0) {
+    if (result.affectedRows === 0) {
       throw new Error('User not found');
     }
 
