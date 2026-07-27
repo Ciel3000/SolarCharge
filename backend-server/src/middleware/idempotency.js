@@ -29,12 +29,12 @@ function idempotencyMiddleware(pool) {
             if (pool) {
                 const existingOrder = await pool.query(
                     `SELECT id, order_id, status FROM paypal_orders 
-                     WHERE idempotency_key = $1`,
+                     WHERE idempotency_key = ?`,
                     [idempotencyKey]
                 );
 
-                if (existingOrder.rows.length > 0) {
-                    const order = existingOrder.rows[0];
+                if (existingOrder[0].length > 0) {
+                    const order = existingOrder[0][0];
                     
                     // If order is already completed, return cached response
                     if (order.status === 'COMPLETED') {

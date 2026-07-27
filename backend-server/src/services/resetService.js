@@ -11,7 +11,7 @@ async function runDailyUsageReset() {
       SET total_consumed_mah = 0,
           last_reset_at = NOW()
       WHERE last_reset_at <= NOW() - INTERVAL '24 hours'
-      RETURNING user_id
+     
     `);
     console.log(`[resetService] Reset usage for ${result.rowCount} user(s).`);
   } catch (error) {

@@ -12,8 +12,8 @@ function getCurrentUser(userId) {
   return pool.query(`
     SELECT user_id, fname, lname, email, contact_number, is_admin, created_at, last_login
     FROM users
-    WHERE user_id = $1
-  `, [userId]).then(res => res.rows[0]);
+    WHERE user_id = ?
+  `, [userId]).then(res => res[0][0]);
 }
 
 function getUserProfile(userId) {
@@ -24,10 +24,10 @@ function getUserProfile(userId) {
     FROM users u
     LEFT JOIN user_subscription us ON u.user_id = us.user_id AND us.is_active = true AND us.end_date > NOW()
     LEFT JOIN subscription_plans sp ON us.plan_id = sp.plan_id
-    WHERE u.user_id = $1
+    WHERE u.user_id = ?
     ORDER BY us.created_at DESC
     LIMIT 1
-  `, [userId]).then(res => res.rows[0]);
+  `, [userId]).then(res => res[0][0]);
 }
 
 // ============= User Devices =============
@@ -37,9 +37,9 @@ function getUserDevices(userId) {
     SELECT device_id, device_name, device_model, current_battery_level,
            is_charging, last_updated, created_at
     FROM user_devices
-    WHERE user_id = $1
+    WHERE user_id = ?
     ORDER BY last_updated DESC
-  `, [userId]).then(res => res.rows);
+  `, [userId]).then(res => res[0]);
 }
 
 async function addUserDevice(userId, deviceData) {
@@ -47,31 +47,31 @@ async function addUserDevice(userId, deviceData) {
 
   // Check if device already exists for this user (by type and name)
   const existing = await pool.query(
-    `SELECT device_id FROM user_devices WHERE user_id = $1 AND device_type = $2 AND device_name = $3`,
+    `SELECT device_id FROM user_devices WHERE user_id = ? AND device_type = ? AND device_name = ?`,
     [userId, device_type, device_name]
   );
 
-  if (existing.rows.length > 0) {
+  if (existing[0].length > 0) {
     // Update existing device
     const result = await pool.query(
       `UPDATE user_devices
-       SET device_model = $1, is_charging = $2, current_battery_level = $3, last_updated = NOW()
-       WHERE device_id = $4
-       RETURNING *`,
-      [device_model, is_charging, current_battery_level, existing.rows[0].device_id]
+       SET device_model = ?, is_charging = ?, current_battery_level = ?, last_updated = NOW()
+       WHERE device_id = ?
+      `,
+      [device_model, is_charging, current_battery_level, existing[0][0].device_id]
     );
-    return result.rows[0];
+    return result[0][0];
   } else {
     // Insert new device
     const deviceId = uuidv4();
     const result = await pool.query(
       `INSERT INTO user_devices
        (device_id, user_id, device_type, device_name, device_model, is_charging, current_battery_level, last_updated)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
-       RETURNING *`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+      `,
       [deviceId, userId, device_type, device_name, device_model, is_charging, current_battery_level]
     );
-    return result.rows[0];
+    return result[0][0];
   }
 }
 
@@ -79,21 +79,21 @@ async function addUserDevice(userId, deviceData) {
 
 function getAllUsers() {
   return pool.query(`
-    SELECT DISTINCT ON (u.user_id)
+    SELECT GROUP BY u.user_id
            u.user_id, u.fname, u.lname, u.email, u.contact_number, u.is_admin, u.created_at, u.last_login,
            us.plan_id, sp.plan_name, us.is_active as subscription_active, us.end_date as subscription_end_date
     FROM users u
     LEFT JOIN user_subscription us ON u.user_id = us.user_id AND us.is_active = true AND us.end_date > NOW()
     LEFT JOIN subscription_plans sp ON us.plan_id = sp.plan_id
     ORDER BY u.user_id, us.created_at DESC
-  `).then(res => res.rows);
+  `).then(res => res[0]);
 }
 
 function getUserById(userId) {
   return pool.query(
-    'SELECT user_id, fname, lname, email, contact_number, is_admin, created_at FROM users WHERE user_id = $1',
+    'SELECT user_id, fname, lname, email, contact_number, is_admin, created_at FROM users WHERE user_id = ?',
     [userId]
-  ).then(res => res.rows[0]);
+  ).then(res => res[0][0]);
 }
 
 async function createUser({ fname, lname, email, contact_number, is_admin, plan_id }) {
@@ -101,17 +101,17 @@ async function createUser({ fname, lname, email, contact_number, is_admin, plan_
   const newUserId = uuidv4(); // replace with actual auth user ID
   await pool.query(
     `INSERT INTO users (user_id, fname, lname, email, contact_number, is_admin, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+     VALUES (?, ?, ?, ?, ?, ?, NOW())`,
     [newUserId, fname, lname, email, contact_number, is_admin || false]
   );
 
   if (plan_id) {
     const planResult = await pool.query(
-      `SELECT duration_type, duration_value FROM subscription_plans WHERE plan_id = $1`,
+      `SELECT duration_type, duration_value FROM subscription_plans WHERE plan_id = ?`,
       [plan_id]
     );
-    if (planResult.rows.length > 0) {
-      const plan = planResult.rows[0];
+    if (planResult[0].length > 0) {
+      const plan = planResult[0][0];
       const endDate = new Date();
       switch (plan.duration_type) {
         case 'daily': endDate.setDate(endDate.getDate() + plan.duration_value); break;
@@ -123,7 +123,7 @@ async function createUser({ fname, lname, email, contact_number, is_admin, plan_
       }
       await pool.query(
         `INSERT INTO user_subscription (user_subscription_id, user_id, plan_id, is_active, start_date, end_date, current_daily_mah_consumed)
-         VALUES ($1, $2, $3, true, NOW(), $4, 0)`,
+         VALUES (?, ?, ?, true, NOW(), ?, 0)`,
         [uuidv4(), newUserId, plan_id, endDate.toISOString()]
       );
     }
@@ -135,8 +135,8 @@ async function createUser({ fname, lname, email, contact_number, is_admin, plan_
 
 async function updateUser(userId, { fname, lname, contact_number, is_admin, plan_id }) {
   await pool.query(
-    `UPDATE users SET fname = $1, lname = $2, contact_number = $3, is_admin = $4, updated_at = NOW()
-     WHERE user_id = $5`,
+    `UPDATE users SET fname = ?, lname = ?, contact_number = ?, is_admin = ?, updated_at = NOW()
+     WHERE user_id = ?`,
     [fname, lname, contact_number, is_admin, userId]
   );
 
@@ -146,18 +146,18 @@ async function updateUser(userId, { fname, lname, contact_number, is_admin, plan
     await pool.query(
       `UPDATE user_subscription
        SET is_active = false, end_date = NOW()
-       WHERE user_id = $1 AND is_active = true`,
+       WHERE user_id = ? AND is_active = true`,
       [userId]
     );
     
     // Add new subscription if plan_id provided
     if (plan_id) {
       const planResult = await pool.query(
-        `SELECT duration_type, duration_value FROM subscription_plans WHERE plan_id = $1`,
+        `SELECT duration_type, duration_value FROM subscription_plans WHERE plan_id = ?`,
         [plan_id]
       );
-      if (planResult.rows.length > 0) {
-        const plan = planResult.rows[0];
+      if (planResult[0].length > 0) {
+        const plan = planResult[0][0];
         const endDate = new Date();
         switch (plan.duration_type) {
           case 'daily': endDate.setDate(endDate.getDate() + plan.duration_value); break;
@@ -169,7 +169,7 @@ async function updateUser(userId, { fname, lname, contact_number, is_admin, plan
         }
         await pool.query(
           `INSERT INTO user_subscription (user_subscription_id, user_id, plan_id, is_active, start_date, end_date)
-           VALUES ($1, $2, $3, true, NOW(), $4)`,
+           VALUES (?, ?, ?, true, NOW(), ?)`,
           [uuidv4(), userId, plan_id, endDate.toISOString()]
         );
       }
@@ -186,21 +186,21 @@ async function deleteUser(userId) {
     await client.query('BEGIN');
 
     // Delete related records (respecting foreign keys)
-    await client.query('DELETE FROM quota_extensions WHERE user_id = $1', [userId]);
-    await client.query('DELETE FROM payment WHERE user_id = $1', [userId]);
-    await client.query('DELETE FROM daily_energy_usage WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM quota_extensions WHERE user_id = ?', [userId]);
+    await client.query('DELETE FROM payment WHERE user_id = ?', [userId]);
+    await client.query('DELETE FROM daily_energy_usage WHERE user_id = ?', [userId]);
     await client.query(
       `DELETE FROM consumption_data
-       WHERE session_id IN (SELECT session_id FROM charging_session WHERE user_id = $1)`,
+       WHERE session_id IN (SELECT session_id FROM charging_session WHERE user_id = ?)`,
       [userId]
     );
-    await client.query('DELETE FROM charging_session WHERE user_id = $1', [userId]);
-    await client.query('DELETE FROM user_subscription WHERE user_id = $1', [userId]);
-    await client.query('DELETE FROM notification WHERE user_id = $1', [userId]);
-    await client.query('DELETE FROM user_devices WHERE user_id = $1', [userId]);
-    await client.query('DELETE FROM admin_profiles WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM charging_session WHERE user_id = ?', [userId]);
+    await client.query('DELETE FROM user_subscription WHERE user_id = ?', [userId]);
+    await client.query('DELETE FROM notification WHERE user_id = ?', [userId]);
+    await client.query('DELETE FROM user_devices WHERE user_id = ?', [userId]);
+    await client.query('DELETE FROM admin_profiles WHERE user_id = ?', [userId]);
 
-    const result = await client.query('DELETE FROM users WHERE user_id = $1', [userId]);
+    const result = await client.query('DELETE FROM users WHERE user_id = ?', [userId]);
     if (result.rowCount === 0) {
       throw new Error('User not found');
     }

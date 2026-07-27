@@ -19,8 +19,8 @@ async function cleanupExpiredOrders(pool) {
              WHERE status = 'CREATED' AND expires_at < NOW()`
         );
 
-        if (expiredOrders.rows.length > 0) {
-            console.log(`Found ${expiredOrders.rows.length} expired orders to clean up`);
+        if (expiredOrders[0].length > 0) {
+            console.log(`Found ${expiredOrders[0].length} expired orders to clean up`);
         }
 
         // Update expired orders to FAILED status
@@ -36,7 +36,7 @@ async function cleanupExpiredOrders(pool) {
         if (result.rowCount > 0) {
             await pool.query(
                 `INSERT INTO payment_logs (user_id, action, payload, response, status)
-                 VALUES (NULL, 'CRON_CLEANUP', $1, $2, 'SUCCESS')`,
+                 VALUES (NULL, 'CRON_CLEANUP', ?, ?, 'SUCCESS')`,
                 [JSON.stringify({ cleaned: result.rowCount }), JSON.stringify({ timestamp: new Date().toISOString() })]
             );
         }
@@ -53,7 +53,7 @@ async function cleanupExpiredOrders(pool) {
         try {
             await pool.query(
                 `INSERT INTO payment_logs (user_id, action, payload, response, status)
-                 VALUES (NULL, 'CRON_CLEANUP_ERROR', $1, $2, 'FAILED')`,
+                 VALUES (NULL, 'CRON_CLEANUP_ERROR', ?, ?, 'FAILED')`,
                 [JSON.stringify({ error: error.message }), JSON.stringify({ timestamp: new Date().toISOString() })]
             );
         } catch (logError) {

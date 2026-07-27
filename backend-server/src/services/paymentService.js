@@ -10,10 +10,10 @@ const { v4: uuidv4 } = require('uuid');
  * @returns {object} Pricing details including requiresPayment flag
  */
 async function getTierPricing(pool, planId) {
-    const { rows } = await pool.query(
+    const [rows] = await pool.query(
         `SELECT plan_id, plan_name, price, daily_mah_limit, duration_type, duration_value
          FROM subscription_plans 
-         WHERE plan_id = $1 AND is_active = true`,
+         WHERE plan_id = ? AND is_active = true`,
         [planId]
     );
 
@@ -44,10 +44,10 @@ async function getTierPricing(pool, planId) {
  * @returns {object} Pricing details
  */
 async function getQuotaExtensionPricing(pool, extensionType = 'direct_purchase') {
-    const { rows } = await pool.query(
+    const [rows] = await pool.query(
         `SELECT id, extension_type, price_per_transaction, extension_amount_mah, is_active
          FROM quota_extension_pricing
-         WHERE extension_type = $1 AND is_active = true`,
+         WHERE extension_type = ? AND is_active = true`,
         [extensionType]
     );
 
@@ -71,7 +71,7 @@ async function logPaymentEvent(pool, userId, action, payload, response, status) 
     try {
         await pool.query(
             `INSERT INTO payment_logs (user_id, action, payload, response, status)
-             VALUES ($1, $2, $3::jsonb, $4::jsonb, $5)`,
+             VALUES (?, ?, ?, ?, ?)`,
             [
                 userId || null, 
                 action || 'unknown', 
@@ -102,15 +102,15 @@ async function processSuccessfulPayment(pool, orderId, captureData, userId) {
 
         // Get the order from paypal_orders
         const orderResult = await client.query(
-            `SELECT * FROM paypal_orders WHERE order_id = $1`,
+            `SELECT * FROM paypal_orders WHERE order_id = ?`,
             [orderId]
         );
 
-        if (orderResult.rows.length === 0) {
+        if (orderResult[0].length === 0) {
             throw new Error('Order not found');
         }
 
-        const dbOrder = orderResult.rows[0];
+        const dbOrder = orderResult[0][0];
 
         // Verify the order belongs to the user
         if (dbOrder.user_id !== userId) {
@@ -124,8 +124,8 @@ async function processSuccessfulPayment(pool, orderId, captureData, userId) {
         // Update paypal_orders: Set status = 'COMPLETED', paypal_capture_id
         await client.query(
             `UPDATE paypal_orders 
-             SET status = 'COMPLETED', paypal_capture_id = $1, updated_at = NOW()
-             WHERE order_id = $2`,
+             SET status = 'COMPLETED', paypal_capture_id = ?, updated_at = NOW()
+             WHERE order_id = ?`,
             [paypalCaptureId, orderId]
         );
 
@@ -133,7 +133,7 @@ async function processSuccessfulPayment(pool, orderId, captureData, userId) {
         const paymentId = uuidv4();
         await client.query(
             `INSERT INTO payments (id, user_id, paypal_order_id, payment_capture_id, payment_type, amount, currency, status)
-             VALUES ($1::uuid, $2::uuid, $3::varchar, $4::varchar, $5::varchar, $6::numeric, $7::varchar, $8::varchar)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
             [paymentId, userId, orderId, paypalCaptureId, dbOrder.payment_type, dbOrder.amount, dbOrder.currency || 'PHP', 'completed']
         );
 
@@ -168,15 +168,15 @@ async function processSuccessfulPayment(pool, orderId, captureData, userId) {
 async function processSubscriptionPayment(client, userId, dbOrder, captureId) {
     // Get plan details
     const planResult = await client.query(
-        `SELECT * FROM subscription_plans WHERE plan_id = $1`,
+        `SELECT * FROM subscription_plans WHERE plan_id = ?`,
         [dbOrder.plan_id]
     );
 
-    if (planResult.rows.length === 0) {
+    if (planResult[0].length === 0) {
         throw new Error('Plan not found');
     }
 
-    const plan = planResult.rows[0];
+    const plan = planResult[0][0];
     
     // Calculate subscription end date
     const startDate = new Date();
@@ -208,7 +208,7 @@ async function processSubscriptionPayment(client, userId, dbOrder, captureId) {
     await client.query(
         `INSERT INTO user_subscription 
          (user_subscription_id, user_id, plan_id, is_active, start_date, end_date)
-         VALUES ($1, $2, $3, true, $4::timestamptz, $5::timestamptz)`,
+         VALUES (?, ?, ?, true, ?, ?)`,
         [subscriptionId, userId, dbOrder.plan_id, startDate.toISOString(), endDate.toISOString()]
     );
 
@@ -230,16 +230,16 @@ async function processSubscriptionPayment(client, userId, dbOrder, captureId) {
 async function processWebhookPaymentCompleted(pool, orderId, captureData) {
     // Get order to find user
     const orderResult = await pool.query(
-        `SELECT * FROM paypal_orders WHERE order_id = $1`,
+        `SELECT * FROM paypal_orders WHERE order_id = ?`,
         [orderId]
     );
 
-    if (orderResult.rows.length === 0) {
+    if (orderResult[0].length === 0) {
         console.log('Webhook: Order not found for', orderId);
         return { processed: false, reason: 'Order not found' };
     }
 
-    const dbOrder = orderResult.rows[0];
+    const dbOrder = orderResult[0][0];
 
     // Skip if already completed
     if (dbOrder.status === 'COMPLETED') {
@@ -259,7 +259,7 @@ async function processWebhookPaymentCompleted(pool, orderId, captureData) {
  */
 async function processPaymentDenied(pool, orderId) {
     await pool.query(
-        `UPDATE paypal_orders SET status = 'DECLINED', updated_at = NOW() WHERE order_id = $1`,
+        `UPDATE paypal_orders SET status = 'DECLINED', updated_at = NOW() WHERE order_id = ?`,
         [orderId]
     );
     
@@ -274,11 +274,11 @@ async function processPaymentDenied(pool, orderId) {
  */
 async function isWebhookProcessed(pool, eventId) {
     const result = await pool.query(
-        `SELECT id FROM webhooks_processed WHERE event_id = $1`,
+        `SELECT id FROM webhooks_processed WHERE event_id = ?`,
         [eventId]
     );
     
-    return result.rows.length > 0;
+    return result[0].length > 0;
 }
 
 /**
@@ -290,7 +290,7 @@ async function isWebhookProcessed(pool, eventId) {
 async function markWebhookProcessed(pool, eventId, eventType) {
     await pool.query(
         `INSERT INTO webhooks_processed (event_id, event_type, processed_at)
-         VALUES ($1, $2, NOW())`,
+         VALUES (?, ?, NOW())`,
         [eventId, eventType]
     );
 }

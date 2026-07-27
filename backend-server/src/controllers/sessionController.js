@@ -28,12 +28,12 @@ async function getActiveSessionsPublic(req, res, next) {
       JOIN users u ON cs.user_id = u.user_id
       JOIN charging_port cp ON cs.port_id = cp.port_id
       JOIN charging_station s ON cs.station_id = s.station_id
-      WHERE cs.session_status = $1
+      WHERE cs.session_status = ?
       ORDER BY cs.start_time DESC
     `, [SESSION_STATUS.ACTIVE]);
 
     // Transform to match frontend expectations: alias port_number_in_device as port_number
-    const activeSessions = result.rows.map(session => ({
+    const activeSessions = result[0].map(session => ({
       ...session, // include all original fields
       port_number: session.port_number_in_device // add alias for frontend compatibility
     }));
@@ -61,12 +61,12 @@ async function getUserActiveSessions(req, res, next) {
       FROM charging_session cs
       JOIN charging_port cp ON cs.port_id = cp.port_id
       JOIN charging_station s ON cs.station_id = s.station_id
-      WHERE cs.user_id = $1 AND cs.session_status = $2
+      WHERE cs.user_id = ? AND cs.session_status = ?
       ORDER BY cs.start_time DESC
     `, [user_id, SESSION_STATUS.ACTIVE]);
 
     // Transform to match frontend expectations: alias port_number_in_device as port_number
-    const sessions = result.rows.map(row => ({
+    const sessions = result[0].map(row => ({
       session_id: row.session_id,
       start_time: row.start_time,
       total_mah_consumed: row.total_mah_consumed,
@@ -106,10 +106,10 @@ async function getSessionConsumption(req, res, next) {
       JOIN users u ON cs.user_id = u.user_id
       JOIN charging_port cp ON cs.port_id = cp.port_id
       JOIN charging_station s ON cs.station_id = s.station_id
-      WHERE cs.session_id = $1 AND cs.user_id = $2
+      WHERE cs.session_id = ? AND cs.user_id = ?
     `, [sessionId, user_id]);
 
-    if (sessionResult.rows.length === 0) {
+    if (sessionResult[0].length === 0) {
       return res.status(404).json({ error: 'Session not found or not owned by user' });
     }
 
@@ -117,14 +117,14 @@ async function getSessionConsumption(req, res, next) {
     const consumptionResult = await pool.query(`
       SELECT consumption_watts, timestamp, charger_state
       FROM consumption_data
-      WHERE session_id = $1
+      WHERE session_id = ?
       ORDER BY timestamp DESC
       LIMIT 100
     `, [sessionId]);
 
     res.json({
-      session: sessionResult.rows[0],
-      consumption: consumptionResult.rows,
+      session: sessionResult[0][0],
+      consumption: consumptionResult[0],
     });
   } catch (err) {
     next(err);
@@ -150,12 +150,12 @@ async function getStationConsumption(req, res, next) {
          ORDER BY cd.timestamp DESC
          LIMIT 1) as current_consumption_watts
       FROM charging_port cp
-      LEFT JOIN charging_session cs ON cp.port_id = cs.port_id AND cs.session_status = $1
-      WHERE cp.station_id = $2 AND cp.is_premium = true
+      LEFT JOIN charging_session cs ON cp.port_id = cs.port_id AND cs.session_status = ?
+      WHERE cp.station_id = ? AND cp.is_premium = true
       ORDER BY cp.port_number_in_device
     `, [SESSION_STATUS.ACTIVE, stationId]);
 
-    const consumptionData = result.rows.map(row => {
+    const consumptionData = result[0].map(row => {
       const currentWatts = Number(row.current_consumption_watts) || 0;
       // Watts to Amps conversion (assuming nominal voltage)
       const currentConsumption = currentWatts > 0 ? (currentWatts / 13) * 1000 : 0;

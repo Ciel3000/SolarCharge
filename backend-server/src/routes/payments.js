@@ -99,7 +99,7 @@ router.post('/create-order', supabaseAuthMiddleware, idempotencyMiddleware(pool)
 
     await pool.query(
       `INSERT INTO paypal_orders (id, user_id, order_id, payment_type, plan_id, amount, currency, status, idempotency_key, expires_at)
-       VALUES ($1::uuid, $2::uuid, $3::varchar, $4::varchar, $5::uuid, $6::numeric, $7::varchar, $8::varchar, $9::varchar, $10::timestamptz)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [internalOrderId, userId, paypalOrderId, paymentType, planId || null, amount, currency, 'CREATED', idempotencyKey, expiresAt.toISOString()]
     );
 
@@ -137,15 +137,15 @@ router.post('/capture-order', supabaseAuthMiddleware, async (req, res) => {
 
   try {
     const orderResult = await pool.query(
-      `SELECT * FROM paypal_orders WHERE order_id = $1`,
+      `SELECT * FROM paypal_orders WHERE order_id = ?`,
       [orderId]
     );
 
-    if (orderResult.rows.length === 0) {
+    if (orderResult[0].length === 0) {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    const dbOrder = orderResult.rows[0];
+    const dbOrder = orderResult[0][0];
 
     if (dbOrder.user_id !== userId) {
       await logPaymentEvent(pool, userId, 'CAPTURE_UNAUTHORIZED', { orderId }, { error: 'Unauthorized' }, 'FAILED');
@@ -158,7 +158,7 @@ router.post('/capture-order', supabaseAuthMiddleware, async (req, res) => {
 
     if (new Date(dbOrder.expires_at) < new Date()) {
       await pool.query(
-        `UPDATE paypal_orders SET status = 'FAILED'::varchar, error_message = 'Order expired'::text WHERE order_id = $1::varchar`,
+        `UPDATE paypal_orders SET status = 'FAILED', error_message = 'Order expired' WHERE order_id = ?`,
         [orderId]
       );
       return res.status(400).json({ error: 'Order has expired' });
@@ -174,7 +174,7 @@ router.post('/capture-order', supabaseAuthMiddleware, async (req, res) => {
     } catch (ppError) {
       console.error('PayPal capture error:', ppError);
       await pool.query(
-        `UPDATE paypal_orders SET status = 'FAILED'::varchar, error_message = $1::text WHERE order_id = $2::varchar`,
+        `UPDATE paypal_orders SET status = 'FAILED', error_message = ? WHERE order_id = ?`,
         [ppError.message, orderId]
       );
       await logPaymentEvent(pool, userId, 'PAYPAL_CAPTURE_ERROR', { orderId }, { error: ppError.message }, 'FAILED');
@@ -186,7 +186,7 @@ router.post('/capture-order', supabaseAuthMiddleware, async (req, res) => {
     if (capture.status !== 'COMPLETED') {
       const status = capture.status === 'DECLINED' ? 'DECLINED' : 'FAILED';
       await pool.query(
-        `UPDATE paypal_orders SET status = $1::varchar, error_message = $2::varchar WHERE order_id = $3::varchar`,
+        `UPDATE paypal_orders SET status = ?, error_message = ? WHERE order_id = ?`,
         [status, capture.status, orderId]
       );
       await logPaymentEvent(pool, userId, 'CAPTURE_NOT_COMPLETED', { orderId }, { status: capture.status }, 'FAILED');
@@ -202,7 +202,7 @@ router.post('/capture-order', supabaseAuthMiddleware, async (req, res) => {
 
     if (Math.abs(capturedAmount - expectedAmount) > tolerance) {
       await pool.query(
-        `UPDATE paypal_orders SET status = 'FAILED'::varchar, error_message = 'Amount mismatch'::text WHERE order_id = $1::varchar`,
+        `UPDATE paypal_orders SET status = 'FAILED', error_message = 'Amount mismatch' WHERE order_id = ?`,
         [orderId]
       );
       await logPaymentEvent(pool, userId, 'FRAUD_ALERT_AMOUNT_MISMATCH', { orderId }, { captured: capturedAmount, expected: expectedAmount }, 'FAILED');
@@ -308,15 +308,15 @@ router.get('/status/:orderId', supabaseAuthMiddleware, async (req, res) => {
     const result = await pool.query(
       `SELECT order_id, payment_type, amount, currency, status, paypal_capture_id, created_at
        FROM paypal_orders
-       WHERE order_id = $1 AND user_id = $2`,
+       WHERE order_id = ? AND user_id = ?`,
       [orderId, userId]
     );
 
-    if (result.rows.length === 0) {
+    if (result[0].length === 0) {
       return res.status(404).json({ error: 'Order not found' });
     }
 
-    res.json(result.rows[0]);
+    res.json(result[0][0]);
   } catch (error) {
     console.error('Get status error:', error);
     res.status(500).json({ error: 'Failed to get order status' });

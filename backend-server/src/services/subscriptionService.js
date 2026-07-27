@@ -14,10 +14,10 @@ const {
 async function checkUserActiveSessions(userId) {
   try {
     const result = await pool.query(
-      'SELECT COUNT(*) as active_count FROM charging_session WHERE user_id = $1 AND session_status = $2',
+      'SELECT COUNT(*) as active_count FROM charging_session WHERE user_id = ? AND session_status = ?',
       [userId, SESSION_STATUS.ACTIVE]
     );
-    return parseInt(result.rows[0].active_count) || 0;
+    return parseInt(result[0][0].active_count) || 0;
   } catch (error) {
     console.error('Error checking user active sessions:', error);
     return 0;
@@ -32,7 +32,7 @@ async function checkUserQuota(userId) {
       SELECT COALESCE(SUM(sp.daily_mah_limit), 0) AS total_limit
       FROM user_subscription us
       JOIN subscription_plans sp ON us.plan_id = sp.plan_id
-      WHERE us.user_id = $1
+      WHERE us.user_id = ?
         AND us.is_active = true
         AND us.end_date > NOW()
     `, [userId]);
@@ -41,11 +41,11 @@ async function checkUserQuota(userId) {
     const usageRes = await pool.query(`
       SELECT total_consumed_mah, last_reset_at
       FROM user_usage
-      WHERE user_id = $1
+      WHERE user_id = ?
     `, [userId]);
 
-    const totalLimit = Number(quotaRes.rows[0]?.total_limit || 0);
-    const totalConsumed = Number(usageRes.rows[0]?.total_consumed_mah || 0);
+    const totalLimit = Number(quotaRes[0][0]?.total_limit || 0);
+    const totalConsumed = Number(usageRes[0][0]?.total_consumed_mah || 0);
     const remaining = Math.max(0, totalLimit - totalConsumed);
     const canCharge = totalConsumed < totalLimit;
 
@@ -71,14 +71,14 @@ async function checkUserQuota(userId) {
 // ============= Subscription Plans (Admin) =============
 
 function getAllPlans() {
-  return pool.query('SELECT * FROM subscription_plans ORDER BY price ASC').then(res => res.rows);
+  return pool.query('SELECT * FROM subscription_plans ORDER BY price ASC').then(res => res[0]);
 }
 
 function getPlanById(planId) {
   return pool.query(
-    'SELECT * FROM subscription_plans WHERE plan_id = $1 AND is_active = true',
+    'SELECT * FROM subscription_plans WHERE plan_id = ? AND is_active = true',
     [planId]
-  ).then(res => res.rows[0]).then(plan => {
+  ).then(res => res[0][0]).then(plan => {
     if (!plan) throw new Error('Plan not found or inactive');
     return plan;
   });
@@ -99,7 +99,7 @@ function getUserSubscription(userId) {
       us.created_at,
       us.updated_at,
       sp.plan_name,
-      sp.price::numeric as price,
+      sp.price as price,
       sp.daily_mah_limit,
       sp.duration_type,
       sp.duration_value,
@@ -125,10 +125,10 @@ function getUserSubscription(userId) {
       END as duration_display
     FROM user_subscription us
     JOIN subscription_plans sp ON us.plan_id = sp.plan_id
-    WHERE us.user_id = $1 AND us.is_active = true AND us.end_date > NOW()
+    WHERE us.user_id = ? AND us.is_active = true AND us.end_date > NOW()
     ORDER BY us.created_at DESC
   `, [userId]).then(async res => {
-    const rows = res.rows;
+    const rows = res[0];
     
     // Ensure price is numeric in all rows
     if (rows) {
@@ -143,10 +143,10 @@ function getUserSubscription(userId) {
     const usageRes = await pool.query(`
       SELECT total_consumed_mah, last_reset_at
       FROM user_usage
-      WHERE user_id = $1
+      WHERE user_id = ?
     `, [userId]);
     
-    const usageRow = usageRes.rows[0];
+    const usageRow = usageRes[0][0];
     const aggregateDailyLimit = rows.reduce((s, r) => s + Number(r.daily_mah_limit || 0), 0);
     const totalConsumedMah = Number(usageRow?.total_consumed_mah || 0);
 
@@ -175,7 +175,7 @@ function getSubscriptionHistory(userId) {
       us.created_at,
       us.updated_at,
       sp.plan_name,
-      sp.price::numeric as price,
+      sp.price as price,
       sp.daily_mah_limit,
       sp.duration_type,
       sp.duration_value,
@@ -196,11 +196,11 @@ function getSubscriptionHistory(userId) {
       END as duration_display
     FROM user_subscription us
     JOIN subscription_plans sp ON us.plan_id = sp.plan_id
-    WHERE us.user_id = $1
+    WHERE us.user_id = ?
     ORDER BY us.created_at DESC
   `, [userId]).then(res => {
     // Ensure price is numeric in all rows
-    const rows = res.rows;
+    const rows = res[0];
     if (rows) {
       rows.forEach(row => {
         if (row && typeof row.price === 'string') {
@@ -219,41 +219,41 @@ async function cancelSubscription(userId, subscriptionId = null) {
     // Security: verify ownership
     const verify = await pool.query(
       `SELECT user_subscription_id FROM user_subscription
-       WHERE user_subscription_id = $1 AND user_id = $2 AND is_active = true`,
+       WHERE user_subscription_id = ? AND user_id = ? AND is_active = true`,
       [subscriptionId, userId]
     );
-    if (verify.rows.length === 0)
+    if (verify[0].length === 0)
       throw new Error('Subscription not found or does not belong to this user.');
     targetId = subscriptionId;
   } else {
     const recent = await pool.query(
       `SELECT user_subscription_id FROM user_subscription
-       WHERE user_id = $1 AND is_active = true
+       WHERE user_id = ? AND is_active = true
        ORDER BY created_at DESC LIMIT 1`,
       [userId]
     );
-    if (recent.rows.length === 0) throw new Error('No active subscription found.');
-    targetId = recent.rows[0].user_subscription_id;
+    if (recent[0].length === 0) throw new Error('No active subscription found.');
+    targetId = recent[0][0].user_subscription_id;
   }
 
   const result = await pool.query(
     `UPDATE user_subscription
      SET is_active = false, end_date = NOW(), updated_at = NOW()
-     WHERE user_subscription_id = $1 RETURNING *`,
+     WHERE user_subscription_id = ?`,
     [targetId]
   );
   await logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.SUBSCRIPTION, `User ${userId} cancelled subscription ${targetId}`);
-  return result.rows[0];
+  return result[0][0];
 }
 
 function getUserUsage(userId) {
   return pool.query(`
     SELECT total_consumed_mah, last_reset_at
     FROM user_usage
-    WHERE user_id = $1
+    WHERE user_id = ?
   `, [userId]).then(res => {
-    if (res.rows.length === 0) return null;
-    const row = res.rows[0];
+    if (res[0].length === 0) return null;
+    const row = res[0][0];
     return {
       total_consumed_mah: Number(row.total_consumed_mah) || 0,
       last_reset_at: row.last_reset_at,

@@ -34,11 +34,11 @@ async function getUserSubscription(req, res, next) {
         payment_status as status,
         transaction_id
       FROM payment
-      WHERE user_id = $1
+      WHERE user_id = ?
       ORDER BY payment_date DESC
       LIMIT 5
     `, [user_id]);
-    const billingHistory = billingHistoryResult.rows;
+    const billingHistory = billingHistoryResult[0];
 
     // Enrich primary subscription if active
     if (data.primary) {

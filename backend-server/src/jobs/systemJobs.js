@@ -33,16 +33,16 @@ function startStaleSessionChecker(mqttClient) {
             EXTRACT(EPOCH FROM (NOW() - cs.last_status_update)) AS seconds_since_update
          FROM charging_session cs
          JOIN charging_port cp ON cs.port_id = cp.port_id
-         WHERE cs.session_status = $1
-           AND cs.last_status_update < NOW() - (INTERVAL '1 second' * $2)`,
+         WHERE cs.session_status = ?
+           AND cs.last_status_update < NOW() - (INTERVAL '1 second' * ?)`,
         [SESSION_STATUS.ACTIVE, INACTIVITY_TIMEOUT_SECONDS * 2]
       );
 
-      if (staleSessions.rows.length > 0) {
-        console.log(`Found ${staleSessions.rows.length} stale active sessions.`);
-        await logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.BACKEND, `Found ${staleSessions.rows.length} stale active sessions`);
+      if (staleSessions[0].length > 0) {
+        console.log(`Found ${staleSessions[0].length} stale active sessions.`);
+        await logSystemEvent(LOG_TYPES.WARN, LOG_SOURCES.BACKEND, `Found ${staleSessions[0].length} stale active sessions`);
 
-        for (const session of staleSessions.rows) {
+        for (const session of staleSessions[0]) {
           console.log(`Cleaning up stale session ${session.session_id} (${Math.round(session.seconds_since_update)}s since last update)`);
           await logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Cleaning up stale session ${session.session_id}`);
 
@@ -65,7 +65,7 @@ function startStaleSessionChecker(mqttClient) {
           const sessionCost = await chargingService.calculateSessionCost(session.session_id, session.energy_consumed_kwh || 0);
 
           await pool.query(
-            "UPDATE charging_session SET end_time = NOW(), session_status = $1, last_status_update = NOW(), cost = $2 WHERE session_id = $3",
+            "UPDATE charging_session SET end_time = NOW(), session_status = ?, last_status_update = NOW(), cost = ? WHERE session_id = ?",
             [SESSION_STATUS.COMPLETED, sessionCost, session.session_id]
           );
           await logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Session ${session.session_id} marked auto-completed by stale checker. Cost: $${sessionCost.toFixed(2)}`);
@@ -106,12 +106,12 @@ function startExpiredSubscriptionChecker() {
          SET is_active = false
          WHERE is_active = true
            AND end_date <= NOW()
-         RETURNING user_subscription_id, user_id, end_date`
+        , user_id, end_date`
       );
 
-      if (result.rows.length > 0) {
-        console.log(`Deactivated ${result.rows.length} expired subscriptions:`);
-        await logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Deactivated ${result.rows.length} expired subscriptions`);
+      if (result[0].length > 0) {
+        console.log(`Deactivated ${result[0].length} expired subscriptions:`);
+        await logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, `Deactivated ${result[0].length} expired subscriptions`);
       } else {
         console.log('No expired subscriptions found');
       }
@@ -128,7 +128,7 @@ function startBorrowedAmountProcessor() {
       console.log('Processing borrowed amounts for next day penalties...');
       await logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, 'Running borrowed amount processor');
 
-      const { rows } = await pool.query(`
+      const [rows] = await pool.query(`
         SELECT user_subscription_id, user_id, borrowed_mah_pending, borrowed_mah_today
         FROM user_subscription
         WHERE borrowed_mah_pending > 0
@@ -141,10 +141,10 @@ function startBorrowedAmountProcessor() {
 
         await pool.query(
           `UPDATE user_subscription
-           SET borrowed_mah_pending = $1,
+           SET borrowed_mah_pending = ?,
                borrowed_mah_today = 0,
                updated_at = NOW()
-           WHERE user_subscription_id = $2`,
+           WHERE user_subscription_id = ?`,
           [totalDeduction, row.user_subscription_id]
         );
 
@@ -176,14 +176,14 @@ function startDailyQuotaReset() {
         console.log('Running daily quota reset for all users...');
         await logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.BACKEND, 'Running daily quota reset');
 
-        const { rows } = await pool.query(`
+        const [rows] = await pool.query(`
           UPDATE user_subscription
           SET current_daily_mah_consumed = 0,
               last_quota_reset = NOW(),
               borrowed_mah_today = 0
           WHERE is_active = true
             AND (current_daily_mah_consumed > 0 OR borrowed_mah_today > 0)
-          RETURNING user_subscription_id, user_id, current_daily_mah_consumed, borrowed_mah_today
+         , user_id, current_daily_mah_consumed, borrowed_mah_today
         `);
 
         if (rows.length > 0) {
