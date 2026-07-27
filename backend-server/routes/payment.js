@@ -324,7 +324,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
 
             case 'PAYMENT.CAPTURE.REFUNDED':
                 console.log('Webhook: Payment refunded', event.resource);
-                // Could implement refund handling here
+                // future things
                 break;
 
             default:

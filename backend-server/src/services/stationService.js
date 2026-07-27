@@ -13,8 +13,8 @@ const {
 } = require('../utils/constants');
 
 // Public: Get all active stations with summary
-function getAllStations() {
-  return pool.query(`
+async function getAllStations() {
+  const [rows] = await pool.query(`
     SELECT
       s.station_id,
       s.station_name,
@@ -28,34 +28,36 @@ function getAllStations() {
       s.num_premium_ports,
       s.device_mqtt_id,
       COUNT(p.port_id) as total_ports,
-      COUNT(CASE WHEN p.current_status = 'available' THEN 1 END) as available_ports,
-      COUNT(CASE WHEN p.current_status = 'available' AND p.is_premium = true THEN 1 END) as available_premium_ports
+      SUM(CASE WHEN p.current_status = 'available' THEN 1 ELSE 0 END) as available_ports,
+      SUM(CASE WHEN p.current_status = 'available' AND p.is_premium = true THEN 1 ELSE 0 END) as available_premium_ports
     FROM charging_station s
     LEFT JOIN charging_port p ON s.station_id = p.station_id
     GROUP BY s.station_id, s.device_mqtt_id
     ORDER BY s.station_name
-  `).then(res => res.rows);
+  `);
+  return rows;
 }
 
 // Public: Get single station details
-function getStationById(stationId) {
-  return pool.query(`
-    SELECT 
+async function getStationById(stationId) {
+  const [rows] = await pool.query(`
+    SELECT
       s.*,
       COUNT(p.port_id) as total_ports,
-      COUNT(CASE WHEN p.current_status = 'available' THEN 1 END) as available_ports,
-      COUNT(CASE WHEN p.current_status = 'available' AND p.is_premium = true THEN 1 END) as available_premium_ports
+      SUM(CASE WHEN p.current_status = 'available' THEN 1 ELSE 0 END) as available_ports,
+      SUM(CASE WHEN p.current_status = 'available' AND p.is_premium = true THEN 1 ELSE 0 END) as available_premium_ports
     FROM charging_station s
     LEFT JOIN charging_port p ON s.station_id = p.station_id
-    WHERE s.station_id = $1
+    WHERE s.station_id = ?
     GROUP BY s.station_id
-  `, [stationId]).then(res => res.rows[0]);
+  `, [stationId]);
+  return rows[0];
 }
 
 // Admin: Get all stations for admin dashboard (includes more fields)
-function getAllStationsAdmin() {
-  return pool.query(`
-    SELECT 
+async function getAllStationsAdmin() {
+  const [rows] = await pool.query(`
+    SELECT
       s.station_id,
       s.station_name,
       s.location_description,
@@ -79,7 +81,8 @@ function getAllStationsAdmin() {
              s.is_active, s.created_at, s.last_maintenance_date, s.price_per_mah,
              s.device_mqtt_id, p.device_mqtt_id, s.num_free_ports, s.num_premium_ports
     ORDER BY s.created_at DESC
-  `).then(res => res.rows);
+  `);
+  return rows;
 }
 
 // Admin: Create station with ports
@@ -101,12 +104,11 @@ async function createStation({
   try {
     await client.query('BEGIN');
 
-    const stationResult = await client.query(
+    const [stationResult] = await client.query(
       `INSERT INTO charging_station
        (station_name, location_description, latitude, longitude, solar_panel_wattage,
         battery_capacity_mah, is_active, current_battery_level, created_at, price_per_mah, device_mqtt_id, num_free_ports, num_premium_ports)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), $9, $10, $11, $12)
-       RETURNING station_id`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?)`,
       [
         station_name,
         location_description,
@@ -123,7 +125,7 @@ async function createStation({
       ]
     );
 
-    const stationId = stationResult.rows[0].station_id;
+    const stationId = stationResult.insertId;
 
     // Create all ports (both free and premium)
     const totalPorts = num_free_ports + num_premium_ports;
@@ -132,9 +134,10 @@ async function createStation({
       await client.query(
         `INSERT INTO charging_port
          (station_id, port_number, port_number_in_device, port_type, is_premium, is_occupied, current_status, device_mqtt_id)
-         VALUES ($1, $2, $2, $3, $4, false, $5, $6)`,
+         VALUES (?, ?, ?, ?, ?, false, ?, ?)`,
         [
           stationId,
+          i + 1,
           i + 1,
           'Type2',
           isPremium,
@@ -173,14 +176,13 @@ async function updateStation(stationId, updates) {
     price_per_mah,
   } = updates;
 
-  const result = await pool.query(
+  const [rows] = await pool.query(
     `UPDATE charging_station
-     SET station_name = $1, location_description = $2, latitude = $3, longitude = $4,
-         solar_panel_wattage = $5, battery_capacity_mah = $6, is_active = $7,
-         current_battery_level = $8, price_per_mah = $9, device_mqtt_id = $10,
-         num_free_ports = $11, num_premium_ports = $12
-     WHERE station_id = $13
-     RETURNING station_id`,
+     SET station_name = ?, location_description = ?, latitude = ?, longitude = ?,
+         solar_panel_wattage = ?, battery_capacity_mah = ?, is_active = ?,
+         current_battery_level = ?, price_per_mah = ?, device_mqtt_id = ?,
+         num_free_ports = ?, num_premium_ports = ?
+     WHERE station_id = ?`,
     [
       station_name,
       location_description,
@@ -197,18 +199,18 @@ async function updateStation(stationId, updates) {
       stationId,
     ]
   );
-  if (result.rows.length === 0) {
+  if (rows.affectedRows === 0) {
     throw new Error('Station not found');
   }
   await logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Station ${stationId} updated by admin`);
-  return result.rows[0];
+  return { station_id: stationId };
 }
 
 // Admin: Delete station (cascading)
 async function deleteStation(stationId) {
   // Verify station exists
-  const check = await pool.query('SELECT station_id FROM charging_station WHERE station_id = $1', [stationId]);
-  if (check.rows.length === 0) throw new Error('Station not found');
+  const [check] = await pool.query('SELECT station_id FROM charging_station WHERE station_id = ?', [stationId]);
+  if (check.length === 0) throw new Error('Station not found');
 
   const client = await pool.connect();
   try {
@@ -217,23 +219,23 @@ async function deleteStation(stationId) {
     // Delete related data in order (FK constraints)
     await client.query(
       `DELETE FROM consumption_data
-       WHERE session_id IN (SELECT session_id FROM charging_session WHERE station_id = $1)`,
+       WHERE session_id IN (SELECT session_id FROM charging_session WHERE station_id = ?)`,
       [stationId]
     );
     await client.query(
       `DELETE FROM current_device_status
-       WHERE port_id IN (SELECT port_id FROM charging_port WHERE station_id = $1)`,
+       WHERE port_id IN (SELECT port_id FROM charging_port WHERE station_id = ?)`,
       [stationId]
     );
     await client.query(
       `DELETE FROM device_status_logs
-       WHERE port_id IN (SELECT port_id FROM charging_port WHERE station_id = $1)`,
+       WHERE port_id IN (SELECT port_id FROM charging_port WHERE station_id = ?)`,
       [stationId]
     );
-    await client.query(`DELETE FROM charging_session WHERE station_id = $1`, [stationId]);
-    await client.query(`DELETE FROM charging_port WHERE station_id = $1`, [stationId]);
-    await client.query(`DELETE FROM station_maintenance WHERE station_id = $1`, [stationId]);
-    await client.query(`DELETE FROM charging_station WHERE station_id = $1`, [stationId]);
+    await client.query(`DELETE FROM charging_session WHERE station_id = ?`, [stationId]);
+    await client.query(`DELETE FROM charging_port WHERE station_id = ?`, [stationId]);
+    await client.query(`DELETE FROM station_maintenance WHERE station_id = ?`, [stationId]);
+    await client.query(`DELETE FROM charging_station WHERE station_id = ?`, [stationId]);
 
     await client.query('COMMIT');
     await logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `Station ${stationId} and related data deleted by admin`);
@@ -250,36 +252,36 @@ async function deleteStation(stationId) {
 
 async function getAdminDashboardStats() {
   const [users, stations, ports, sessions, revenue] = await Promise.all([
-    pool.query(`SELECT COUNT(*) as total, COUNT(CASE WHEN last_login > NOW() - INTERVAL '30 days' THEN 1 END) as active FROM users`),
-    pool.query(`SELECT COUNT(*) as total, COUNT(CASE WHEN is_active = true THEN 1 END) as active FROM charging_station`),
-    pool.query(`SELECT COUNT(*) as total, COUNT(CASE WHEN current_status = 'available' THEN 1 END) as available FROM charging_port`),
+    pool.query(`SELECT COUNT(*) as total, SUM(CASE WHEN last_login > NOW() - INTERVAL 30 DAY THEN 1 ELSE 0 END) as active FROM users`),
+    pool.query(`SELECT COUNT(*) as total, SUM(CASE WHEN is_active = true THEN 1 ELSE 0 END) as active FROM charging_station`),
+    pool.query(`SELECT COUNT(*) as total, SUM(CASE WHEN current_status = 'available' THEN 1 ELSE 0 END) as available FROM charging_port`),
     pool.query(`
       SELECT
-        COUNT(CASE WHEN start_time > CURRENT_DATE THEN 1 END) as today,
-        COUNT(CASE WHEN start_time > CURRENT_DATE - INTERVAL '7 days' THEN 1 END) as week,
-        COUNT(CASE WHEN start_time > CURRENT_DATE - INTERVAL '30 days' THEN 1 END) as month
+        SUM(CASE WHEN start_time > CURRENT_DATE THEN 1 ELSE 0 END) as today,
+        SUM(CASE WHEN start_time > CURRENT_DATE - INTERVAL 7 DAY THEN 1 ELSE 0 END) as week,
+        SUM(CASE WHEN start_time > CURRENT_DATE - INTERVAL 30 DAY THEN 1 ELSE 0 END) as month
       FROM charging_session
     `),
     pool.query(`
       SELECT
         COALESCE(SUM(CASE WHEN start_time > CURRENT_DATE THEN cost ELSE 0 END), 0) as today,
-        COALESCE(SUM(CASE WHEN start_time > CURRENT_DATE - INTERVAL '7 days' THEN cost ELSE 0 END), 0) as week,
-        COALESCE(SUM(CASE WHEN start_time > CURRENT_DATE - INTERVAL '30 days' THEN cost ELSE 0 END), 0) as month
+        COALESCE(SUM(CASE WHEN start_time > CURRENT_DATE - INTERVAL 7 DAY THEN cost ELSE 0 END), 0) as week,
+        COALESCE(SUM(CASE WHEN start_time > CURRENT_DATE - INTERVAL 30 DAY THEN cost ELSE 0 END), 0) as month
       FROM charging_session
     `),
   ]);
 
   return {
-    users: users.rows[0],
-    stations: stations.rows[0],
-    ports: ports.rows[0],
-    sessions: sessions.rows[0],
-    revenue: revenue.rows[0],
+    users: users[0],
+    stations: stations[0],
+    ports: ports[0],
+    sessions: sessions[0],
+    revenue: revenue[0],
   };
 }
 
 async function getRecentSessions(limit = 5) {
-  const result = await pool.query(`
+  const [rows] = await pool.query(`
     SELECT
       cs.session_id as id,
       CONCAT(u.fname, ' ', u.lname) as user_name,
@@ -287,7 +289,7 @@ async function getRecentSessions(limit = 5) {
       cp.port_number_in_device as port,
       cs.start_time,
       cs.end_time,
-      EXTRACT(EPOCH FROM (COALESCE(cs.end_time, NOW()) - cs.start_time))/60 as duration,
+      TIMESTAMPDIFF(MINUTE, cs.start_time, COALESCE(cs.end_time, NOW())) as duration,
       cs.energy_consumed_kwh as energy,
       cs.energy_consumed_mah as energy_mah,
       cs.cost,
@@ -297,23 +299,23 @@ async function getRecentSessions(limit = 5) {
     JOIN charging_station s ON cs.station_id = s.station_id
     JOIN charging_port cp ON cs.port_id = cp.port_id
     ORDER BY cs.start_time DESC
-    LIMIT $1
+    LIMIT ?
   `, [limit]);
-  return result.rows;
+  return rows;
 }
 
 async function getSystemStatus() {
   const [errors, statusLog] = await Promise.all([
-    pool.query(`SELECT COUNT(*) as error_count FROM system_logs WHERE log_type = 'error' AND timestamp > NOW() - INTERVAL '24 hours'`),
+    pool.query(`SELECT COUNT(*) as error_count FROM system_logs WHERE log_type = 'error' AND timestamp > NOW() - INTERVAL 24 HOUR`),
     pool.query(`SELECT timestamp as last_update FROM system_logs ORDER BY timestamp DESC LIMIT 1`),
   ]);
-  const status = errors.rows[0].error_count > 0 ? 'Warning' : 'Operational';
-  const lastUpdate = statusLog.rows.length > 0 ? statusLog.rows[0].last_update : new Date();
+  const status = errors[0].error_count > 0 ? 'Warning' : 'Operational';
+  const lastUpdate = statusLog.length > 0 ? statusLog[0].last_update : new Date();
   return { status, lastUpdate };
 }
 
 async function getBatteryLevels() {
-  const result = await pool.query(`
+  const [rows] = await pool.query(`
     SELECT
       station_name,
       current_battery_level as level,
@@ -325,17 +327,17 @@ async function getBatteryLevels() {
     FROM charging_station
     ORDER BY station_name
   `);
-  return result.rows;
+  return rows;
 }
 
 async function getSessionsAdmin({ range = 'week', station = 'all', status = 'all' }) {
   let timeFilter;
   switch (range) {
     case 'day': timeFilter = "start_time > CURRENT_DATE"; break;
-    case 'week': timeFilter = "start_time > CURRENT_DATE - INTERVAL '7 days'"; break;
-    case 'month': timeFilter = "start_time > CURRENT_DATE - INTERVAL '30 days'"; break;
-    case 'year': timeFilter = "start_time > CURRENT_DATE - INTERVAL '365 days'"; break;
-    default: timeFilter = "start_time > CURRENT_DATE - INTERVAL '7 days'";
+    case 'week': timeFilter = "start_time > CURRENT_DATE - INTERVAL 7 DAY"; break;
+    case 'month': timeFilter = "start_time > CURRENT_DATE - INTERVAL 30 DAY"; break;
+    case 'year': timeFilter = "start_time > CURRENT_DATE - INTERVAL 365 DAY"; break;
+    default: timeFilter = "start_time > CURRENT_DATE - INTERVAL 7 DAY";
   }
 
   let stationFilter = station !== 'all' ? `AND cs.station_id = '${station}'` : '';
@@ -349,7 +351,7 @@ async function getSessionsAdmin({ range = 'week', station = 'all', status = 'all
       cp.port_number_in_device as port,
       cs.start_time,
       cs.end_time,
-      EXTRACT(EPOCH FROM (COALESCE(cs.end_time, NOW()) - cs.start_time))/60 as duration,
+      TIMESTAMPDIFF(MINUTE, cs.start_time, COALESCE(cs.end_time, NOW())) as duration,
       cs.energy_consumed_kwh as energy,
       cs.energy_consumed_mah as energy_mah,
       cs.cost,
@@ -362,8 +364,8 @@ async function getSessionsAdmin({ range = 'week', station = 'all', status = 'all
   `;
 
   const fullQuery = base + ` ${stationFilter} ${statusFilter} ORDER BY cs.start_time DESC`;
-  const result = await pool.query(fullQuery);
-  return result.rows;
+  const [rows] = await pool.query(fullQuery);
+  return rows;
 }
 
 async function getRevenueStats({ range = 'week' }) {
@@ -377,7 +379,7 @@ async function getRevenueStats({ range = 'week' }) {
       FROM
         payments
       WHERE
-        status = 'completed' AND created_at > CURRENT_DATE - INTERVAL '7 days'
+        status = 'completed' AND created_at > CURRENT_DATE - INTERVAL 7 DAY
       GROUP BY
         DATE(created_at)
       ORDER BY
@@ -386,30 +388,30 @@ async function getRevenueStats({ range = 'week' }) {
 
     const weeklyPaymentsQuery = `
       SELECT
-        DATE_TRUNC('week', created_at) as date,
+        YEARWEEK(created_at) as date,
         SUM(amount) as amount,
         COUNT(*) as sessions
       FROM
         payments
       WHERE
-        status = 'completed' AND created_at > CURRENT_DATE - INTERVAL '28 days'
+        status = 'completed' AND created_at > CURRENT_DATE - INTERVAL 28 DAY
       GROUP BY
-        DATE_TRUNC('week', created_at)
+        YEARWEEK(created_at)
       ORDER BY
         date
     `;
 
     const monthlyPaymentsQuery = `
       SELECT
-        DATE_TRUNC('month', created_at) as date,
+        DATE_FORMAT(created_at, '%Y-%m') as date,
         SUM(amount) as amount,
         COUNT(*) as sessions
       FROM
         payments
       WHERE
-        status = 'completed' AND created_at > CURRENT_DATE - INTERVAL '6 months'
+        status = 'completed' AND created_at > CURRENT_DATE - INTERVAL 6 MONTH
       GROUP BY
-        DATE_TRUNC('month', created_at)
+        DATE_FORMAT(created_at, '%Y-%m')
       ORDER BY
         date
     `;
@@ -435,10 +437,10 @@ async function getRevenueStats({ range = 'week' }) {
       })).sort((a, b) => new Date(a.date) - new Date(b.date));
     };
 
-    const daily = formatRows(dailyPayments.rows);
-    const weekly = formatRows(weeklyPayments.rows);
-    const monthly = formatRows(monthlyPayments.rows);
-    const total = Number(totalPayments.rows[0]?.total) || 0;
+    const daily = formatRows(dailyPayments);
+    const weekly = formatRows(weeklyPayments);
+    const monthly = formatRows(monthlyPayments);
+    const total = Number(totalPayments[0]?.total) || 0;
 
     return { daily, weekly, monthly, total };
   } catch (error) {
@@ -510,26 +512,26 @@ async function getSubscriptionAnalytics() {
     // Execute all queries with individual error handling
     let planAnalytics, activeSubscriptions, paymentBreakdown;
     try {
-      planAnalytics = await pool.query(planAnalyticsQuery);
+      [planAnalytics] = await pool.query(planAnalyticsQuery);
     } catch (e) {
       console.error('Plan analytics query failed:', e.message);
       throw new Error(`Plan analytics query failed: ${e.message}`);
     }
     try {
-      activeSubscriptions = await pool.query(activeSubscriptionsQuery);
+      [activeSubscriptions] = await pool.query(activeSubscriptionsQuery);
     } catch (e) {
       console.error('Active subscriptions query failed:', e.message);
       throw new Error(`Active subscriptions query failed: ${e.message}`);
     }
     try {
-      paymentBreakdown = await pool.query(paymentTypeBreakdownQuery);
+      [paymentBreakdown] = await pool.query(paymentTypeBreakdownQuery);
     } catch (e) {
       console.error('Payment breakdown query failed:', e.message);
       throw new Error(`Payment breakdown query failed: ${e.message}`);
     }
 
     // Format plan analytics with proper number conversion
-    const topPlans = planAnalytics.rows.map(row => ({
+    const topPlans = planAnalytics.map(row => ({
       planId: row.plan_id,
       planName: row.plan_name,
       price: Number(row.price) || 0,
@@ -540,14 +542,14 @@ async function getSubscriptionAnalytics() {
     }));
 
     // Format active subscriptions
-    const activeSubsByPlan = activeSubscriptions.rows.map(row => ({
+    const activeSubsByPlan = activeSubscriptions.map(row => ({
       planId: row.plan_id,
       planName: row.plan_name,
       activeCount: Number(row.active_count) || 0
     }));
 
     // Format payment breakdown
-    const paymentTypes = paymentBreakdown.rows.map(row => ({
+    const paymentTypes = paymentBreakdown.map(row => ({
       paymentType: row.payment_type,
       count: Number(row.count) || 0,
       totalAmount: Number(row.total_amount) || 0
@@ -568,35 +570,35 @@ async function getUsageStats({ range = 'week' }) {
   let timeFilter;
   switch (range) {
     case 'day': timeFilter = "start_time > CURRENT_DATE"; break;
-    case 'week': timeFilter = "start_time > CURRENT_DATE - INTERVAL '7 days'"; break;
-    case 'month': timeFilter = "start_time > CURRENT_DATE - INTERVAL '30 days'"; break;
-    case 'year': timeFilter = "start_time > CURRENT_DATE - INTERVAL '365 days'"; break;
-    default: timeFilter = "start_time > CURRENT_DATE - INTERVAL '7 days'";
+    case 'week': timeFilter = "start_time > CURRENT_DATE - INTERVAL 7 DAY"; break;
+    case 'month': timeFilter = "start_time > CURRENT_DATE - INTERVAL 30 DAY"; break;
+    case 'year': timeFilter = "start_time > CURRENT_DATE - INTERVAL 365 DAY"; break;
+    default: timeFilter = "start_time > CURRENT_DATE - INTERVAL 7 DAY";
   }
-  const result = await pool.query(`
+  const [rows] = await pool.query(`
     SELECT
       COALESCE(SUM(CASE WHEN start_time > CURRENT_DATE THEN energy_consumed_kwh ELSE 0 END), 0) as today,
-      COALESCE(SUM(CASE WHEN start_time > CURRENT_DATE - INTERVAL '7 days' THEN energy_consumed_kwh ELSE 0 END), 0) as week,
-      COALESCE(SUM(CASE WHEN start_time > CURRENT_DATE - INTERVAL '30 days' THEN energy_consumed_kwh ELSE 0 END), 0) as month
+      COALESCE(SUM(CASE WHEN start_time > CURRENT_DATE - INTERVAL 7 DAY THEN energy_consumed_kwh ELSE 0 END), 0) as week,
+      COALESCE(SUM(CASE WHEN start_time > CURRENT_DATE - INTERVAL 30 DAY THEN energy_consumed_kwh ELSE 0 END), 0) as month
     FROM charging_session
     WHERE ${timeFilter}
   `);
-  return result.rows[0];
+  return rows[0];
 }
 
 async function getAdminLogs(limit = 100) {
-  const result = await pool.query(
-    `SELECT * FROM system_logs ORDER BY timestamp DESC LIMIT $1`,
+  const [rows] = await pool.query(
+    `SELECT * FROM system_logs ORDER BY timestamp DESC LIMIT ?`,
     [limit]
   );
-  return result.rows;
+  return rows;
 }
 
 // ============= Additional Helpers =============
 
 // Get station consumption data (authenticated)
 async function getStationConsumption(stationId) {
-  const result = await pool.query(`
+  const [rows] = await pool.query(`
     SELECT
       cp.port_number_in_device,
       cp.device_mqtt_id,
@@ -611,12 +613,12 @@ async function getStationConsumption(stationId) {
        ORDER BY cd.timestamp DESC
        LIMIT 1) as current_consumption_watts
     FROM charging_port cp
-    LEFT JOIN charging_session cs ON cp.port_id = cs.port_id AND cs.session_status = $1
-    WHERE cp.station_id = $2 AND cp.is_premium = true
+    LEFT JOIN charging_session cs ON cp.port_id = cs.port_id AND cs.session_status = ?
+    WHERE cp.station_id = ? AND cp.is_premium = true
     ORDER BY cp.port_number_in_device
   `, [SESSION_STATUS.ACTIVE, stationId]);
 
-  return result.rows.map(row => {
+  return rows.map(row => {
     const currentWatts = Number(row.current_consumption_watts) || 0;
     const currentConsumption = currentWatts > 0 ? (currentWatts / CONFIG.NOMINAL_CHARGING_VOLTAGE_DC) * 1000 : 0;
     return {
@@ -632,14 +634,15 @@ async function getStationConsumption(stationId) {
 }
 
 // Get port by device and port number
-function getPortByDeviceAndNumber(deviceId, portNumber) {
-  return pool.query(
+async function getPortByDeviceAndNumber(deviceId, portNumber) {
+  const [rows] = await pool.query(
     `SELECT cp.port_id, cp.is_premium, cs.station_id
      FROM charging_port cp
      JOIN charging_station cs ON cp.station_id = cs.station_id
-     WHERE cp.device_mqtt_id = $1 AND cp.port_number_in_device = $2`,
+     WHERE cp.device_mqtt_id = ? AND cp.port_number_in_device = ?`,
     [deviceId, portNumber]
-  ).then(res => res.rows[0]);
+  );
+  return rows[0];
 }
 
 module.exports = {

@@ -21,6 +21,10 @@ const subscriptionsRouter = require('./routes/subscriptions');
 const quotaRouter = require('./routes/quota');
 const adminRouter = require('./routes/admin');
 const paymentsRouter = require('./routes/payments');
+const authRouter = require('./routes/auth');
+const subscriptionPlansRouter = require('./routes/subscriptionPlans');
+const profileRouter = require('./routes/profile');
+const publicRouter = require('./routes/public');
 const userController = require('./controllers/userController');
 
 function createApp() {
@@ -72,6 +76,18 @@ function createApp() {
    app.use('/api/quota', quotaRouter);
    app.use('/api/admin', supabaseAuthMiddleware, requireAdmin, adminRouter);
    app.use('/api/payment', paymentsRouter);
+
+   // Auth routes
+   app.use('/api/auth', authRouter);
+
+   // Subscription plans routes
+   app.use('/api/subscription/plans', subscriptionPlansRouter);
+
+   // Profile routes
+   app.use('/api/user', profileRouter);
+
+   // Public routes
+   app.use('/api/public', publicRouter);
 
   // Debug endpoint (dev only)
   if (process.env.NODE_ENV !== 'production') {
