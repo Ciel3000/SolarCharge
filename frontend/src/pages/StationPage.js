@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { apiFetch } from '../utils/apiErrorHandler';
 import { openGoogleMaps } from '../utils/mapUtils';
 
-const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:3001';
+const API_BASE = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
 
 function StationPage({ station, navigateTo }) {
   const { user, session, subscription, usageAggregate, handleSessionTimeout } = useAuth();

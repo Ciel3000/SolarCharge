@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Navigation from '../components/Navigation'; // Assuming this component exists
 
-const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:3001';
+const API_BASE = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
 
 // A simple modal for confirmations to avoid using window.confirm
 const ConfirmationModal = ({ message, onConfirm, onCancel, isOpen }) => {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Navigation from '../components/Navigation';
 
-const API_BASE = process.env.REACT_APP_API_BASE || 'http://localhost:3001';
+const API_BASE = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
 
 function AdminSessions({ navigateTo, handleSignOut }) {
   const [sessions, setSessions] = useState([]);
