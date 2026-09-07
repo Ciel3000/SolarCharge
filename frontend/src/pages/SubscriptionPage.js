@@ -142,9 +142,9 @@ function SubscriptionPage() {
 
     // Handle plan selection for payment
     const handleSelectPlan = async (plan) => {
-    setSelectedPlanForPayment(plan);
-    setPaypalLoading(true);
-    setFeedback('');
+        setSelectedPlanForPayment(plan);
+        setPaypalLoading(true);
+        setFeedback('');
     
         try {
             // Call backend to create the order and save to database
@@ -164,6 +164,13 @@ function SubscriptionPage() {
             
             if (!response.ok) {
                 throw new Error(data.error || 'Failed to create order');
+            }
+            
+            // Handle free plans - no PayPal needed
+            if (data.requiresPayment === false) {
+                setFeedback('Free plan activated successfully!');
+                await refreshSubscription(session);
+                return;
             }
             
             // Store the order ID from backend
@@ -482,7 +489,7 @@ return (
                 )}
 
                 {/* PayPal - Mobile Modal */}
-                {showPayPal && selectedPlanForPayment && (
+                {showPayPal && selectedPlanForPayment && createdOrderId && (
                     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                         <div className="absolute inset-0 bg-black/50" onClick={() => { setShowPayPal(false); setSelectedPlanForPayment(null); }}></div>
                         <div ref={paypalSectionRef} className="relative w-full max-w-sm p-4 rounded-2xl" style={{ background: 'rgba(255,255,255,0.95)' }}>
@@ -996,7 +1003,7 @@ return (
                             )}
 
                             {/* PayPal Integration - Desktop */}
-                            {showPayPal && selectedPlanForPayment && (
+                            {showPayPal && selectedPlanForPayment && createdOrderId && (
                                 <div ref={paypalSectionRef} className="mt-8 relative backdrop-blur-xl rounded-[2.5rem] shadow-2xl border border-white/30 overflow-hidden py-8 px-6 sm:px-8 lg:px-12 animate-fade-in" style={{
                                     background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.4) 0%, rgba(255, 255, 255, 0.2) 100%)',
                                     boxShadow: '0 8px 32px 0 rgba(0, 11, 61, 0.15), inset 0 1px 0 0 rgba(255, 255, 255, 0.5)'

@@ -186,9 +186,7 @@ async function deleteUser(userId) {
     await client.query('BEGIN');
 
     // Delete related records (respecting foreign keys)
-    await client.query('DELETE FROM quota_extensions WHERE user_id = ?', [userId]);
-    await client.query('DELETE FROM payment WHERE user_id = ?', [userId]);
-    await client.query('DELETE FROM daily_energy_usage WHERE user_id = ?', [userId]);
+    await client.query('DELETE FROM payments WHERE user_id = ?', [userId]);
     await client.query(
       `DELETE FROM consumption_data
        WHERE session_id IN (SELECT session_id FROM charging_session WHERE user_id = ?)`,
@@ -198,7 +196,6 @@ async function deleteUser(userId) {
     await client.query('DELETE FROM user_subscription WHERE user_id = ?', [userId]);
     await client.query('DELETE FROM notification WHERE user_id = ?', [userId]);
     await client.query('DELETE FROM user_devices WHERE user_id = ?', [userId]);
-    await client.query('DELETE FROM admin_profiles WHERE user_id = ?', [userId]);
 
     const result = await client.query('DELETE FROM users WHERE user_id = ?', [userId]);
     if (result.affectedRows === 0) {

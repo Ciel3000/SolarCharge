@@ -113,7 +113,7 @@ function StationPage({ station, navigateTo }) {
 
   // Fetch active user sessions using existing endpoint
   const fetchActiveUserSessions = useCallback(async () => {
-    if (!user?.id || !session?.access_token) return;
+    if (!user?.user_id || !session?.access_token) return;
     
     try {
       const res = await apiFetch(`${API_BASE}/api/sessions/active`, {
@@ -121,7 +121,7 @@ function StationPage({ station, navigateTo }) {
       }, { handleSessionTimeout });
       if (!res.ok) throw new Error('Failed to fetch active sessions.');
       const allActiveSessions = await res.json();
-      const userActiveSessions = allActiveSessions.filter(s => s.user_id === user.id);
+      const userActiveSessions = allActiveSessions.filter(s => s.user_id === user.user_id);
       setUserActiveSessions(userActiveSessions.length);
 
       const newActiveSessions = {};
@@ -140,7 +140,7 @@ function StationPage({ station, navigateTo }) {
       console.error('Error fetching active user sessions:', err);
       setActiveSessions({});
     }
-  }, [user?.id, session?.access_token, devicePortMapping]);
+  }, [user?.user_id, session?.access_token, devicePortMapping]);
 
   // Get daily usage from usageAggregate
   const getDailyUsage = useCallback(() => {
@@ -367,10 +367,10 @@ function StationPage({ station, navigateTo }) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`
         },
-        body: JSON.stringify({
-          command: command,
-          user_id: user.id,
-          station_id: stationData.station_id
+          body: JSON.stringify({
+            command: command,
+            user_id: user.user_id,
+            station_id: stationData.station_id
         })
       }, { handleSessionTimeout });
 
@@ -647,7 +647,7 @@ function StationPage({ station, navigateTo }) {
         )}
 
         {/* Port Controls Header */}
-        {session && user?.id && (
+        {session && user?.user_id && (
           <>
             <div className="flex justify-between items-center mx-3.5 mb-2">
               <h2 className="text-sm font-bold text-gray-800">Charging ports</h2>

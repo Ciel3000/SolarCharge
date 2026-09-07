@@ -52,11 +52,45 @@ router.post('/create-order', supabaseAuthMiddleware, idempotencyMiddleware(pool)
       const pricing = await getTierPricing(pool, planId);
 
       if (!pricing.requiresPayment) {
-        await logPaymentEvent(pool, userId, 'FREE_TIER_ACTIVATION', { planId }, { requiresPayment: false }, 'SUCCESS');
+        // Free plan - activate subscription directly without payment
+        plan = pricing.plan;
+        const subscriptionId = uuidv4();
+        const startDate = new Date();
+        let endDate = new Date();
+
+        switch (plan.duration_type?.toLowerCase()) {
+          case 'daily':
+            endDate.setDate(endDate.getDate() + plan.duration_value);
+            break;
+          case 'weekly':
+            endDate.setDate(endDate.getDate() + (plan.duration_value * 7));
+            break;
+          case 'monthly':
+            endDate.setMonth(endDate.getMonth() + plan.duration_value);
+            break;
+          case 'quarterly':
+            endDate.setMonth(endDate.getMonth() + (plan.duration_value * 3));
+            break;
+          case 'yearly':
+            endDate.setFullYear(endDate.getFullYear() + plan.duration_value);
+            break;
+          default:
+            endDate.setMonth(endDate.getMonth() + 1);
+        }
+
+        await pool.query(
+          `INSERT INTO user_subscription (user_subscription_id, user_id, plan_id, is_active, start_date, end_date)
+           VALUES (?, ?, ?, true, ?, ?)`,
+          [subscriptionId, userId, plan.plan_id, startDate.toISOString(), endDate.toISOString()]
+        );
+
+        await logPaymentEvent(pool, userId, 'FREE_TIER_ACTIVATED', { planId }, { subscriptionId, plan: pricing.plan }, 'SUCCESS');
+
         return res.json({
           requiresPayment: false,
           message: 'Free tier activated',
           plan: pricing.plan,
+          subscriptionId,
         });
       }
 
@@ -156,7 +190,14 @@ router.post('/capture-order', supabaseAuthMiddleware, async (req, res) => {
       return res.json({ status: 'COMPLETED', message: 'Order already completed' });
     }
 
-    if (new Date(dbOrder.expires_at) < new Date()) {
+    // Parse expires_at as UTC to avoid timezone misinterpretation
+    // MySQL DATETIME strips timezone info; driver may return Date interpreted as local time
+    // We correct by adding the server's UTC offset so the timestamp matches the original UTC value
+    const tzOffsetMs = -new Date().getTimezoneOffset() * 60 * 1000;
+    const expiresAt = dbOrder.expires_at instanceof Date
+        ? new Date(dbOrder.expires_at.getTime() + tzOffsetMs)
+        : new Date(dbOrder.expires_at.replace(' ', 'T') + 'Z');
+    if (expiresAt < new Date()) {
       await pool.query(
         `UPDATE paypal_orders SET status = 'FAILED', error_message = 'Order expired' WHERE order_id = ?`,
         [orderId]

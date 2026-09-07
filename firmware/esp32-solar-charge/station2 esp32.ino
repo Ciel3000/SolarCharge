@@ -1,41 +1,17 @@
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
+#include <WiFiClient.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <WiFiManager.h>
 #include <math.h>
 
 // MQTT Configuration (managed by WiFiManager)
-char mqttBroker[64] = "gab0171b.ala.asia-southeast1.emqxsl.com";
-char mqttUser[32] = "SolarUser";
-char mqttPassword[64] = "SolarPass";
-int mqttPort = 8883;
+// Default to localhost for Aedes broker; use WiFiManager captive portal to change at runtime
+char mqttBroker[64] = "192.168.1.100";  // Replace with your PC's local IP
+char mqttUser[32] = "";
+char mqttPassword[64] = "";
+int mqttPort = 1883;
 char mqttClientId[32] = "ESP32_CHARGER_STATION_002";
-
-// EMQX Cloud CA Certificate
-const char* emqx_ca_cert = R"EOF(-----BEGIN CERTIFICATE-----
-MIIDjjCCAnagAwIBAgIQAzrx5qcRqaC7KGSxHQn65TANBgkqhkiG9w0BAQsFADBh
-MQswCQYDVQQGEwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3
-d3cuZGlnaWNlcnQuY29tMSAwHgYDVQQDExdEaWdpQ2VydCBHbG9iYWwgUm9vdCBH
-MjAeFw0xMzA4MDExMjAwMDBaFw0zODAxMTUxMjAwMDBaMGExCzAJBgNVBAYTAlVT
-MRUwEwYDVQQKEwxEaWdpQ2VydCBJbmMxGTAXBgNVBAsTEHd3dy5kaWdpY2VydC5j
-b20xIDAeBgNVBAMTF0RpZ2lDZXJ0IEdsb2JhbCBSb290IEcyMIIBIjANBgkqhkiG
-9w0BAQEFAAOCAQ8AMIIBCgKCAQEAuzfNNNx7a8myaJCtSnX/RrohCgiN9RlUyfuI
-2/Ou8jqJkTx65qsGGmvPrC3oXgkkRLpimn7Wo6h+4FR1IAWsULecYxpsMNzaHxmx
-1x7e/dfgy5SDN67sH0NO3Xss0r0upS/kqbitOtSZpLYl6ZtrAGCSYP9PIUkY92eQ
-q2EGnI/yuum06ZIya7XzV+hdG82MHauVBJVJ8zUtluNJbd134/tJS7SsVQepj5Wz
-tCO7TG1F8PapspUwtP1MVYwnSlcUfIKdzXOS0xZKBgyMUNGPHgm+F6HmIcr9g+UQ
-vIOlCsRnKPZzFBQ9RnbDhxSJITRNrw9FDKZJobq7nMWxM4MphQIDAQABo0IwQDAP
-BgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIBhjAdBgNVHQ4EFgQUTiJUIBiV
-5uNu5g/6+rkS7QYXjzkwDQYJKoZIhvcNAQELBQADggEBAGBnKJRvDkhj6zHd6mcY
-1Yl9PMWLSn/pvtsrF9+wX3N3KjITOYFnQoQj8kVnNeyIv/iPsGEMNKSuIEyExtv4
-NeF22d+mQrvHRAiGfzZ0JFrabA0UWTW98kndth/Jsw1HKj2ZL7tcu7XUIOGZX1NG
-Fdtom/DzMNU+MeKNhJ7jitralj41E6Vf8PlwUHBHQRFXGU7Aj64GxJUTFy8bJZ91
-8rGOmaFvE7FBcf6IKshPECBV1/MUReXgRPTqh5Uykw7+U0b6LJ3/iyK5S9kJRaTe
-pLiaWN0bfVKfjllDiIGknibVb63dDcY3fe0Dkhvld1927jyNxF1WW6LZZm6zNTfl
-MrY=
------END CERTIFICATE-----
-)EOF";
 
 // MQTT Topics
 const char* PUBLISH_TOPIC_USAGE = "charger/usage/ESP32_CHARGER_STATION_002";
@@ -114,7 +90,7 @@ unsigned long fullChargeDetectedAt[2] = {0, 0};
 bool fullChargeNotificationSent[2] = {false, false};
 
 // Global Objects
-WiFiClientSecure espClient;
+WiFiClient espClient;
 PubSubClient client(espClient);
 WiFiManager wm;
 WiFiManagerParameter custom_mqtt_broker("server", "mqtt broker", mqttBroker, 60);
@@ -178,7 +154,7 @@ void setup() {
   lastMeasurementTime = millis();
 
   setup_wifi();
-  espClient.setCACert(emqx_ca_cert);
+  // NO TLS for local MQTT (Aedes on localhost:1883)
   client.setServer(mqttBroker, mqttPort);
   client.setCallback(mqtt_callback);
   reconnect_mqtt();

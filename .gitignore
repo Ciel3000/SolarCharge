@@ -89,5 +89,6 @@ temp/
 # Local directories
 plans/
 newAPIs/
-Dump/ 
+Dump/
 DatabaseSchema/
+Documents/

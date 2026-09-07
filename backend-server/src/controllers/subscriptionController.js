@@ -27,15 +27,15 @@ async function getUserSubscription(req, res, next) {
     // Fetch recent billing history (last 5 payments)
     const billingHistoryResult = await pool.query(`
       SELECT
-        payment_id as id,
+        id,
         amount,
         currency,
-        payment_date as date,
-        payment_status as status,
-        transaction_id
-      FROM payment
+        created_at as date,
+        status,
+        paypal_order_id as transaction_id
+      FROM payments
       WHERE user_id = ?
-      ORDER BY payment_date DESC
+      ORDER BY created_at DESC
       LIMIT 5
     `, [user_id]);
     const billingHistory = billingHistoryResult[0];

@@ -329,8 +329,8 @@ async function handleInactivityTurnOff(deviceId, internalPortNumber, actualPortI
             `INSERT INTO user_usage (user_id, total_consumed_mah, last_reset_at)
              VALUES (?, ?, NOW())
              ON DUPLICATE KEY UPDATE
-               SET total_consumed_mah = user_usage.total_consumed_mah + EXCLUDED.total_consumed_mah`,
-            [mAhConsumed, userId]
+               total_consumed_mah = user_usage.total_consumed_mah + VALUES(total_consumed_mah)`,
+            [userId, mAhConsumed]
           );
           console.log(`Inactivity: Updated daily consumption for user ${userId} by ${mAhConsumed.toFixed(0)} mAh`);
         }
@@ -423,8 +423,8 @@ async function finalizeSessionFromDeviceEvent({ deviceId, portNumberInDevice, ac
       `INSERT INTO user_usage (user_id, total_consumed_mah, last_reset_at)
        VALUES (?, ?, NOW())
        ON DUPLICATE KEY UPDATE
-         SET total_consumed_mah = user_usage.total_consumed_mah + EXCLUDED.total_consumed_mah`,
-      [mAhConsumed, sessionRow.user_id]
+         total_consumed_mah = user_usage.total_consumed_mah + VALUES(total_consumed_mah)`,
+      [sessionRow.user_id, mAhConsumed]
     );
   }
 
@@ -478,11 +478,11 @@ async function handleMqttStatusMessage(payload, deviceId, actualPortId, isPremiu
   await pool.query(
     `INSERT INTO current_device_status (device_id, port_id, status_message, charger_state, last_update)
      VALUES (?, ?, ?, ?, FROM_UNIXTIME(? / 1000))
-     ON DUPLICATE KEY UPDATE SET
+     ON DUPLICATE KEY UPDATE
         status_message = ?,
         charger_state = ?,
         last_update = FROM_UNIXTIME(? / 1000)`,
-    [deviceId, actualPortId, status, charger_state, timestamp]
+    [deviceId, actualPortId, status, charger_state, timestamp, status, charger_state, timestamp]
   );
 
   // Update charging port status
@@ -637,7 +637,7 @@ async function processUsageMessage(payload, deviceId, portNumberInDevice, actual
           `INSERT INTO user_usage (user_id, total_consumed_mah, last_reset_at)
            VALUES (?, ?, NOW())
            ON DUPLICATE KEY UPDATE
-             SET total_consumed_mah = user_usage.total_consumed_mah + EXCLUDED.total_consumed_mah`,
+             total_consumed_mah = user_usage.total_consumed_mah + VALUES(total_consumed_mah)`,
           [userId, Math.round(sessionMahConsumed)]
         );
       }
@@ -791,7 +791,7 @@ async function startSession({ deviceId, portNumber, userId, stationId }) {
         `,
         [userId, actualPortId, stationId, SESSION_STATUS.ACTIVE, isPremiumPort]
       );
-      currentSessionId = sessionResult[0][0].session_id;
+      currentSessionId = sessionResult[0].insertId;
       activeChargerSessions[sessionKey] = currentSessionId;
       await logSystemEvent(LOG_TYPES.INFO, LOG_SOURCES.API, `New charging session ${currentSessionId} started for ${sessionKey} by user ${userId}`, userId);
     } else {
@@ -900,8 +900,8 @@ async function stopSession({ deviceId, portNumber, userId }) {
         `INSERT INTO user_usage (user_id, total_consumed_mah, last_reset_at)
          VALUES (?, ?, NOW())
          ON DUPLICATE KEY UPDATE
-           SET total_consumed_mah = user_usage.total_consumed_mah + EXCLUDED.total_consumed_mah`,
-        [mAhConsumed, userId]
+           total_consumed_mah = user_usage.total_consumed_mah + VALUES(total_consumed_mah)`,
+        [userId, mAhConsumed]
       );
 
       delete activeChargerSessions[sessionKey];
@@ -986,18 +986,15 @@ async function getAllDeviceConsumption() {
       COALESCE(cs.total_mah_consumed, 0) as total_mah_consumed,
       COALESCE(cs.energy_consumed_kwh, 0) as energy_consumed_kwh,
       COALESCE(cs.last_status_update, NOW()) as timestamp,
-      (SELECT AVG(sub.consumption_watts)
-       FROM (
-         SELECT consumption_watts
-         FROM consumption_data cd
-         WHERE cd.device_id = cp.device_mqtt_id
-           AND cd.port_number = cp.port_number_in_device
-           AND cd.timestamp > NOW() - INTERVAL 1 MINUTE
-         ORDER BY cd.timestamp DESC
-         LIMIT 6
-       ) sub) as recent_consumption_watts
+      COALESCE(recent.avg_consumption, 0) as recent_consumption_watts
     FROM charging_port cp
     LEFT JOIN charging_session cs ON cp.port_id = cs.port_id AND cs.session_status = ?
+    LEFT JOIN (
+      SELECT device_id, port_number, AVG(consumption_watts) as avg_consumption
+      FROM consumption_data
+      WHERE timestamp > NOW() - INTERVAL 1 MINUTE
+      GROUP BY device_id, port_number
+    ) recent ON cp.device_mqtt_id = recent.device_id AND cp.port_number_in_device = recent.port_number
     ORDER BY cp.device_mqtt_id, cp.port_number_in_device
   `, [SESSION_STATUS.ACTIVE]);
 
@@ -1060,7 +1057,7 @@ async function reconcileStationState(stationId) {
     LEFT JOIN charging_session cs ON cp.port_id = cs.port_id AND cs.session_status = ?
     WHERE cp.station_id = ?
     ORDER BY cp.device_mqtt_id, cp.port_number_in_device
-  `, [stationId, SESSION_STATUS.ACTIVE]);
+  `, [SESSION_STATUS.ACTIVE, stationId]);
 
   const consumptionResult = await pool.query(`
     SELECT
@@ -1069,21 +1066,18 @@ async function reconcileStationState(stationId) {
       COALESCE(cs.total_mah_consumed, 0) as total_mah_consumed,
       COALESCE(cs.energy_consumed_kwh, 0) as energy_consumed_kwh,
       COALESCE(cs.last_status_update, NOW()) as timestamp,
-      (SELECT AVG(sub.consumption_watts)
-       FROM (
-         SELECT consumption_watts
-         FROM consumption_data cd
-         WHERE cd.device_id = cp.device_mqtt_id
-           AND cd.port_number = cp.port_number_in_device
-           AND cd.timestamp > NOW() - INTERVAL 1 MINUTE
-         ORDER BY cd.timestamp DESC
-         LIMIT 6
-       ) sub) as recent_consumption_watts
+      COALESCE(recent.avg_consumption, 0) as recent_consumption_watts
     FROM charging_port cp
     LEFT JOIN charging_session cs ON cp.port_id = cs.port_id AND cs.session_status = ?
+    LEFT JOIN (
+      SELECT device_id, port_number, AVG(consumption_watts) as avg_consumption
+      FROM consumption_data
+      WHERE timestamp > NOW() - INTERVAL 1 MINUTE
+      GROUP BY device_id, port_number
+    ) recent ON cp.device_mqtt_id = recent.device_id AND cp.port_number_in_device = recent.port_number
     WHERE cp.station_id = ?
     ORDER BY cp.device_mqtt_id, cp.port_number_in_device
-  `, [stationId, SESSION_STATUS.ACTIVE]);
+  `, [SESSION_STATUS.ACTIVE, stationId]);
 
   const consumptionData = consumptionResult[0].map((row) => {
     const totalMah = Number(row.total_mah_consumed) || 0;
