@@ -15,6 +15,7 @@ out/
 .env.development.local
 .env.test.local
 .env.production.local
+.env.backup
 
 # IDE files
 .vscode/
@@ -86,9 +87,16 @@ jspm_packages/
 tmp/
 temp/
 
+# Kilo Code
+.kilo/
+frontend/.kilo/
+
 # Local directories
 plans/
 newAPIs/
 Dump/
 DatabaseSchema/
 Documents/
+
+# Stray files
+backend-server/pool.end())
