@@ -200,9 +200,12 @@ function StationsPage({ navigateTo, stations: propStations, loadingStations: pro
      : stations;
 
    // Filter stations with valid coordinates for the map
-   const stationsWithCoords = useMemo(() => 
-     displayStations.filter(s => s.latitude && s.longitude && 
-       typeof s.latitude === 'number' && typeof s.longitude === 'number'),
+   const stationsWithCoords = useMemo(() =>
+     displayStations.filter(s => {
+       const lat = parseFloat(s.latitude);
+       const lng = parseFloat(s.longitude);
+       return !isNaN(lat) && !isNaN(lng);
+     }),
      [displayStations]
    );
 
@@ -320,11 +323,10 @@ const renderStationCard = (station, showDistance = true) => {
         </div>
 
         {/* Map Panel */}
-        {stationsWithCoords.length > 0 && (
-          <div className={`mx-4 mb-3 ${showMap ? 'block' : 'hidden'} md:block`}>
+        <div className={`mx-4 mb-3 ${showMap ? 'block' : 'hidden'} md:block`}>
             <div className="rounded-3xl overflow-hidden border border-white/60 shadow-sm" style={{ height: '200px' }}>
               <MapContainer
-                key="stations-map"
+                key={`stations-map-${showMap}`}
                 center={stationsWithCoords.length > 0 ? [stationsWithCoords[0].latitude, stationsWithCoords[0].longitude] : [14.5995, 120.9842]}
                 zoom={stationsWithCoords.length > 0 ? 13 : 10}
                 className="h-full w-full"
@@ -359,9 +361,10 @@ const renderStationCard = (station, showDistance = true) => {
                 <MapSizeHandler isVisible={showMap} />
               </MapContainer>
             </div>
-            <p className="text-center text-gray-400 text-[10px] mt-1.5">Tap a marker to view station details</p>
+            <p className="text-center text-gray-400 text-[10px] mt-1.5">
+              {stationsWithCoords.length > 0 ? 'Tap a marker to view station details' : 'No stations with map coordinates available'}
+            </p>
           </div>
-        )}
 
         {/* Section Header */}
         <div className="flex justify-between items-center px-4 mb-2">
@@ -456,8 +459,7 @@ const renderStationCard = (station, showDistance = true) => {
               </div>
 
               {/* Desktop Map */}
-              {stationsWithCoords.length > 0 && (
-                <div className="mb-8">
+              <div className="mb-8">
                   <div className="rounded-3xl overflow-hidden border border-white/60 shadow-lg" style={{ height: '300px' }}>
                     <MapContainer
                       key="stations-map-desktop"
@@ -495,7 +497,6 @@ const renderStationCard = (station, showDistance = true) => {
                     </MapContainer>
                   </div>
                 </div>
-              )}
 
               {/* Desktop Station Grid */}
               <div className="mb-4">

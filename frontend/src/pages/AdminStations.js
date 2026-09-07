@@ -1,5 +1,132 @@
 import React, { useState, useEffect } from 'react';
+import { MapContainer, TileLayer, Marker, useMap } from 'react-leaflet';
+import L from 'leaflet';
 import Navigation from '../components/Navigation';
+
+// Fix Leaflet default marker icons for webpack/vite builds
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+});
+
+// Component to recenter map when position changes
+function MapRecenter({ position }) {
+  const map = useMap();
+  useEffect(() => {
+    if (position) {
+      map.setView(position, 15);
+    }
+  }, [map, position]);
+  return null;
+}
+
+// Component to handle map clicks and place/update marker
+function MapClickHandler({ onMapClick }) {
+  const map = useMap();
+  useEffect(() => {
+    const handler = (e) => {
+      onMapClick([e.latlng.lat, e.latlng.lng]);
+    };
+    map.on('click', handler);
+    return () => map.off('click', handler);
+  }, [map, onMapClick]);
+  return null;
+}
+
+// Component to add a search bar inside the map
+function MapSearchControl({ onLocationSelect }) {
+  const map = useMap();
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [showResults, setShowResults] = useState(false);
+
+  const searchLocation = async (e) => {
+    e.preventDefault();
+    if (!query.trim()) return;
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`);
+      const data = await res.json();
+      setResults(data);
+      setShowResults(true);
+    } catch (err) {
+      console.error('Map search error:', err);
+    }
+  };
+
+  const selectResult = (item) => {
+    const lat = parseFloat(item.lat);
+    const lon = parseFloat(item.lon);
+    map.setView([lat, lon], 15);
+    onLocationSelect([lat, lon]);
+    setShowResults(false);
+    setQuery(item.display_name);
+  };
+
+  return (
+    <div style={{ position: 'absolute', top: '10px', left: '10px', zIndex: 1000, width: '250px' }}>
+      <form onSubmit={searchLocation} style={{ display: 'flex', gap: '4px' }}>
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search location..."
+          style={{
+            flex: 1,
+            padding: '8px 12px',
+            borderRadius: '8px',
+            border: '1px solid rgba(0,0,0,0.2)',
+            fontSize: '14px',
+            boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
+            outline: 'none'
+          }}
+        />
+        <button
+          type="submit"
+          style={{
+            padding: '8px 12px',
+            borderRadius: '8px',
+            border: 'none',
+            background: '#38b6ff',
+            color: '#fff',
+            cursor: 'pointer',
+            fontWeight: 'bold',
+            boxShadow: '0 2px 6px rgba(0,0,0,0.2)'
+          }}
+        >
+          Go
+        </button>
+      </form>
+      {showResults && results.length > 0 && (
+        <div style={{
+          marginTop: '4px',
+          background: '#fff',
+          borderRadius: '8px',
+          boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
+          maxHeight: '200px',
+          overflowY: 'auto'
+        }}>
+          {results.map((item, idx) => (
+            <div
+              key={idx}
+              onClick={() => selectResult(item)}
+              style={{
+                padding: '8px 12px',
+                cursor: 'pointer',
+                borderBottom: '1px solid #eee',
+                fontSize: '13px',
+                color: '#333'
+              }}
+            >
+              {item.display_name}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 const API_BASE = process.env.REACT_APP_BACKEND_URL || 'http://localhost:3001';
 
@@ -13,12 +140,16 @@ function AdminStations({ navigateTo, handleSignOut }) {
   const [isAdding, setIsAdding] = useState(false);
   const [batteryLevels, setBatteryLevels] = useState([]);
   
+  // Map picker state for admin form
+  const [mapPosition, setMapPosition] = useState(null);
+  
      // Form state for editing or adding a station
    const [formData, setFormData] = useState({
      station_name: '',
      location_description: '',
      latitude: '',
      longitude: '',
+     mapPosition: null,
      solar_panel_wattage: '',
      battery_capacity_kwh: '',
      current_battery_level: '',
@@ -149,6 +280,7 @@ function AdminStations({ navigateTo, handleSignOut }) {
       location_description: station.location_description,
       latitude: station.latitude,
       longitude: station.longitude,
+      mapPosition: station.latitude && station.longitude ? [parseFloat(station.latitude), parseFloat(station.longitude)] : null,
       solar_panel_wattage: station.solar_panel_wattage,
              battery_capacity_kwh: station.battery_capacity_mah ? (station.battery_capacity_mah / 1000).toFixed(2) : '', // Convert mAh to kWh
        current_battery_level: station.current_battery_level,
@@ -163,10 +295,21 @@ function AdminStations({ navigateTo, handleSignOut }) {
   //Handle input change
   const handleInputChange = (e) => {
     const { name, value, type, checked } = e.target;
-    setFormData({
+    const newFormData = {
       ...formData,
       [name]: type === 'checkbox' ? checked : value
-    });
+    };
+    // Sync map position when lat/lng are manually entered
+    if (name === 'latitude' || name === 'longitude') {
+      const lat = name === 'latitude' ? parseFloat(value) : parseFloat(formData.latitude);
+      const lng = name === 'longitude' ? parseFloat(value) : parseFloat(formData.longitude);
+      if (!isNaN(lat) && !isNaN(lng)) {
+        newFormData.mapPosition = [lat, lng];
+      } else {
+        newFormData.mapPosition = null;
+      }
+    }
+    setFormData(newFormData);
   };
   
   //Add a station
@@ -477,6 +620,53 @@ function AdminStations({ navigateTo, handleSignOut }) {
                     }}
                     required
                   />
+                </div>
+                
+                {/* Map Picker */}
+                <div className="md:col-span-2">
+                  <label className="block font-bold mb-2" style={{ color: '#000b3d' }}>
+                    Pick Location on Map
+                  </label>
+                  <div className="rounded-xl overflow-hidden border border-white/30" style={{ height: '250px' }}>
+                    <MapContainer
+                      center={mapPosition || [14.5995, 120.9842]}
+                      zoom={13}
+                      className="h-full w-full"
+                      style={{ height: '100%', width: '100%' }}
+                      scrollWheelZoom={true}
+                    >
+                      <TileLayer
+                        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                      />
+                      {mapPosition && (
+                        <Marker
+                          position={mapPosition}
+                          eventHandlers={{
+                            dragend: (e) => {
+                              const { lat, lng } = e.target.getLatLng();
+                              setFormData(prev => ({
+                                ...prev,
+                                latitude: lat.toFixed(6),
+                                longitude: lng.toFixed(6),
+                                mapPosition: [lat, lng]
+                              }));
+                            }
+                          }}
+                        />
+                      )}
+                      <MapClickHandler onMapClick={(pos) => {
+                        setFormData(prev => ({
+                          ...prev,
+                          latitude: pos[0].toFixed(6),
+                          longitude: pos[1].toFixed(6),
+                          mapPosition: pos
+                        }));
+                      }} />
+                      <MapRecenter position={mapPosition} />
+                    </MapContainer>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">Click on the map to set the station location. You can also drag the marker.</p>
                 </div>
                 
                 <div>

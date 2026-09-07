@@ -231,7 +231,8 @@ function AppContent() {
         setTimeout(() => reject(new Error('Sign out timeout')), 5000)
       );
 
-      const { error } = await Promise.race([signOutPromise, timeoutPromise]);
+      const result = await Promise.race([signOutPromise, timeoutPromise]);
+      const { error } = result || {};
       console.log('signOut result:', { error });
 
       if (error) {

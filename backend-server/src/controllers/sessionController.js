@@ -99,7 +99,7 @@ async function getSessionConsumption(req, res, next) {
         cs.end_time,
         cs.session_status,
         cs.cost,
-        u.fname || ' ' || u.lname AS user_name,
+        CONCAT(u.fname, ' ', u.lname) AS user_name,
         cp.port_number_in_device,
         s.station_name
       FROM charging_session cs

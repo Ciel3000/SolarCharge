@@ -116,11 +116,11 @@ function getUserSubscription(userId) {
         ELSE 'Unknown'
       END as subscription_status,
       CASE sp.duration_type
-        WHEN 'daily' THEN CASE WHEN sp.duration_value = 1 THEN '1 Day' ELSE sp.duration_value || ' Days' END
-        WHEN 'weekly' THEN CASE WHEN sp.duration_value = 1 THEN '1 Week' ELSE sp.duration_value || ' Weeks' END
-        WHEN 'monthly' THEN CASE WHEN sp.duration_value = 1 THEN '1 Month' ELSE sp.duration_value || ' Months' END
-        WHEN 'quarterly' THEN CASE WHEN sp.duration_value = 1 THEN '1 Quarter' ELSE sp.duration_value || ' Quarters' END
-        WHEN 'yearly' THEN CASE WHEN sp.duration_value = 1 THEN '1 Year' ELSE sp.duration_value || ' Years' END
+        WHEN 'daily' THEN CASE WHEN sp.duration_value = 1 THEN '1 Day' ELSE CONCAT(sp.duration_value, ' Days') END
+        WHEN 'weekly' THEN CASE WHEN sp.duration_value = 1 THEN '1 Week' ELSE CONCAT(sp.duration_value, ' Weeks') END
+        WHEN 'monthly' THEN CASE WHEN sp.duration_value = 1 THEN '1 Month' ELSE CONCAT(sp.duration_value, ' Months') END
+        WHEN 'quarterly' THEN CASE WHEN sp.duration_value = 1 THEN '1 Quarter' ELSE CONCAT(sp.duration_value, ' Quarters') END
+        WHEN 'yearly' THEN CASE WHEN sp.duration_value = 1 THEN '1 Year' ELSE CONCAT(sp.duration_value, ' Years') END
         ELSE '1 Month'
       END as duration_display
     FROM user_subscription us
@@ -187,11 +187,11 @@ function getSubscriptionHistory(userId) {
         ELSE 'Unknown'
       END as subscription_status,
       CASE sp.duration_type
-        WHEN 'daily' THEN CASE WHEN sp.duration_value = 1 THEN '1 Day' ELSE sp.duration_value || ' Days' END
-        WHEN 'weekly' THEN CASE WHEN sp.duration_value = 1 THEN '1 Week' ELSE sp.duration_value || ' Weeks' END
-        WHEN 'monthly' THEN CASE WHEN sp.duration_value = 1 THEN '1 Month' ELSE sp.duration_value || ' Months' END
-        WHEN 'quarterly' THEN CASE WHEN sp.duration_value = 1 THEN '1 Quarter' ELSE sp.duration_value || ' Quarters' END
-        WHEN 'yearly' THEN CASE WHEN sp.duration_value = 1 THEN '1 Year' ELSE sp.duration_value || ' Years' END
+        WHEN 'daily' THEN CASE WHEN sp.duration_value = 1 THEN '1 Day' ELSE CONCAT(sp.duration_value, ' Days') END
+        WHEN 'weekly' THEN CASE WHEN sp.duration_value = 1 THEN '1 Week' ELSE CONCAT(sp.duration_value, ' Weeks') END
+        WHEN 'monthly' THEN CASE WHEN sp.duration_value = 1 THEN '1 Month' ELSE CONCAT(sp.duration_value, ' Months') END
+        WHEN 'quarterly' THEN CASE WHEN sp.duration_value = 1 THEN '1 Quarter' ELSE CONCAT(sp.duration_value, ' Quarters') END
+        WHEN 'yearly' THEN CASE WHEN sp.duration_value = 1 THEN '1 Year' ELSE CONCAT(sp.duration_value, ' Years') END
         ELSE '1 Month'
       END as duration_display
     FROM user_subscription us
